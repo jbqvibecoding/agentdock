@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "seats",
+  "description": "Hidden per-seat webviews may report probe results back to the core",
+  "windows": ["seat-*"],
+  "remote": {
+    "urls": [
+      "https://chatgpt.com/*",
+      "https://*.chatgpt.com/*",
+      "https://copilot.microsoft.com/*",
+      "https://*.copilot.microsoft.com/*",
+      "https://app.devin.ai/*",
+      "https://muse.ai/*",
+      "https://*.muse.ai/*"
+    ]
+  },
+  "permissions": ["core:event:default"]
+}

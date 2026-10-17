@@ -1,0 +1,32 @@
+{
+  "id": "chatgpt-dot",
+  "display_name": "ChatGPT dot",
+  "version": 1,
+  "verified": false,
+  "url": "https://chatgpt.com/",
+  "bundle_id": null,
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+  "call": [
+    { "op": "wait_for", "selectors": ["button[aria-label*='dot' i]", "a[href*='/dots']", "a[href*='/dot/']", "[data-testid*='dot' i]"], "timeout_ms": 8000 },
+    { "op": "click", "selectors": ["a[href*='/dots']", "a[href*='/dot/']", "button[aria-label*='dot' i]", "[data-testid*='dot' i]"] },
+    { "op": "sleep", "ms": 800 },
+    { "op": "click", "selectors": ["button[aria-label*='Call' i]", "button[aria-label*='Voice' i]", "button[data-testid*='voice' i]", "button[aria-label*='语音' i]", "button[aria-label*='通话' i]"] }
+  ],
+  "hangup": [
+    { "op": "click", "selectors": ["button[aria-label*='End' i]", "button[aria-label*='Hang up' i]", "button[data-testid*='end' i]", "button[aria-label*='结束' i]", "button[aria-label*='挂断' i]"] }
+  ],
+  "mute": [
+    { "op": "click", "selectors": ["button[aria-label='Mute' i]", "button[aria-label*='Mute microphone' i]", "button[aria-label*='静音' i]"] }
+  ],
+  "unmute": [
+    { "op": "click", "selectors": ["button[aria-label='Unmute' i]", "button[aria-label*='Unmute microphone' i]", "button[aria-label*='取消静音' i]"] }
+  ],
+  "probe": {
+    "in_call": ["button[aria-label*='End' i]", "button[aria-label*='Hang up' i]", "[data-testid*='voice-mode' i]", "button[aria-label*='结束' i]"],
+    "muted": ["button[aria-label='Unmute' i]", "button[aria-label*='取消静音' i]"],
+    "needs_human": ["iframe[src*='challenges.cloudflare.com']", "iframe[src*='recaptcha']", "[data-testid*='captcha' i]", "#challenge-stage"],
+    "logged_in": ["[data-testid='profile-button']", "button[aria-label*='profile' i]", "img[alt*='User' i]", "nav [data-testid*='user' i]"],
+    "login_urls": ["auth.openai.com", "/auth/login", "/log-in", "accounts.google.com", "appleid.apple.com"],
+    "account": "[data-testid='profile-button'] img, button[aria-label*='profile' i] img"
+  }
+}

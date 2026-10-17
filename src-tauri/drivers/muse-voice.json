@@ -1,0 +1,30 @@
+{
+  "id": "muse-voice",
+  "display_name": "Meta Muse voice",
+  "version": 1,
+  "verified": false,
+  "url": "https://muse.ai/",
+  "bundle_id": null,
+  "user_agent": null,
+  "call": [
+    { "op": "wait_for", "selectors": ["button[aria-label*='Voice' i]", "button[aria-label*='Call' i]", "button[data-testid*='voice' i]"], "timeout_ms": 8000 },
+    { "op": "click", "selectors": ["button[aria-label*='Voice' i]", "button[aria-label*='Call' i]", "button[data-testid*='voice' i]"] }
+  ],
+  "hangup": [
+    { "op": "click", "selectors": ["button[aria-label*='End' i]", "button[aria-label*='Hang up' i]"] }
+  ],
+  "mute": [
+    { "op": "click", "selectors": ["button[aria-label='Mute' i]"] }
+  ],
+  "unmute": [
+    { "op": "click", "selectors": ["button[aria-label='Unmute' i]"] }
+  ],
+  "probe": {
+    "in_call": ["button[aria-label*='End' i]", "button[aria-label*='Hang up' i]"],
+    "muted": ["button[aria-label='Unmute' i]"],
+    "needs_human": ["iframe[src*='recaptcha']", "[id*='captcha' i]"],
+    "logged_in": ["img[alt*='profile' i]", "[aria-label*='account' i]"],
+    "login_urls": ["/login", "facebook.com/login", "accounts.meta.com"],
+    "account": "img[alt*='profile' i]"
+  }
+}

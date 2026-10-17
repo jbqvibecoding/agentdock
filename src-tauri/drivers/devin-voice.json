@@ -1,0 +1,26 @@
+{
+  "id": "devin-voice",
+  "display_name": "Devin voice",
+  "version": 1,
+  "verified": false,
+  "url": "https://app.devin.ai/",
+  "bundle_id": null,
+  "user_agent": null,
+  "call": [
+    { "op": "wait_for", "selectors": ["button[aria-label*='voice' i]", "button[aria-label*='Call' i]", "button[data-testid*='voice' i]"], "timeout_ms": 8000 },
+    { "op": "click", "selectors": ["button[aria-label*='voice' i]", "button[aria-label*='Call' i]", "button[data-testid*='voice' i]"] }
+  ],
+  "hangup": [
+    { "op": "click", "selectors": ["button[aria-label*='End' i]", "button[aria-label*='Hang up' i]", "button[aria-label*='Stop voice' i]"] }
+  ],
+  "mute": [],
+  "unmute": [],
+  "probe": {
+    "in_call": ["button[aria-label*='End' i]", "button[aria-label*='Hang up' i]", "[data-testid*='voice-active' i]"],
+    "muted": [],
+    "needs_human": ["iframe[src*='recaptcha']", "iframe[src*='challenges.cloudflare.com']"],
+    "logged_in": ["[data-testid*='user' i]", "img[alt*='avatar' i]", "button[aria-label*='account' i]"],
+    "login_urls": ["/login", "accounts.google.com"],
+    "account": "img[alt*='avatar' i]"
+  }
+}

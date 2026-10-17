@@ -1,0 +1,30 @@
+{
+  "id": "copilot-voice",
+  "display_name": "Copilot Voice",
+  "version": 1,
+  "verified": false,
+  "url": "https://copilot.microsoft.com/",
+  "bundle_id": null,
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "call": [
+    { "op": "wait_for", "selectors": ["button[aria-label*='Voice' i]", "button[title*='Voice' i]", "button[data-testid*='voice' i]", "button[aria-label*='语音' i]"], "timeout_ms": 8000 },
+    { "op": "click", "selectors": ["button[aria-label*='Voice' i]", "button[title*='Voice' i]", "button[data-testid*='voice' i]", "button[aria-label*='语音' i]"] }
+  ],
+  "hangup": [
+    { "op": "click", "selectors": ["button[aria-label*='End' i]", "button[aria-label*='Exit voice' i]", "button[aria-label*='Close' i][data-testid*='voice' i]", "button[aria-label*='结束' i]"] }
+  ],
+  "mute": [
+    { "op": "click", "selectors": ["button[aria-label*='Mute' i]:not([aria-label*='Unmute' i])", "button[aria-label*='静音' i]"] }
+  ],
+  "unmute": [
+    { "op": "click", "selectors": ["button[aria-label*='Unmute' i]", "button[aria-label*='取消静音' i]"] }
+  ],
+  "probe": {
+    "in_call": ["button[aria-label*='End' i]", "button[aria-label*='Exit voice' i]", "[data-testid*='voice-active' i]", "[aria-label*='Listening' i]"],
+    "muted": ["button[aria-label*='Unmute' i]"],
+    "needs_human": ["iframe[src*='hcaptcha']", "iframe[src*='recaptcha']", "[id*='captcha' i]"],
+    "logged_in": ["button[aria-label*='account' i]", "img[alt*='profile' i]", "[data-testid*='user-menu' i]", "button[aria-label*='帐户' i]"],
+    "login_urls": ["login.microsoftonline.com", "login.live.com", "/signin"],
+    "account": "button[aria-label*='account' i] img, img[alt*='profile' i]"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "id": "grok-bot",
+  "display_name": "Grok Bot",
+  "version": 1,
+  "verified": false,
+  "url": null,
+  "bundle_id": "com.cursor.grokbot",
+  "user_agent": null,
+  "call": [
+    { "op": "clear", "selectors": ["AXTextArea", "AXTextField"] },
+    { "op": "click", "selectors": ["AXButton[Start voice chat]", "AXButton[Voice chat]", "AXButton[开始语音聊天]"] }
+  ],
+  "hangup": [
+    { "op": "click", "selectors": ["AXButton[Hang up]", "AXButton[End voice chat]", "AXButton[挂断]"] }
+  ],
+  "mute": [
+    { "op": "click", "selectors": ["AXButton[Mute]", "AXButton[静音]"] }
+  ],
+  "unmute": [
+    { "op": "click", "selectors": ["AXButton[Unmute]", "AXButton[取消静音]"] }
+  ],
+  "probe": {
+    "in_call": ["AXButton[Hang up]", "AXButton[End voice chat]"],
+    "muted": ["AXButton[Unmute]"],
+    "needs_human": ["AXSheet[End the current voice chat?]"],
+    "logged_in": ["AXButton[Start voice chat]", "AXTextArea"],
+    "login_urls": [],
+    "account": null
+  }
+}
