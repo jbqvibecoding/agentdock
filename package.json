@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "cd src-tauri && cargo test && cd .. && npm run build && python3 tests/e2e_mock.py",
+    "test:xvfb": "bash tests/e2e_xvfb.sh",
+    "shots": "python3 .shots/shoot.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
