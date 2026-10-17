@@ -5,12 +5,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 curl -sf http://localhost:1420/ >/dev/null || { echo "start the dev server first: npx vite --port 1420"; exit 2; }
-pkill -f 'xvfb-run -a -s' 2>/dev/null || true
-RUST_LOG=agentdock=debug xvfb-run -a -s "-screen 0 1440x900x24" ./src-tauri/target/debug/agentdock >/tmp/agentdock-e2e.log 2>&1 &
+if [ -z "${INSIDE_XVFB:-}" ]; then
+  exec xvfb-run -a -s "-screen 0 1440x900x24" env INSIDE_XVFB=1 bash "$0"
+fi
+RUST_LOG=agentdock=debug ./src-tauri/target/debug/agentdock >/tmp/agentdock-e2e.log 2>&1 &
 APP=$!
 trap 'kill $APP 2>/dev/null || true' EXIT
 sleep 6
-export DISPLAY=:99 XAUTHORITY=$(ls -t /tmp/xvfb-run.*/Xauthority | head -1)
 geom() { xdotool getwindowgeometry --shell "$1"; }
 W=""; for w in $(xdotool search --name '^AgentDock$'); do eval "$(geom $w)"; [ "$WIDTH" -gt 20 ] && { W=$w; break; }; done
 [ -n "$W" ] || { echo "FAIL no dock window"; exit 1; }
