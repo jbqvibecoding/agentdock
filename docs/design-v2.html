@@ -1,0 +1,2936 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content="Devin artifact kit" />
+    <title>AgentDock · 个人 agent 语音通讯录 产品设计稿 v2</title>
+    <style>
+/* Devin artifact kit — self-contained styles for standalone HTML artifacts.
+   Tokens are translated from the Devin product design system. Light is the
+   default; dark is applied from `prefers-color-scheme` unless a host theme
+   signal (`?theme=`, `data-theme`, or a `devin:theme` message) says otherwise. */
+
+:root {
+  color-scheme: light;
+
+  --bg-page: 252 252 252;
+  --bg-wash: 248 248 248;
+  --bg-elevated: 255 255 255;
+  --tint-tertiary: 0 0 0 / 0.04;
+  --tint-secondary: 0 0 0 / 0.06;
+  --tint-primary: 0 0 0 / 0.08;
+  --text-primary: 25 25 25;
+  --text-secondary: 25 25 25 / 0.64;
+  --text-tertiary: 25 25 25 / 0.4;
+  --text-accent: 49 124 255;
+  --bg-accent: 49 124 255;
+  --border-secondary: 0 0 0 / 0.08;
+  --border-primary: 0 0 0 / 0.1;
+  --text-green: 0 165 88;
+  --text-orange: 245 142 58;
+  --text-red: 245 59 58;
+  --text-blue: 51 125 244;
+  --text-purple: 149 108 222;
+  --shadow-l1: 0 1px 2px rgb(0 0 0 / 0.06);
+  --shadow-l2: 0 4px 12px rgb(0 0 0 / 0.08);
+
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", "Roboto Mono", ui-monospace, monospace;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --unit: 4px;
+  --max-width: 1120px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-page: 20 20 20;
+  --bg-wash: 25 25 25;
+  --bg-elevated: 31 31 31;
+  --tint-tertiary: 255 255 255 / 0.03;
+  --tint-secondary: 255 255 255 / 0.05;
+  --tint-primary: 255 255 255 / 0.08;
+  --text-primary: 255 255 255 / 0.9;
+  --text-secondary: 255 255 255 / 0.52;
+  --text-tertiary: 255 255 255 / 0.4;
+  --text-accent: 73 176 255;
+  --bg-accent: 68 137 255;
+  --border-secondary: 255 255 255 / 0.04;
+  --border-primary: 255 255 255 / 0.08;
+  --text-green: 0 236 126;
+  --text-orange: 245 142 58;
+  --text-red: 255 108 107;
+  --text-blue: 92 154 255;
+  --text-purple: 178 145 240;
+  --shadow-l1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-l2: 0 4px 12px rgb(0 0 0 / 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --bg-page: 20 20 20;
+    --bg-wash: 25 25 25;
+    --bg-elevated: 31 31 31;
+    --tint-tertiary: 255 255 255 / 0.03;
+    --tint-secondary: 255 255 255 / 0.05;
+    --tint-primary: 255 255 255 / 0.08;
+    --text-primary: 255 255 255 / 0.9;
+    --text-secondary: 255 255 255 / 0.52;
+    --text-tertiary: 255 255 255 / 0.4;
+    --text-accent: 73 176 255;
+    --bg-accent: 68 137 255;
+    --border-secondary: 255 255 255 / 0.04;
+    --border-primary: 255 255 255 / 0.08;
+    --text-green: 0 236 126;
+    --text-orange: 245 142 58;
+    --text-red: 255 108 107;
+    --text-blue: 92 154 255;
+    --text-purple: 178 145 240;
+    --shadow-l1: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-l2: 0 4px 12px rgb(0 0 0 / 0.5);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: rgb(var(--bg-page));
+  color: rgb(var(--text-primary));
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+:where(button, a, input, select, summary, [tabindex]):focus-visible {
+  outline: 1px solid rgb(var(--bg-accent));
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- layout ---------- */
+
+.a-shell {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: calc(var(--unit) * 8) calc(var(--unit) * 6) calc(var(--unit) * 16);
+}
+
+.a-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--unit) * 3);
+  padding-bottom: calc(var(--unit) * 4);
+  border-bottom: 1px solid rgb(var(--border-primary));
+}
+
+.a-header__title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.a-header__subtitle {
+  margin: calc(var(--unit) * 1) 0 0;
+  color: rgb(var(--text-secondary));
+  font-size: 13px;
+  line-height: 18px;
+  max-width: 68ch;
+}
+
+.a-section {
+  margin-top: calc(var(--unit) * 9);
+}
+
+.a-section__title {
+  margin: 0 0 calc(var(--unit) * 1);
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+}
+
+.a-section__note,
+.a-prose {
+  margin: 0 0 calc(var(--unit) * 4);
+  color: rgb(var(--text-secondary));
+  font-size: 13px;
+  line-height: 20px;
+  max-width: 72ch;
+}
+
+.a-grid {
+  display: grid;
+  gap: calc(var(--unit) * 3);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.a-grid--halves {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+/* ---------- surfaces ---------- */
+
+.a-panel {
+  background: rgb(var(--bg-elevated));
+  border: 1px solid rgb(var(--border-secondary));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-l1);
+  padding: calc(var(--unit) * 4);
+}
+
+.a-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--unit) * 2);
+  margin-bottom: calc(var(--unit) * 3);
+}
+
+.a-panel__title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.a-label {
+  color: rgb(var(--text-tertiary));
+  font-size: 12px;
+  line-height: 16px;
+  text-transform: none;
+}
+
+/* ---------- metrics ---------- */
+
+.a-metric {
+  background: rgb(var(--tint-tertiary));
+  border: 1px solid rgb(var(--border-secondary));
+  border-radius: var(--radius);
+  padding: calc(var(--unit) * 3);
+}
+
+.a-metric__label {
+  color: rgb(var(--text-secondary));
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.a-metric__value {
+  margin-top: calc(var(--unit) * 1);
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.a-metric__delta {
+  margin-top: calc(var(--unit) * 1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  color: rgb(var(--text-secondary));
+}
+
+.a-metric__delta[data-trend="up"] {
+  color: rgb(var(--text-green));
+}
+
+.a-metric__delta[data-trend="down"] {
+  color: rgb(var(--text-red));
+}
+
+/* ---------- status ---------- */
+
+.a-status {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--unit) * 1.5);
+  font-size: 12px;
+  line-height: 16px;
+  color: rgb(var(--text-secondary));
+  white-space: nowrap;
+}
+
+.a-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.a-status[data-state="done"] {
+  color: rgb(var(--text-green));
+}
+
+.a-status[data-state="active"] {
+  color: rgb(var(--text-blue));
+}
+
+.a-status[data-state="at-risk"] {
+  color: rgb(var(--text-orange));
+}
+
+.a-status[data-state="blocked"] {
+  color: rgb(var(--text-red));
+}
+
+.a-status[data-state="planned"] {
+  color: rgb(var(--text-tertiary));
+}
+
+/* ---------- tables ---------- */
+
+.a-table-scroll {
+  overflow-x: auto;
+  border: 1px solid rgb(var(--border-secondary));
+  border-radius: var(--radius);
+  background: rgb(var(--bg-elevated));
+}
+
+.a-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.a-table th,
+.a-table td {
+  text-align: left;
+  padding: calc(var(--unit) * 2) calc(var(--unit) * 3);
+  border-bottom: 1px solid rgb(var(--border-secondary));
+  vertical-align: top;
+}
+
+.a-table thead th {
+  position: sticky;
+  top: 0;
+  background: rgb(var(--bg-wash));
+  color: rgb(var(--text-secondary));
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 16px;
+  z-index: 1;
+}
+
+.a-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.a-table tbody tr:hover td {
+  background: rgb(var(--tint-tertiary));
+}
+
+.a-table td[data-numeric],
+.a-table th[data-numeric] {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+/* Pinned columns: `data-a-sticky-columns="N"` keeps the first N columns in
+   view while the table scrolls sideways. CSS alone pins the first column, so
+   N=1 works without script; kit.js measures the leading columns, marks each
+   pinned cell `data-a-sticky` with its `--a-sticky-left` offset, and flags the
+   table `data-a-sticky-ready`. Pinned cells need opaque backgrounds or the
+   scrolled columns show through them. */
+.a-table[data-a-sticky-columns]:not([data-a-sticky-ready]):not([data-a-sticky-columns="0"])
+  tr
+  > :first-child,
+.a-table[data-a-sticky-ready] [data-a-sticky] {
+  position: sticky;
+  left: var(--a-sticky-left, 0);
+  z-index: 1;
+  background-color: rgb(var(--bg-elevated));
+}
+
+/* Header row above pinned body cells; the pinned corner above both. */
+.a-table[data-a-sticky-columns] thead th {
+  z-index: 2;
+}
+
+.a-table[data-a-sticky-columns]:not([data-a-sticky-ready]):not([data-a-sticky-columns="0"])
+  thead
+  tr
+  > :first-child,
+.a-table[data-a-sticky-ready] thead [data-a-sticky] {
+  z-index: 3;
+  background-color: rgb(var(--bg-wash));
+}
+
+/* The row tint is translucent, so layer it over the opaque surface. */
+.a-table[data-a-sticky-columns]:not([data-a-sticky-ready]):not([data-a-sticky-columns="0"])
+  tbody
+  tr:hover
+  > td:first-child,
+.a-table[data-a-sticky-ready] tbody tr:hover > td[data-a-sticky] {
+  background: linear-gradient(
+      rgb(var(--tint-tertiary)),
+      rgb(var(--tint-tertiary))
+    )
+    rgb(var(--bg-elevated));
+}
+
+/* Divider on the last pinned column. Table cells don't paint box-shadow when
+   borders collapse, so it is a pseudo-element. Without script there is no
+   scroll state and it is always shown; with it, only while scrolled. */
+.a-table[data-a-sticky-columns]:not([data-a-sticky-ready]):not([data-a-sticky-columns="0"])
+  tr
+  > :first-child::after,
+.a-table[data-a-sticky-ready] [data-a-sticky="edge"]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: 8px;
+  border-left: 1px solid rgb(var(--border-primary));
+  background: linear-gradient(to right, rgb(0 0 0 / 0.08), transparent);
+  pointer-events: none;
+}
+
+.a-table-scroll:not([data-a-scrolled])
+  .a-table[data-a-sticky-ready]
+  [data-a-sticky="edge"]::after {
+  display: none;
+}
+
+/* ---------- charts (inline SVG + CSS bars) ---------- */
+
+.a-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.a-chart__grid line {
+  stroke: rgb(var(--border-primary));
+  stroke-dasharray: 2 3;
+}
+
+.a-chart__axis text {
+  fill: rgb(var(--text-tertiary));
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.a-chart__series {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.a-chart__point {
+  stroke: rgb(var(--bg-elevated));
+  stroke-width: 1.5;
+}
+
+.a-bars {
+  display: grid;
+  gap: calc(var(--unit) * 2);
+  margin: 0;
+}
+
+.a-bars__row {
+  display: grid;
+  grid-template-columns: minmax(88px, 22%) 1fr auto;
+  align-items: center;
+  gap: calc(var(--unit) * 2);
+  font-size: 13px;
+}
+
+.a-bars__track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgb(var(--tint-secondary));
+  overflow: hidden;
+}
+
+.a-bars__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: rgb(var(--bg-accent));
+}
+
+.a-bars__value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: rgb(var(--text-secondary));
+}
+
+.a-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--unit) * 3);
+  margin: calc(var(--unit) * 3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: rgb(var(--text-secondary));
+}
+
+.a-legend li {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--unit) * 1.5);
+}
+
+.a-legend__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+/* Series colors stay stable across themes so legends keep meaning. */
+.a-series-1 {
+  --series: 49 124 255;
+}
+.a-series-2 {
+  --series: 0 165 88;
+}
+.a-series-3 {
+  --series: 149 108 222;
+}
+.a-series-4 {
+  --series: 245 142 58;
+}
+
+.a-chart__series.a-series-1,
+.a-chart__series.a-series-2,
+.a-chart__series.a-series-3,
+.a-chart__series.a-series-4 {
+  stroke: rgb(var(--series));
+}
+
+.a-chart__point.a-series-1,
+.a-chart__point.a-series-2,
+.a-chart__point.a-series-3,
+.a-chart__point.a-series-4 {
+  fill: rgb(var(--series));
+}
+
+.a-series-1 .a-legend__swatch,
+.a-series-2 .a-legend__swatch,
+.a-series-3 .a-legend__swatch,
+.a-series-4 .a-legend__swatch {
+  background: rgb(var(--series));
+}
+
+.a-chart__bar.a-series-1,
+.a-chart__bar.a-series-2,
+.a-chart__bar.a-series-3,
+.a-chart__bar.a-series-4 {
+  fill: rgb(var(--series));
+}
+
+/* Dimming the rest of the plot reads as "this is the value you asked for"
+   without moving anything, which keeps the highlight legible under
+   reduced motion. */
+.a-chart__bar,
+.a-chart__point,
+.a-chart__series {
+  transition: opacity 120ms ease;
+}
+
+.a-chart__plot:has([data-a-active]) .a-chart__bar:not([data-a-active]) {
+  opacity: 0.45;
+}
+
+.a-chart__point[data-a-active] {
+  r: 4.25;
+}
+
+.a-chart__crosshair {
+  stroke: rgb(var(--border-primary));
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.a-chart__band {
+  fill: transparent;
+  /* Vertical scrolling must still work when a finger lands on the plot. */
+  touch-action: pan-y;
+}
+
+.a-chart__band[data-a-active] {
+  fill: rgb(var(--tint-secondary));
+}
+
+.a-chart__band:focus-visible {
+  outline: 1px solid rgb(var(--bg-accent));
+  outline-offset: -2px;
+}
+
+.a-chart {
+  touch-action: pan-y;
+}
+
+/* Shown in place of the plot when a filter leaves the source table empty. */
+.a-chart__empty {
+  margin: 0 0 calc(var(--unit) * 3);
+  padding: calc(var(--unit) * 6) 0;
+  border: 1px dashed rgb(var(--border-secondary));
+  border-radius: var(--radius);
+  color: rgb(var(--text-secondary));
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------- tooltip ---------- */
+
+.a-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  min-width: 120px;
+  max-width: 260px;
+  padding: calc(var(--unit) * 2) calc(var(--unit) * 2.5);
+  border: 1px solid rgb(var(--border-secondary));
+  border-radius: var(--radius);
+  background: rgb(var(--bg-elevated));
+  box-shadow: var(--shadow-l2);
+  color: rgb(var(--text-primary));
+  font-size: 12px;
+  line-height: 16px;
+  pointer-events: none;
+}
+
+.a-tip__title {
+  margin-bottom: var(--unit);
+  font-weight: 600;
+  color: rgb(var(--text-primary));
+}
+
+.a-tip__text {
+  color: rgb(var(--text-secondary));
+}
+
+.a-tip__row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--unit) * 1.5);
+  white-space: nowrap;
+}
+
+.a-tip__swatch {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 2px;
+  background: rgb(var(--series, var(--bg-accent)));
+}
+
+.a-tip__name {
+  color: rgb(var(--text-secondary));
+}
+
+.a-tip__value {
+  margin-left: auto;
+  padding-left: calc(var(--unit) * 2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- controls: tabs, filters, toggles ---------- */
+
+.a-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--unit) * 2);
+  margin-bottom: calc(var(--unit) * 4);
+}
+
+.a-tabs {
+  display: flex;
+  gap: calc(var(--unit) * 1);
+  padding: 2px;
+  background: rgb(var(--tint-tertiary));
+  border: 1px solid rgb(var(--border-secondary));
+  border-radius: var(--radius);
+}
+
+.a-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgb(var(--text-secondary));
+  font: inherit;
+  font-size: 13px;
+  padding: calc(var(--unit) * 1) calc(var(--unit) * 2.5);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.a-btn:hover {
+  background: rgb(var(--tint-secondary));
+  color: rgb(var(--text-primary));
+}
+
+.a-btn[aria-selected="true"],
+.a-btn[aria-pressed="true"] {
+  background: rgb(var(--bg-elevated));
+  border-color: rgb(var(--border-primary));
+  color: rgb(var(--text-primary));
+  box-shadow: var(--shadow-l1);
+}
+
+.a-btn--outline {
+  border-color: rgb(var(--border-primary));
+  background: rgb(var(--bg-elevated));
+}
+
+.a-btn--icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+}
+
+.a-theme-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.a-theme-icon--moon {
+  display: none;
+}
+
+:root[data-theme="dark"] .a-theme-icon--sun {
+  display: none;
+}
+
+:root[data-theme="dark"] .a-theme-icon--moon {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .a-theme-icon--sun {
+    display: none;
+  }
+
+  :root:not([data-theme]) .a-theme-icon--moon {
+    display: block;
+  }
+}
+
+.a-select {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  color: rgb(var(--text-primary));
+  background: rgb(var(--bg-elevated));
+  border: 1px solid rgb(var(--border-primary));
+  border-radius: var(--radius-sm);
+  padding: calc(var(--unit) * 1) calc(var(--unit) * 2);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ---------- diagram ---------- */
+
+.a-diagram {
+  position: relative;
+  background: rgb(var(--bg-wash));
+  border: 1px solid rgb(var(--border-secondary));
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.a-diagram__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  cursor: grab;
+}
+
+.a-diagram__canvas:active {
+  cursor: grabbing;
+}
+
+.a-group rect {
+  fill: rgb(var(--tint-tertiary));
+  stroke: rgb(var(--border-primary));
+  stroke-dasharray: 4 4;
+  rx: 10;
+}
+
+.a-group text {
+  fill: rgb(var(--text-tertiary));
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.a-node rect {
+  fill: rgb(var(--bg-elevated));
+  stroke: rgb(var(--border-primary));
+  rx: 8;
+}
+
+.a-node__title {
+  fill: rgb(var(--text-primary));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.a-node__sub {
+  fill: rgb(var(--text-secondary));
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.a-node {
+  cursor: pointer;
+}
+
+.a-node:hover rect,
+.a-node:focus-visible rect {
+  stroke: rgb(var(--bg-accent));
+}
+
+.a-node[aria-current="true"] rect {
+  stroke: rgb(var(--bg-accent));
+  stroke-width: 2;
+}
+
+.a-edge {
+  fill: none;
+  stroke: rgb(var(--text-tertiary));
+  stroke-width: 1.25;
+}
+
+.a-edge--dim {
+  stroke: rgb(var(--border-primary));
+}
+
+.a-edge__label {
+  fill: rgb(var(--text-tertiary));
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.a-inspector {
+  border-top: 1px solid rgb(var(--border-secondary));
+  background: rgb(var(--bg-elevated));
+  padding: calc(var(--unit) * 3) calc(var(--unit) * 4);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.a-inspector__title {
+  margin: 0 0 calc(var(--unit) * 1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ---------- plan / process ---------- */
+
+.a-phase {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: calc(var(--unit) * 3);
+  padding: calc(var(--unit) * 4) 0;
+  border-bottom: 1px solid rgb(var(--border-secondary));
+}
+
+.a-phase:last-child {
+  border-bottom: none;
+}
+
+.a-phase__index {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: rgb(var(--text-tertiary));
+  padding-top: 2px;
+}
+
+.a-phase__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: calc(var(--unit) * 2);
+  justify-content: space-between;
+}
+
+.a-phase__title {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.a-meta-list {
+  display: grid;
+  gap: calc(var(--unit) * 1);
+  margin: calc(var(--unit) * 2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: rgb(var(--text-secondary));
+}
+
+.a-meta-list li,
+.a-meta-list > div {
+  display: grid;
+  grid-template-columns: minmax(96px, 15%) 1fr;
+  gap: calc(var(--unit) * 2);
+}
+
+.a-meta-list dt,
+.a-meta-list .a-meta-list__key {
+  color: rgb(var(--text-tertiary));
+  font-size: 12px;
+}
+
+.a-meta-list dd {
+  margin: 0;
+}
+
+.a-timeline {
+  display: grid;
+  gap: calc(var(--unit) * 1);
+  margin: 0;
+  font-size: 12px;
+}
+
+.a-timeline__row {
+  display: grid;
+  grid-template-columns: minmax(120px, 20%) 1fr;
+  align-items: center;
+  gap: calc(var(--unit) * 2);
+}
+
+.a-timeline__track {
+  position: relative;
+  height: 10px;
+  background: rgb(var(--tint-tertiary));
+  border-radius: var(--radius-sm);
+}
+
+.a-timeline__span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--radius-sm);
+  background: rgb(var(--bg-accent) / 0.75);
+}
+
+.a-timeline__span[data-state="at-risk"] {
+  background: rgb(var(--text-orange) / 0.75);
+}
+
+.a-timeline__span[data-state="done"] {
+  background: rgb(var(--text-green) / 0.7);
+}
+
+.a-timeline__scale {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  color: rgb(var(--text-tertiary));
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.a-callout {
+  border: 1px solid rgb(var(--border-secondary));
+  border-left: 2px solid rgb(var(--text-orange));
+  border-radius: var(--radius-sm);
+  background: rgb(var(--tint-tertiary));
+  padding: calc(var(--unit) * 3);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.a-callout--decision {
+  border-left-color: rgb(var(--bg-accent));
+}
+
+.a-callout--risk {
+  border-left-color: rgb(var(--text-red));
+}
+
+.a-callout__title {
+  margin: 0 0 calc(var(--unit) * 1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+details.a-disclosure {
+  border-top: 1px solid rgb(var(--border-secondary));
+  padding: calc(var(--unit) * 2) 0;
+}
+
+details.a-disclosure > summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: rgb(var(--text-secondary));
+  list-style: none;
+}
+
+details.a-disclosure > summary::marker,
+details.a-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.a-disclosure > summary::before {
+  content: "+ ";
+  font-family: var(--font-mono);
+}
+
+details.a-disclosure[open] > summary::before {
+  content: "− ";
+}
+
+/* ---------- empty and error states ---------- */
+
+.a-empty,
+.a-error {
+  border: 1px dashed rgb(var(--border-primary));
+  border-radius: var(--radius);
+  padding: calc(var(--unit) * 6);
+  text-align: center;
+  color: rgb(var(--text-secondary));
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.a-error {
+  border-style: solid;
+  border-color: rgb(var(--text-red) / 0.4);
+  color: rgb(var(--text-primary));
+  text-align: left;
+}
+
+.a-error__title {
+  margin: 0 0 calc(var(--unit) * 1);
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--text-red));
+}
+
+.a-footnote {
+  margin-top: calc(var(--unit) * 10);
+  padding-top: calc(var(--unit) * 4);
+  border-top: 1px solid rgb(var(--border-secondary));
+  color: rgb(var(--text-tertiary));
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.a-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 640px) {
+  .a-shell {
+    padding: calc(var(--unit) * 5) calc(var(--unit) * 4)
+      calc(var(--unit) * 12);
+  }
+
+  .a-header__title {
+    font-size: 18px;
+    line-height: 24px;
+  }
+
+  .a-bars__row,
+  .a-timeline__row,
+  .a-meta-list li,
+  .a-meta-list > div {
+    grid-template-columns: 1fr;
+    gap: calc(var(--unit) * 1);
+  }
+
+  .a-phase {
+    grid-template-columns: 1fr;
+  }
+
+  .a-phase__index {
+    padding-top: 0;
+  }
+
+  .a-toolbar {
+    align-items: stretch;
+  }
+
+  .a-tabs {
+    overflow-x: auto;
+  }
+}
+
+/* ---------- motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- print / export ---------- */
+
+@media print {
+  :root[data-theme],
+  :root:not([data-theme]) {
+    color-scheme: light only;
+    --bg-page: 252 252 252;
+    --bg-wash: 248 248 248;
+    --bg-elevated: 255 255 255;
+    --tint-tertiary: 0 0 0 / 0.04;
+    --tint-secondary: 0 0 0 / 0.06;
+    --tint-primary: 0 0 0 / 0.08;
+    --text-primary: 25 25 25;
+    --text-secondary: 25 25 25 / 0.64;
+    --text-tertiary: 25 25 25 / 0.4;
+    --text-accent: 49 124 255;
+    --bg-accent: 49 124 255;
+    --border-secondary: 0 0 0 / 0.08;
+    --border-primary: 0 0 0 / 0.1;
+    --text-green: 0 165 88;
+    --text-orange: 245 142 58;
+    --text-red: 245 59 58;
+    --text-blue: 51 125 244;
+    --text-purple: 149 108 222;
+    --shadow-l1: none;
+    --shadow-l2: none;
+  }
+
+  body {
+    background: #fff;
+    color: #111;
+  }
+
+  .a-no-print,
+  .a-toolbar,
+  .a-diagram__hint {
+    display: none !important;
+  }
+
+  .a-panel,
+  .a-table-scroll,
+  .a-diagram {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  .a-table[data-a-sticky-columns] tr > :first-child,
+  .a-table [data-a-sticky] {
+    position: static !important;
+  }
+
+  .a-table[data-a-sticky-columns] tr > :first-child::after,
+  .a-table [data-a-sticky]::after {
+    display: none !important;
+  }
+
+  .a-section {
+    break-inside: avoid;
+    margin-top: 24px;
+  }
+
+  [hidden].a-print-reveal {
+    display: revert !important;
+  }
+}
+    </style>
+  </head>
+  <body>
+    <main class="a-shell">
+      <header class="a-header">
+        <div>
+          <h1 class="a-header__title">AgentDock · 个人 agent 语音通讯录 产品设计稿 v2</h1>
+          <p class="a-header__subtitle">一条灵动岛式的系统级液态玻璃 Dock 条：一键呼叫、闭麦、挂断、切换你订阅的各家常驻个人 agent（dot、Grok Bot、Copilot、Devin，预留 Muse）；浏览器优先、全程无感；含登录授权流程与 Tauri 2 实现路线。</p>
+        </div>
+        <button
+          type="button"
+          class="a-btn a-btn--icon a-no-print"
+          data-a-theme-toggle
+          aria-label="Switch to dark mode"
+          title="Switch to dark mode"
+        >
+          <svg
+            class="a-theme-icon a-theme-icon--moon"
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+          >
+            <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
+          </svg>
+          <svg
+            class="a-theme-icon a-theme-icon--sun"
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+          >
+            <circle cx="12" cy="12" r="4" />
+            <path
+              d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+            />
+          </svg>
+        </button>
+      </header>
+
+      <section
+        class="a-section a-error"
+        data-a-error
+        role="alert"
+        aria-live="polite"
+        hidden
+      >
+        <p class="a-error__title">Something in this artifact failed to run</p>
+        <p>
+          The content below is still readable, but an interactive control may
+          not respond.
+          <span data-a-error-detail></span>
+        </p>
+      </section>
+
+<section class="a-section" aria-labelledby="pos-heading">
+  <h2 class="a-section__title" id="pos-heading">一句话定位</h2>
+  <p class="a-section__note">
+    一条悬浮在桌面上的"个人 agent 语音通讯录"：把你订阅的各家常驻 agent（ChatGPT dot、Grok Bot、Copilot、Muse、Devin）当成一排可呼叫的联系人，一键呼叫、一键闭麦、一键挂断或切到另一位。它不替你选模型、不让 agent 互相传话，只解决"用语音找谁、怎么快、怎么好看"这三件事。
+  </p>
+  <div class="a-grid">
+    <div class="a-metric">
+      <div class="a-metric__label">形态</div>
+      <div class="a-metric__value">Dock 条</div>
+      <div class="a-metric__delta">灵动岛式三级展开 · 系统级液态玻璃</div>
+    </div>
+    <div class="a-metric">
+      <div class="a-metric__label">核心动作</div>
+      <div class="a-metric__value">4 个</div>
+      <div class="a-metric__delta">呼叫 · 闭麦 · 挂断 · 切换</div>
+    </div>
+    <div class="a-metric">
+      <div class="a-metric__label">首发席位</div>
+      <div class="a-metric__value">2–3</div>
+      <div class="a-metric__delta">dot、Copilot（网页，无感）；Grok Bot（App）</div>
+    </div>
+    <div class="a-metric">
+      <div class="a-metric__label">接入方式</div>
+      <div class="a-metric__value">无感</div>
+      <div class="a-metric__delta">隐藏 webview 代码控制，不弹浏览器</div>
+    </div>
+  </div>
+  <div class="a-callout a-callout--decision">
+    <p class="a-callout__title">本版（v2）相对 v1 的改动</p>
+    "坑位"统一改为<strong>席位</strong>；席位图标改为各家官方标识并支持自定义图片/GIF；设置窗支持系统材质透明、深浅色与跟随系统；新增快捷键页、Dock 默认形态（含常驻小宠物）；通话中增加"一键闭麦 + 切换席位"完整原型；接入路线改为<strong>浏览器优先、全程无感</strong>，并补了登录/授权流程原型；技术方案改为 Tauri 2（Rust 核心 + 系统原生材质），以便在 Linux 云电脑开发、Mac 先跑。
+  </div>
+</section>
+
+<section class="a-section" aria-labelledby="principles-heading">
+  <h2 class="a-section__title" id="principles-heading">设计原则：怎么像一件艺术品</h2>
+  <p class="a-section__note">对齐 Apple HIG 的"Liquid Glass"语言：玻璃是<em>一层悬浮在内容之上的材质</em>，不是贴图；它折射桌面壁纸、随内容变色、随动作形变。Windows 端用 Fluent 的 Mica/Acrylic 做等价物。</p>
+  <div class="a-grid a-grid--halves">
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">材质</p></div>
+      <ul class="a-prose">
+        <li><strong>真玻璃</strong>：macOS 用 <code>NSVisualEffectView</code>（hudWindow / popover 材质，behindWindow 混合），Windows 用 Mica Alt / Acrylic；绝不用 CSS <code>backdrop-filter</code> 冒充。</li>
+        <li><strong>两层光</strong>：外圈 1 px 高光描边（上亮下暗，模拟玻璃厚度）+ 内部 4% 白色径向高光；阴影 0 24 48 / 20% 黑，让条真正"浮"起来。</li>
+        <li><strong>自适应</strong>：浅色壁纸上文字用深色、深色壁纸上用浅色，跟随系统外观实时切换，不做自己的主题色。</li>
+      </ul>
+    </div>
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">形</p></div>
+      <ul class="a-prose">
+        <li><strong>连续圆角</strong>：所有圆角用 Apple 的 squircle（continuous corner），胶囊半径 = 高度/2；Windows 用 8 px 系统圆角并关闭方角 fallback。</li>
+        <li><strong>同心</strong>：圆钮 56 px，胶囊高 56 px，圆钮之间 12 px；图标在圆钮里占 44%，视觉重心居中（非几何居中）。</li>
+        <li><strong>少</strong>：Dock 条上没有文字标签（悬停才出现），没有边框按钮，没有分隔线。</li>
+      </ul>
+    </div>
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">动</p></div>
+      <ul class="a-prose">
+        <li><strong>形变而非切换</strong>：小圆点 → 胶囊 → 通话态是同一块玻璃的连续形变（spring 0.45 / damping 0.82），像灵动岛。</li>
+        <li><strong>有呼吸</strong>：空闲圆点 4 s 周期微亮；通话中波形由真实麦克风电平驱动；闭麦时波形冻成一条细线。</li>
+        <li><strong>可减弱</strong>：跟随系统"减弱动态效果"，所有形变退化为 150 ms 淡入淡出。</li>
+      </ul>
+    </div>
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">Windows 等价</p></div>
+      <ul class="a-prose">
+        <li>Mica Alt（无焦点也保持材质）+ <code>DwmSetWindowAttribute</code> 圆角；WinUI 3 风格阴影。</li>
+        <li>任务栏不显示图标，常驻托盘；位置默认靠顶部居中，与 macOS 一致。</li>
+        <li>Segoe Fluent Icons 作为 SF Symbols 的替身，图标重量对齐。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="a-section" aria-labelledby="dock-heading">
+  <h2 class="a-section__title" id="dock-heading">原型图 · Dock 条</h2>
+  <p class="a-section__note">
+    左侧一个很短的"总控胶囊"，右侧一排独立的圆形玻璃按钮，每个圆钮是一个<strong>席位</strong>。不通话时整条收成一个小圆点贴在屏幕顶部边缘；点一下或按全局快捷键展开；进入通话后胶囊变长。下图玻璃效果为示意，真实材质由系统渲染。席位图标使用各家官方标识（见"官方图标"一节），这里用品牌色占位。
+  </p>
+
+  <figure class="a-panel">
+    <figcaption class="a-panel__title">状态 A · 收起（小圆点）／ 常驻宠物</figcaption>
+    <svg viewBox="0 0 760 110" width="100%" role="img" aria-label="收起状态：屏幕顶部中央一个带呼吸光的小圆点；右侧示意可换成一个常驻小宠物头像">
+      <defs>
+        <linearGradient id="wall1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b2a4a"/><stop offset="0.5" stop-color="#4b2a6b"/><stop offset="1" stop-color="#0f3b4f"/></linearGradient>
+        <linearGradient id="glassDark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.08"/></linearGradient>
+        <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.7"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.15"/></linearGradient>
+        <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#ffffff" stop-opacity="0.35"/><stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>
+        <filter id="blur8"><feGaussianBlur stdDeviation="8"/></filter>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000" flood-opacity="0.35"/></filter>
+      </defs>
+      <rect width="760" height="110" rx="12" fill="url(#wall1)"/>
+      <circle cx="300" cy="40" r="60" fill="#ff7a59" opacity="0.35" filter="url(#blur8)"/>
+      <circle cx="480" cy="90" r="50" fill="#3dd6f5" opacity="0.3" filter="url(#blur8)"/>
+      <rect width="760" height="22" fill="#000" opacity="0.25"/>
+      <g filter="url(#shadow)">
+        <circle cx="200" cy="56" r="13" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="200" cy="56" r="26" fill="url(#glow)"/>
+        <circle cx="200" cy="56" r="4" fill="#fff" opacity="0.9"/>
+      </g>
+      <text x="200" y="96" text-anchor="middle" font-size="11" fill="#e5e5ea" opacity="0.8">默认形态 · 小圆点（悬停 / ⌥Space 展开）</text>
+      <g filter="url(#shadow)">
+        <rect x="500" y="36" width="80" height="40" rx="20" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="522" cy="56" r="12" fill="#ffd60a"/>
+        <circle cx="518" cy="53" r="1.6" fill="#1c1c1e"/><circle cx="526" cy="53" r="1.6" fill="#1c1c1e"/>
+        <path d="M518 59q4 3 8 0" stroke="#1c1c1e" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+        <rect x="546" y="50" width="22" height="3" rx="1.5" fill="#fff" opacity="0.8"/>
+        <rect x="546" y="57" width="14" height="3" rx="1.5" fill="#fff" opacity="0.5"/>
+      </g>
+      <text x="540" y="96" text-anchor="middle" font-size="11" fill="#e5e5ea" opacity="0.8">可选形态 · 常驻宠物（最近一位 agent 的头像 / GIF）</text>
+    </svg>
+  </figure>
+
+  <figure class="a-panel">
+    <figcaption class="a-panel__title">状态 B · 展开（空闲）</figcaption>
+    <svg viewBox="0 0 760 130" width="100%" role="img" aria-label="展开状态：左侧短胶囊里有收起和麦克风两个按钮；右侧五个圆形玻璃钮分别是 dot、Grok Bot、Copilot、Devin 和待接入的 Muse，最右一个加号">
+      <rect width="760" height="130" rx="12" fill="url(#wall1)"/>
+      <circle cx="200" cy="30" r="70" fill="#ff7a59" opacity="0.35" filter="url(#blur8)"/>
+      <circle cx="600" cy="110" r="60" fill="#3dd6f5" opacity="0.3" filter="url(#blur8)"/>
+      <rect width="760" height="22" fill="#000" opacity="0.25"/>
+      <g filter="url(#shadow)">
+        <rect x="96" y="38" width="128" height="56" rx="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="128" cy="66" r="17" fill="#fff" opacity="0.10"/>
+        <path d="M128 57v9M122 60.5a7.5 7.5 0 1 0 12 0" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <circle cx="192" cy="66" r="17" fill="#fff" opacity="0.10"/>
+        <rect x="188" y="56" width="8" height="12" rx="4" fill="#fff"/>
+        <path d="M186 65a6 6 0 0 0 12 0M192 71v4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </g>
+      <g filter="url(#shadow)">
+        <circle cx="272" cy="66" r="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="272" cy="66" r="12" fill="#f7f7f7"/><circle cx="272" cy="66" r="5" fill="#10a37f"/>
+      </g>
+      <g filter="url(#shadow)">
+        <circle cx="344" cy="66" r="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <rect x="333" y="55" width="22" height="22" rx="7" fill="#111"/><rect x="338" y="60" width="12" height="12" rx="3" fill="#fff"/>
+      </g>
+      <g filter="url(#shadow)">
+        <circle cx="416" cy="66" r="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <path d="M405 66c0-7 5-12 11-12s11 5 11 12-5 12-11 12" stroke="#4fb0ff" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M416 78c-6 0-11-5-11-12" stroke="#c45bff" stroke-width="4" fill="none" stroke-linecap="round"/>
+      </g>
+      <g filter="url(#shadow)">
+        <circle cx="488" cy="66" r="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="488" cy="66" r="11" fill="none" stroke="#bf5af2" stroke-width="4"/>
+        <circle cx="488" cy="66" r="3" fill="#bf5af2"/>
+      </g>
+      <g filter="url(#shadow)" opacity="0.55">
+        <circle cx="560" cy="66" r="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <path d="M549 66c3-8 8-12 11-12s8 4 11 12c-3 8-8 12-11 12s-8-4-11-12z" fill="none" stroke="#0668e1" stroke-width="3.5"/>
+      </g>
+      <g opacity="0.7">
+        <circle cx="624" cy="66" r="20" fill="none" stroke="#fff" stroke-width="1" stroke-dasharray="3 3"/>
+        <path d="M624 59v14M617 66h14" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>
+      </g>
+      <g font-size="10.5" fill="#e5e5ea" opacity="0.8" text-anchor="middle">
+        <text x="160" y="118">总控</text><text x="272" y="118">dot</text><text x="344" y="118">Grok Bot</text><text x="416" y="118">Copilot</text><text x="488" y="118">Devin</text><text x="560" y="118">Muse · 待接入</text><text x="624" y="118">添加</text>
+      </g>
+    </svg>
+  </figure>
+
+  <figure class="a-panel">
+    <figcaption class="a-panel__title">状态 C · 通话中（开麦）</figcaption>
+    <svg viewBox="0 0 760 130" width="100%" role="img" aria-label="通话中：胶囊变长，显示 dot 头像、名字 Alfred、时长 03:12、实时波形、一个麦克风按钮和一个红色挂断按钮；右侧其他席位圆钮缩小变暗，仍可点击切换">
+      <rect width="760" height="130" rx="12" fill="url(#wall1)"/>
+      <circle cx="200" cy="30" r="70" fill="#ff7a59" opacity="0.35" filter="url(#blur8)"/>
+      <circle cx="600" cy="110" r="60" fill="#3dd6f5" opacity="0.3" filter="url(#blur8)"/>
+      <rect width="760" height="22" fill="#000" opacity="0.25"/>
+      <g filter="url(#shadow)">
+        <rect x="70" y="38" width="372" height="56" rx="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="102" cy="66" r="18" fill="#f7f7f7"/><circle cx="102" cy="66" r="7" fill="#10a37f"/>
+        <text x="130" y="62" font-size="13" font-weight="600" fill="#fff">Alfred</text>
+        <text x="130" y="78" font-size="11" fill="#fff" opacity="0.65">dot · 03:12</text>
+        <g stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.9">
+          <path d="M226 66v-6M234 66v-14M242 66v-9M250 66v-18M258 66v-7M266 66v-12M274 66v-4M282 66v-10M290 66v-15M298 66v-6"/>
+          <path d="M226 66v6M234 66v14M242 66v9M250 66v18M258 66v7M266 66v12M274 66v4M282 66v10M290 66v15M298 66v6"/>
+        </g>
+        <circle cx="352" cy="66" r="17" fill="#fff" opacity="0.12"/>
+        <rect x="348" y="56" width="8" height="12" rx="4" fill="#fff"/>
+        <path d="M346 65a6 6 0 0 0 12 0M352 71v4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <circle cx="406" cy="66" r="17" fill="#ff453a"/>
+        <path d="M397 68c4-4 14-4 18 0l-3 3c-3-2-9-2-12 0z" fill="#fff"/>
+      </g>
+      <g filter="url(#shadow)" opacity="0.6">
+        <circle cx="486" cy="66" r="22" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <rect x="478" y="58" width="16" height="16" rx="5" fill="#111"/><rect x="482" y="62" width="8" height="8" rx="2" fill="#fff"/>
+        <circle cx="544" cy="66" r="22" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <path d="M536 66c0-5 4-9 8-9s8 4 8 9-4 9-8 9" stroke="#4fb0ff" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M544 75c-4 0-8-4-8-9" stroke="#c45bff" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <circle cx="602" cy="66" r="22" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="602" cy="66" r="8" fill="none" stroke="#bf5af2" stroke-width="3"/>
+      </g>
+      <text x="380" y="118" text-anchor="middle" font-size="10.5" fill="#e5e5ea" opacity="0.8">波形由真实麦克风电平驱动 · 点麦克风 = 一键闭麦 · 点任一变暗圆钮 = 挂断当前并切到该席位</text>
+    </svg>
+  </figure>
+
+  <figure class="a-panel">
+    <figcaption class="a-panel__title">状态 D · 通话中（已闭麦）→ 切换席位</figcaption>
+    <svg viewBox="0 0 760 130" width="100%" role="img" aria-label="已闭麦：麦克风按钮变琥珀色带斜线，波形冻成一条线；用户点了 Grok Bot 圆钮，胶囊显示正在切到 Ops，并有 3 秒撤销">
+      <rect width="760" height="130" rx="12" fill="url(#wall1)"/>
+      <circle cx="200" cy="30" r="70" fill="#ff7a59" opacity="0.35" filter="url(#blur8)"/>
+      <circle cx="600" cy="110" r="60" fill="#3dd6f5" opacity="0.3" filter="url(#blur8)"/>
+      <rect width="760" height="22" fill="#000" opacity="0.25"/>
+      <g filter="url(#shadow)">
+        <rect x="70" y="38" width="372" height="56" rx="28" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <rect x="88" y="52" width="28" height="28" rx="9" fill="#111"/><rect x="95" y="59" width="14" height="14" rx="4" fill="#fff"/>
+        <text x="130" y="62" font-size="13" font-weight="600" fill="#fff">切到 Ops…</text>
+        <text x="130" y="78" font-size="11" fill="#fff" opacity="0.65">正在挂断 Alfred · 已闭麦</text>
+        <path d="M226 66h72" stroke="#fff" stroke-width="2.5" stroke-linecap="round" opacity="0.35"/>
+        <circle cx="352" cy="66" r="17" fill="#ff9f0a"/>
+        <rect x="348" y="56" width="8" height="12" rx="4" fill="#fff"/>
+        <path d="M346 65a6 6 0 0 0 12 0M352 71v4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <path d="M343 57l18 18" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+        <rect x="378" y="52" width="56" height="28" rx="14" fill="#fff" opacity="0.14"/>
+        <text x="406" y="70" text-anchor="middle" font-size="11" fill="#fff">撤销 3</text>
+      </g>
+      <g filter="url(#shadow)">
+        <circle cx="486" cy="66" r="24" fill="url(#glassDark)" stroke="#fff" stroke-width="1.6"/>
+        <rect x="477" y="57" width="18" height="18" rx="6" fill="#111"/><rect x="481.5" y="61.5" width="9" height="9" rx="2.5" fill="#fff"/>
+      </g>
+      <g filter="url(#shadow)" opacity="0.5">
+        <circle cx="544" cy="66" r="22" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <path d="M536 66c0-5 4-9 8-9s8 4 8 9-4 9-8 9" stroke="#4fb0ff" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <path d="M544 75c-4 0-8-4-8-9" stroke="#c45bff" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <circle cx="602" cy="66" r="22" fill="url(#glassDark)" stroke="url(#rim)" stroke-width="1"/>
+        <circle cx="602" cy="66" r="8" fill="none" stroke="#bf5af2" stroke-width="3"/>
+      </g>
+      <text x="380" y="118" text-anchor="middle" font-size="10.5" fill="#e5e5ea" opacity="0.8">闭麦状态在切换后保持（切到 Ops 仍是闭麦）· 3 s 内可撤销，防误触</text>
+    </svg>
+  </figure>
+
+  <figure class="a-panel">
+    <figcaption class="a-panel__title">同一条 Dock 在浅色壁纸上（跟随系统外观）</figcaption>
+    <svg viewBox="0 0 760 110" width="100%" role="img" aria-label="浅色壁纸上的展开态：玻璃变为乳白半透明，图标与文字变为深色">
+      <defs>
+        <linearGradient id="wall2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3e7d3"/><stop offset="0.5" stop-color="#dfe9f5"/><stop offset="1" stop-color="#f7dce2"/></linearGradient>
+        <linearGradient id="glassLight" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.75"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.45"/></linearGradient>
+        <filter id="shadowL" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="8" stdDeviation="9" flood-color="#5a4a6a" flood-opacity="0.22"/></filter>
+      </defs>
+      <rect width="760" height="110" rx="12" fill="url(#wall2)"/>
+      <circle cx="240" cy="20" r="70" fill="#ffb199" opacity="0.5" filter="url(#blur8)"/>
+      <circle cx="560" cy="100" r="60" fill="#9ad7ff" opacity="0.5" filter="url(#blur8)"/>
+      <rect width="760" height="22" fill="#fff" opacity="0.35"/>
+      <g filter="url(#shadowL)">
+        <rect x="96" y="30" width="128" height="56" rx="28" fill="url(#glassLight)" stroke="#fff" stroke-width="1"/>
+        <path d="M128 49v9M122 52.5a7.5 7.5 0 1 0 12 0" stroke="#1c1c1e" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <rect x="188" y="48" width="8" height="12" rx="4" fill="#1c1c1e"/>
+        <path d="M186 57a6 6 0 0 0 12 0M192 63v4" stroke="#1c1c1e" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </g>
+      <g filter="url(#shadowL)">
+        <circle cx="272" cy="58" r="28" fill="url(#glassLight)" stroke="#fff" stroke-width="1"/>
+        <circle cx="272" cy="58" r="12" fill="#1c1c1e"/><circle cx="272" cy="58" r="5" fill="#10a37f"/>
+        <circle cx="344" cy="58" r="28" fill="url(#glassLight)" stroke="#fff" stroke-width="1"/>
+        <rect x="333" y="47" width="22" height="22" rx="7" fill="#111"/><rect x="338" y="52" width="12" height="12" rx="3" fill="#fff"/>
+        <circle cx="416" cy="58" r="28" fill="url(#glassLight)" stroke="#fff" stroke-width="1"/>
+        <path d="M405 58c0-7 5-12 11-12s11 5 11 12-5 12-11 12" stroke="#1e7fe0" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M416 70c-6 0-11-5-11-12" stroke="#a23ee6" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <circle cx="488" cy="58" r="28" fill="url(#glassLight)" stroke="#fff" stroke-width="1"/>
+        <circle cx="488" cy="58" r="11" fill="none" stroke="#8e44d6" stroke-width="4"/>
+      </g>
+    </svg>
+  </figure>
+
+  <h3 class="a-panel__title" style="margin-top:1.5rem">官方图标：放哪里、怎么拿</h3>
+  <div class="a-table-scroll">
+    <table class="a-table">
+      <caption class="a-visually-hidden">各席位默认图标的来源与使用方式</caption>
+      <thead><tr><th scope="col">席位</th><th scope="col">默认图标</th><th scope="col">来源</th><th scope="col">用法</th></tr></thead>
+      <tbody>
+        <tr><td>dot</td><td>OpenAI 单色标识 / 你 dot 的头像</td><td>openai.com/brand；dot 头像从 chatgpt.com profile 页抓取（登录后）</td><td>白底黑标，圆钮内 44%；连接账号后自动换成你给 dot 设的头像</td></tr>
+        <tr><td>Grok Bot</td><td>Grok Bot 应用图标 / Bot 头像</td><td>cursor.com 品牌页；本机 <code>.app</code> 内 <code>AppIcon.icns</code></td><td>自动从已安装的 App 里提取图标，再按 Bot 名称换头像</td></tr>
+        <tr><td>Copilot</td><td>Copilot 彩色回环标</td><td>Microsoft Copilot 品牌资源</td><td>原色使用，不改色</td></tr>
+        <tr><td>Devin</td><td>Devin 标识</td><td>cognition.ai 品牌资源</td><td>单色，随深浅色反相</td></tr>
+        <tr><td>Muse</td><td>Meta Muse 标识</td><td>meta.com 品牌资源</td><td>未接入时 55% 不透明</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="a-section__note">任何席位都可在设置里换成自定义图片：PNG / SVG / WebP / <strong>GIF / APNG</strong>（动图在空闲时静止、悬停和通话时播放），建议 256×256，自动裁圆。发布时须遵守各家商标使用条款（仅用于标识该服务、不暗示官方合作）。</p>
+</section>
+
+<section class="a-section" aria-labelledby="ix-heading">
+  <h2 class="a-section__title" id="ix-heading">交互规则</h2>
+  <div class="a-table-scroll">
+    <table class="a-table">
+      <caption class="a-visually-hidden">Dock 条上每种操作对应的结果</caption>
+      <thead><tr><th scope="col">操作</th><th scope="col">空闲时</th><th scope="col">通话中</th></tr></thead>
+      <tbody>
+        <tr><td>点小圆点 / ⌥Space</td><td>展开为胶囊 + 席位</td><td>展开或收起（通话不中断，收起后圆点变成当前席位头像色并显示时长）</td></tr>
+        <tr><td>点某席位圆钮</td><td>呼叫该席位（约 1–3 s 接通，胶囊先显示"正在呼叫…"）</td><td>挂断当前、呼叫该席位（切换），3 s 内可撤销；闭麦状态保持</td></tr>
+        <tr><td>点麦克风（或 ⌥M）</td><td>切换系统麦克风静音（全局）</td><td>一键闭麦/开麦；波形随之冻结/恢复</td></tr>
+        <tr><td>点红色挂断（或 ⌥Esc）</td><td>—</td><td>挂断，胶囊 400 ms 内缩回空闲态</td></tr>
+        <tr><td>长按席位</td><td colspan="2">菜单：打开该 agent 的聊天 · 口述一条消息 · 重新登录 · 设置</td></tr>
+        <tr><td>⌥1 … ⌥9</td><td colspan="2">直接呼叫 / 切换到第 n 个席位（顺序 = 设置里的排序）</td></tr>
+        <tr><td>按住 ⌥Space 说话</td><td colspan="2">对讲机模式：按住开麦，松开闭麦（可在快捷键页开启）</td></tr>
+        <tr><td>拖动胶囊</td><td colspan="2">吸附到屏幕上/下边缘或四角，位置记忆</td></tr>
+        <tr><td>右键 / 双指点按</td><td colspan="2">隐藏 Dock（托盘/菜单栏图标可唤回）· 切换默认形态 · 退出</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="a-section" aria-labelledby="settings-heading">
+  <h2 class="a-section__title" id="settings-heading">原型图 · 设置窗口</h2>
+  <p class="a-section__note">独立窗口，macOS 系统设置式左右分栏；侧栏用系统 sidebar 材质（透出壁纸），右侧内容区半透明；深浅色跟随系统，也可强制。Dock 条本身不承载任何配置。</p>
+
+  <figure class="a-panel">
+    <figcaption class="a-panel__title">设置 › 席位（深色）— 含登录 / 授权流程</figcaption>
+    <svg viewBox="0 0 760 400" width="100%" role="img" aria-label="深色设置窗口：左侧半透明侧栏有席位、快捷键、外观、麦克风、关于；右侧列出 dot 已连接、Grok Bot 已检测到并待授予辅助功能权限、Copilot 会话过期需要重新登录、Devin 已连接、Muse 未接入；每行有重新登录、断开、测试呼叫；底部是添加席位；右下角示意连接账号时弹出的登录窗">
+      <defs>
+        <linearGradient id="wall3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b2a4a"/><stop offset="0.5" stop-color="#4b2a6b"/><stop offset="1" stop-color="#0f3b4f"/></linearGradient>
+        <linearGradient id="paneDark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c1c1e" stop-opacity="0.78"/><stop offset="1" stop-color="#1c1c1e" stop-opacity="0.88"/></linearGradient>
+      </defs>
+      <rect width="760" height="400" rx="12" fill="url(#wall3)"/>
+      <circle cx="140" cy="60" r="90" fill="#ff7a59" opacity="0.35" filter="url(#blur8)"/>
+      <circle cx="640" cy="360" r="80" fill="#3dd6f5" opacity="0.3" filter="url(#blur8)"/>
+      <g filter="url(#shadow)">
+        <rect x="30" y="20" width="700" height="360" rx="14" fill="url(#paneDark)" stroke="url(#rim)" stroke-width="1"/>
+        <rect x="30" y="20" width="190" height="360" rx="14" fill="#fff" opacity="0.06"/>
+      </g>
+      <circle cx="52" cy="40" r="5.5" fill="#ff5f57"/><circle cx="70" cy="40" r="5.5" fill="#febc2e"/><circle cx="88" cy="40" r="5.5" fill="#28c840"/>
+      <g font-size="12.5" fill="#f2f2f7">
+        <rect x="42" y="66" width="166" height="28" rx="7" fill="#fff" opacity="0.14"/>
+        <text x="56" y="85">◉  席位</text>
+        <text x="56" y="119" opacity="0.8">⌘  快捷键</text>
+        <text x="56" y="153" opacity="0.8">◐  外观</text>
+        <text x="56" y="187" opacity="0.8">🎙  麦克风</text>
+        <text x="56" y="221" opacity="0.8">ⓘ  关于</text>
+      </g>
+      <text x="244" y="52" font-size="16" font-weight="600" fill="#f2f2f7">席位</text>
+      <text x="244" y="70" font-size="11" fill="#f2f2f7" opacity="0.55">拖动排序 · 顺序即 ⌥1…⌥9 · 登录只做一次，之后由 AgentDock 在后台代码控制</text>
+      <g font-size="11.5" fill="#f2f2f7">
+        <rect x="240" y="82" width="476" height="46" rx="9" fill="#fff" opacity="0.07"/>
+        <circle cx="264" cy="105" r="12" fill="#f7f7f7"/><circle cx="264" cy="105" r="5" fill="#10a37f"/>
+        <text x="286" y="101" font-weight="600">Alfred · dot</text><text x="286" y="117" opacity="0.55">chatgpt.com（网页 · 无感）· weijia@…</text>
+        <text x="520" y="109" fill="#30d158">● 已连接</text>
+        <rect x="586" y="93" width="54" height="24" rx="7" fill="#fff" opacity="0.1"/><text x="613" y="109" text-anchor="middle">测试呼叫</text>
+        <text x="662" y="109" opacity="0.7">重新登录 · 断开</text>
+
+        <rect x="240" y="134" width="476" height="46" rx="9" fill="#fff" opacity="0.07"/>
+        <rect x="253" y="94" width="0" height="0"/>
+        <rect x="253" y="146" width="22" height="22" rx="7" fill="#111"/><rect x="258" y="151" width="12" height="12" rx="3" fill="#fff"/>
+        <text x="286" y="153" font-weight="600">Ops · Grok Bot</text><text x="286" y="169" opacity="0.55">Grok Bot 桌面版（App 自动化）· v0.70</text>
+        <text x="520" y="161" fill="#ff9f0a">● 待授权</text>
+        <rect x="586" y="145" width="118" height="24" rx="7" fill="#0a84ff"/><text x="645" y="161" text-anchor="middle" fill="#fff">授予辅助功能权限 →</text>
+
+        <rect x="240" y="186" width="476" height="46" rx="9" fill="#fff" opacity="0.07"/>
+        <path d="M256 208c0-5 4-9 8-9s8 4 8 9-4 9-8 9" stroke="#4fb0ff" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M264 217c-4 0-8-4-8-9" stroke="#c45bff" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <text x="286" y="205" font-weight="600">Copilot Voice</text><text x="286" y="221" opacity="0.55">copilot.com（网页 · 无感）</text>
+        <text x="520" y="213" fill="#ff453a">● 会话过期</text>
+        <rect x="586" y="197" width="80" height="24" rx="7" fill="#0a84ff"/><text x="626" y="213" text-anchor="middle" fill="#fff">重新登录</text>
+
+        <rect x="240" y="238" width="476" height="46" rx="9" fill="#fff" opacity="0.07"/>
+        <circle cx="264" cy="261" r="9" fill="none" stroke="#bf5af2" stroke-width="3"/>
+        <text x="286" y="257" font-weight="600">Devin</text><text x="286" y="273" opacity="0.55">Devin 桌面版 · 语音模式</text>
+        <text x="520" y="265" fill="#30d158">● 已连接</text>
+        <rect x="586" y="249" width="54" height="24" rx="7" fill="#fff" opacity="0.1"/><text x="613" y="265" text-anchor="middle">测试呼叫</text>
+
+        <rect x="240" y="290" width="476" height="46" rx="9" fill="#fff" opacity="0.04"/>
+        <path d="M255 313c3-7 7-10 9-10s6 3 9 10c-3 7-7 10-9 10s-6-3-9-10z" fill="none" stroke="#0668e1" stroke-width="2.5" opacity="0.7"/>
+        <text x="286" y="309" font-weight="600" opacity="0.7">Muse</text><text x="286" y="325" opacity="0.45">muse.ai（网页）· 语音灰度中，账号拿到后点"连接账号"</text>
+        <rect x="586" y="301" width="80" height="24" rx="7" fill="#fff" opacity="0.1"/><text x="626" y="317" text-anchor="middle">连接账号</text>
+
+        <rect x="240" y="344" width="476" height="26" rx="8" fill="none" stroke="#fff" stroke-opacity="0.3" stroke-dasharray="4 4"/>
+        <text x="478" y="361" text-anchor="middle" opacity="0.6">＋ 添加席位（选服务 → 连接账号 → 授权麦克风 → 自动测试呼叫）</text>
+      </g>
+    </svg>
+  </figure>
+
+  <div class="a-grid a-grid--halves">
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">登录 / 授权流程（网页席位）</p></div>
+      <ol class="a-prose">
+        <li><strong>添加席位</strong> → 选服务（dot / Copilot / Muse）→ <strong>连接账号</strong>。</li>
+        <li>弹出一个<strong>真实的登录窗</strong>（就是那个内置 webview，这一次可见），你像平时一样登录，含 Google/Apple/Passkey 和 2FA。AgentDock 不接触密码。</li>
+        <li>检测到已登录（URL 落到会话页 + 读到头像元素）→ 窗口自动收起；席位变为 <span class="a-status" data-state="active">● 已连接</span> 并显示你的账号/头像。</li>
+        <li>会话 cookie 持久化在该席位独立的 webview 数据目录（<code>~/Library/Application Support/AgentDock/profiles/&lt;seat&gt;</code>），目录加密 key 存钥匙串 / Credential Manager。</li>
+        <li>首次连接顺带两件授权：<strong>麦克风</strong>（系统弹一次"允许 AgentDock 使用麦克风"）和一次<strong>自动测试呼叫</strong>（接通 → 2 s → 挂断），校验按钮选择器可用。</li>
+        <li>常驻动作：<strong>重新登录</strong>（会话过期、被踢、人机验证时席位亮红点）· <strong>断开</strong>（清掉该席位数据目录）· <strong>测试呼叫</strong>。</li>
+      </ol>
+    </div>
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">授权流程（App 席位：Grok Bot、Devin）</p></div>
+      <ol class="a-prose">
+        <li>自动检测本机是否已安装（<code>/Applications/*.app</code> / 注册表），显示版本。</li>
+        <li>macOS：点 <strong>授予辅助功能权限 →</strong> 直接跳到 系统设置 › 隐私与安全性 › 辅助功能，并高亮 AgentDock；Windows 无需授权（UIA 默认可用）。</li>
+        <li>授权后自动做一次 probe：能找到"Start voice chat"按钮 → <span class="a-status" data-state="active">● 已连接</span>；找不到 → 提示"请先在 Grok Bot 里登录"。</li>
+        <li>这类席位呼叫时会把该 App 短暂拉到前台再还回焦点，是唯一不完全无感的席位——在席位行上明确标注。</li>
+      </ol>
+    </div>
+  </div>
+
+  <figure class="a-panel">
+    <figcaption class="a-panel__title">设置 › 外观（浅色 · 跟随系统）</figcaption>
+    <svg viewBox="0 0 760 330" width="100%" role="img" aria-label="浅色设置窗口的外观页：默认形态四选一（小圆点、胶囊、完整展开、常驻宠物）、外观三选一（浅色、深色、跟随系统）、材质、吸附位置、显示名字、减弱动画、席位图标自定义">
+      <defs>
+        <linearGradient id="wall4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f3e7d3"/><stop offset="0.5" stop-color="#dfe9f5"/><stop offset="1" stop-color="#f7dce2"/></linearGradient>
+        <linearGradient id="paneLight" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.72"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.82"/></linearGradient>
+      </defs>
+      <rect width="760" height="330" rx="12" fill="url(#wall4)"/>
+      <circle cx="140" cy="60" r="90" fill="#ffb199" opacity="0.5" filter="url(#blur8)"/>
+      <circle cx="640" cy="300" r="80" fill="#9ad7ff" opacity="0.5" filter="url(#blur8)"/>
+      <g filter="url(#shadowL)">
+        <rect x="30" y="20" width="700" height="290" rx="14" fill="url(#paneLight)" stroke="#fff" stroke-width="1"/>
+        <rect x="30" y="20" width="190" height="290" rx="14" fill="#fff" opacity="0.35"/>
+      </g>
+      <circle cx="52" cy="40" r="5.5" fill="#ff5f57"/><circle cx="70" cy="40" r="5.5" fill="#febc2e"/><circle cx="88" cy="40" r="5.5" fill="#28c840"/>
+      <g font-size="12.5" fill="#1c1c1e">
+        <text x="56" y="85" opacity="0.75">◉  席位</text>
+        <text x="56" y="119" opacity="0.75">⌘  快捷键</text>
+        <rect x="42" y="134" width="166" height="28" rx="7" fill="#1c1c1e" opacity="0.1"/>
+        <text x="56" y="153">◐  外观</text>
+        <text x="56" y="187" opacity="0.75">🎙  麦克风</text>
+        <text x="56" y="221" opacity="0.75">ⓘ  关于</text>
+      </g>
+      <g font-size="11.5" fill="#1c1c1e">
+        <text x="244" y="52" font-size="16" font-weight="600">外观</text>
+        <text x="244" y="84" font-weight="600">Dock 默认形态</text>
+        <g>
+          <rect x="244" y="94" width="100" height="56" rx="9" fill="#0a84ff" opacity="0.15" stroke="#0a84ff" stroke-width="1.5"/>
+          <circle cx="294" cy="114" r="6" fill="#1c1c1e" opacity="0.8"/><text x="294" y="141" text-anchor="middle">小圆点</text>
+          <rect x="352" y="94" width="100" height="56" rx="9" fill="#1c1c1e" opacity="0.05"/>
+          <rect x="378" y="107" width="48" height="14" rx="7" fill="#1c1c1e" opacity="0.7"/><text x="402" y="141" text-anchor="middle">胶囊</text>
+          <rect x="460" y="94" width="100" height="56" rx="9" fill="#1c1c1e" opacity="0.05"/>
+          <rect x="474" y="107" width="30" height="14" rx="7" fill="#1c1c1e" opacity="0.7"/><circle cx="516" cy="114" r="6" fill="#1c1c1e" opacity="0.7"/><circle cx="532" cy="114" r="6" fill="#1c1c1e" opacity="0.7"/><text x="510" y="141" text-anchor="middle">完整展开</text>
+          <rect x="568" y="94" width="100" height="56" rx="9" fill="#1c1c1e" opacity="0.05"/>
+          <circle cx="618" cy="114" r="8" fill="#ffd60a"/><circle cx="615" cy="112" r="1.3" fill="#1c1c1e"/><circle cx="621" cy="112" r="1.3" fill="#1c1c1e"/><text x="618" y="141" text-anchor="middle">常驻宠物</text>
+        </g>
+        <text x="244" y="178" font-weight="600">外观</text>
+        <rect x="244" y="186" width="210" height="24" rx="7" fill="#1c1c1e" opacity="0.06"/>
+        <text x="279" y="202" text-anchor="middle" opacity="0.7">浅色</text><text x="349" y="202" text-anchor="middle" opacity="0.7">深色</text>
+        <rect x="384" y="188" width="68" height="20" rx="6" fill="#fff"/><text x="418" y="202" text-anchor="middle" font-weight="600">跟随系统</text>
+        <text x="480" y="202" opacity="0.6">材质：系统玻璃（macOS HUD / Win Mica Alt）</text>
+        <text x="244" y="236" font-weight="600">吸附位置</text><text x="330" y="236" opacity="0.7">顶部居中 ▾</text>
+        <text x="420" y="236" font-weight="600">显示名字</text><text x="494" y="236" opacity="0.7">仅悬停 ▾</text>
+        <text x="580" y="236" font-weight="600">减弱动画</text><rect x="652" y="226" width="30" height="16" rx="8" fill="#1c1c1e" opacity="0.2"/><circle cx="660" cy="234" r="6" fill="#fff"/>
+        <text x="244" y="270" font-weight="600">席位图标</text>
+        <text x="244" y="288" opacity="0.7">PNG / SVG / WebP / GIF / APNG，自动裁圆；动图通话时播放</text>
+        <circle cx="636" cy="276" r="14" fill="#f7f7f7" stroke="#1c1c1e" stroke-opacity="0.15"/><circle cx="636" cy="276" r="6" fill="#10a37f"/>
+        <rect x="660" y="266" width="48" height="20" rx="6" fill="#1c1c1e" opacity="0.08"/><text x="684" y="280" text-anchor="middle">更换…</text>
+      </g>
+    </svg>
+  </figure>
+
+  <dl class="a-meta-list">
+    <div><dt>快捷键页</dt><dd>可录制：展开/收起（默认 ⌥Space）· 闭麦/开麦（⌥M）· 挂断（⌥Esc）· 席位 1–9（⌥1…⌥9）· 对讲机模式开关 · 与系统/其他 App 冲突时实时标红。</dd></div>
+    <div><dt>麦克风页</dt><dd>输入设备选择；静音方式：系统级（默认，所有席位一致）或仅静音内置 webview；通话时自动暂停音乐（Now Playing）；输入电平表用于校验。</dd></div>
+    <div><dt>外观页</dt><dd>默认形态 · 深浅色/跟随系统 · 材质强度 · 吸附位置 · 显示名字 · 减弱动画 · 席位图标自定义（含 GIF）。</dd></div>
+    <div><dt>关于页</dt><dd>各驱动版本、上次 probe 时间、"界面变了，需要更新驱动"自检；一键导出诊断日志。</dd></div>
+  </dl>
+</section>
+
+<section class="a-section" aria-labelledby="seats-heading">
+  <h2 class="a-section__title" id="seats-heading">席位与驱动：每家怎么接（浏览器优先）</h2>
+  <p class="a-section__note">
+    核心抽象："席位（seat）= 一个会说话的 agent + 一个驱动（driver）"。驱动实现五个动作：<code>ensure_session</code>（后台页签就绪且已登录）、<code>call</code>、<code>mute</code>、<code>hangup</code>、<code>probe</code>（是否通话中/是否闭麦/是否需要人工）。凡有网页版的，一律走<strong>隐藏 webview</strong>；只有没网页版的走 App 自动化。
+  </p>
+  <div class="a-table-scroll">
+    <table class="a-table" data-a-sticky-columns="1">
+      <caption class="a-visually-hidden">各席位的网页入口、驱动方式、无感程度与优先级</caption>
+      <thead>
+        <tr><th scope="col">席位</th><th scope="col">网页入口</th><th scope="col">驱动方式</th><th scope="col">语音入口（官方）</th><th scope="col">无感程度</th><th scope="col">优先级</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>ChatGPT dot</td><td>chatgpt.com，dot 会话页</td>
+          <td>隐藏 webview + 注入 JS 点 Call / Mute / End；probe 读通话控件</td>
+          <td>dot 会话里的电话按钮（dots 仍在灰度）</td>
+          <td><span class="a-status" data-state="active">完全无感</span></td>
+          <td><span class="a-status" data-state="active">P0</span></td>
+        </tr>
+        <tr>
+          <td>Copilot Voice</td><td>copilot.microsoft.com</td>
+          <td>隐藏 webview + 注入 JS 点 composer 的 Voice 图标</td>
+          <td>Copilot Voice（composer 里的 Voice 图标）</td>
+          <td><span class="a-status" data-state="active">完全无感</span></td>
+          <td><span class="a-status" data-state="active">P0</span></td>
+        </tr>
+        <tr>
+          <td>Grok Bot</td><td><strong>无网页版</strong>（仅 Mac/Win/Linux App + 手机）</td>
+          <td>macOS Accessibility（AXUIElement）/ Windows UIA 点 Start voice chat、Mute、Hang up；切 Bot 自动确认 End the current voice chat?</td>
+          <td>composer 为空时的波形按钮</td>
+          <td><span class="a-status" data-state="planned">半无感</span>（短暂前台）</td>
+          <td><span class="a-status" data-state="active">P0</span></td>
+        </tr>
+        <tr>
+          <td>Devin</td><td>app.devin.ai（语音模式）</td>
+          <td>隐藏 webview 优先；桌面版 AX 兜底</td>
+          <td>语音模式（需验证网页语音入口的可自动化程度）</td>
+          <td><span class="a-status" data-state="active">完全无感</span></td>
+          <td><span class="a-status" data-state="planned">P1</span></td>
+        </tr>
+        <tr>
+          <td>Meta Muse</td><td>muse.ai（网页语音已改为"通话小组件"）</td>
+          <td>隐藏 webview + 注入 JS；账号未灰度到 voice 时显示"待接入"</td>
+          <td>Muse voice chat，2026-10 起分批灰度</td>
+          <td><span class="a-status" data-state="active">完全无感</span></td>
+          <td><span class="a-status" data-state="blocked">待灰度</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 class="a-panel__title" style="margin-top:1.5rem">"无感"到底怎么实现</h3>
+  <div class="a-grid a-grid--halves">
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">运行时</p></div>
+      <ul class="a-prose">
+        <li>AgentDock 为每个网页席位维持一个<strong>隐藏、常驻</strong>的 webview（macOS WKWebView / Windows WebView2），独立数据目录，不与你的 Chrome 共享、不抢焦点、不在屏幕上出现。</li>
+        <li>点席位 → 向该 webview 注入一段驱动脚本（选择器 + 步骤），点"通话"按钮；音频用系统默认麦克风/扬声器，走 webview 自己的 WebRTC。</li>
+        <li>每 500 ms <code>probe</code>：通过 DOM 判断通话中/已闭麦/被要求验证；状态驱动 Dock 条，不靠自己记。</li>
+        <li>闭麦默认系统级（CoreAudio / <code>IAudioEndpointVolume</code>），零延迟且对所有席位一致；也可切成只点网页的 Mute。</li>
+      </ul>
+    </div>
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">只在这两种情况露面</p></div>
+      <ul class="a-prose">
+        <li><strong>登录</strong>：首次连接或会话过期，webview 以普通窗口显示一次，登录完自动收起。</li>
+        <li><strong>人机验证 / 需要你看一眼</strong>：probe 识别到验证页或未知弹窗，胶囊提示"需要你看一眼"，点一下把该 webview 浮出来，处理完再隐藏。</li>
+        <li>其他一切（呼叫、闭麦、挂断、切换）都不弹任何浏览器窗口。</li>
+      </ul>
+      <div class="a-callout a-callout--risk" style="margin-top:.75rem">
+        <p class="a-callout__title">需在钉子阶段验证</p>
+        ① WKWebView 的 getUserMedia 麦克风授权一次性放行；② 页面在"不可见"状态下 WebRTC 不被节流；③ 站点对 webview UA 的拦截（必要时伪装成 Safari/Chrome UA）。
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="a-section" aria-labelledby="arch-heading">
+  <h2 class="a-section__title" id="arch-heading">技术方向</h2>
+  <div class="a-grid a-grid--halves">
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">选定：Tauri 2 · Rust 核心 + 系统原生材质</p></div>
+      <ul class="a-prose">
+        <li>一套 Rust 核心：席位配置、状态机、驱动调度、全局快捷键、系统麦克风、隐藏 webview 生命周期。</li>
+        <li>Dock 条与设置窗是 Tauri 窗口，<strong>玻璃由系统渲染</strong>：macOS <code>NSVisualEffectView</code>（<code>window-vibrancy</code>），Windows Mica/Acrylic；透明异形窗口、置顶、不出现在 Dock/任务栏。</li>
+        <li>隐藏 webview 席位 = Tauri 的多 webview 窗口（WKWebView / WebView2），JS 注入与 DOM probe 走 <code>evaluate_script</code>。</li>
+        <li>为什么不是 SwiftUI：云电脑是 Linux，编不了 Swift；Tauri 让开发/测试在 Linux 做，Mac 上 <code>cargo tauri dev</code> 直接跑，Windows 复用同一套。</li>
+      </ul>
+    </div>
+    <div class="a-panel">
+      <div class="a-panel__head"><p class="a-panel__title">审美落地到代码的硬指标</p></div>
+      <ul class="a-prose">
+        <li>Dock 窗口背景全透明，材质由系统 vibrancy 提供；前端只画高光描边、阴影和图标，不画"假模糊"。</li>
+        <li>形变用 spring 曲线，三态是同一个 DOM 节点的尺寸形变（FLIP），不是三个面板切换。</li>
+        <li>字体：macOS 用 SF Pro（系统 <code>-apple-system</code>），Windows 用 Segoe UI Variable；中文随系统（苹方 / 微软雅黑）。</li>
+        <li>所有颜色来自系统语义色（label / secondaryLabel / systemRed），跟随深浅色不写死。</li>
+      </ul>
+    </div>
+  </div>
+  <dl class="a-meta-list">
+    <div><dt>驱动分发</dt><dd>驱动即数据：每个驱动是一份 JSON（URL、登录判定、按钮选择器、步骤脚本），可热更新；某家改界面只推新驱动，不发版。</dd></div>
+    <div><dt>App 驱动（macOS）</dt><dd>Accessibility API（AXUIElement）定位并 press；兜底 AppleScript System Events。需要辅助功能权限，设置页一键跳转。</dd></div>
+    <div><dt>App 驱动（Windows）</dt><dd>UI Automation（UIA3）查找 Name/AutomationId；兜底 SendInput。</dd></div>
+    <div><dt>隐私</dt><dd>不录音、不读聊天内容、不保存密码；只触碰按钮、读通话状态和系统麦克风开关；席位数据目录加密。</dd></div>
+  </dl>
+</section>
+
+<section class="a-section" aria-labelledby="phases-heading">
+  <h2 class="a-section__title" id="phases-heading">分期</h2>
+  <article class="a-phase">
+    <div class="a-phase__index">00</div>
+    <div>
+      <div class="a-phase__head"><h3 class="a-phase__title">可行性钉子（Mac）</h3><span class="a-status" data-state="active">进行中</span></div>
+      <p class="a-prose">在 Mac 上验证：① 隐藏 WKWebView 里 chatgpt.com dot 能被脚本呼叫、闭麦、挂断，麦克风授权只弹一次；② copilot.com 同上；③ Grok Bot 的 AX 树能找到 Start voice chat / Mute / Hang up。</p>
+      <dl class="a-meta-list">
+        <div><dt>退出条件</dt><dd>每家 10 次呼叫成功 ≥ 9；probe 稳定判断通话中/已闭麦；全程不弹窗。</dd></div>
+        <div><dt>失败即改道</dt><dd>若某站拦截隐藏 webview，退化为"控制你本机 Chrome 的一个固定窗口（CDP）"，并明确告知。</dd></div>
+      </dl>
+    </div>
+  </article>
+  <article class="a-phase">
+    <div class="a-phase__index">01</div>
+    <div>
+      <div class="a-phase__head"><h3 class="a-phase__title">macOS MVP</h3><span class="a-status" data-state="active">进行中</span></div>
+      <p class="a-prose">Tauri Dock 条四态（圆点/胶囊/通话/切换）+ 系统 vibrancy + 系统级闭麦 + 全局快捷键 + 设置窗（席位/快捷键/外观/麦克风/关于）+ 登录流程 + dot、Copilot 网页驱动 + Grok Bot App 驱动。</p>
+      <dl class="a-meta-list"><div><dt>退出条件</dt><dd>你每天用它呼叫、切换，一周内不想回去手点；截图经得起放大看。</dd></div></dl>
+    </div>
+  </article>
+  <article class="a-phase">
+    <div class="a-phase__index">02</div>
+    <div>
+      <div class="a-phase__head"><h3 class="a-phase__title">更多席位与打磨</h3><span class="a-status" data-state="planned">计划</span></div>
+      <p class="a-prose">Devin、Muse 网页驱动；常驻宠物形态；长按菜单（打开聊天、口述发消息）；驱动热更新通道；GIF 头像。</p>
+    </div>
+  </article>
+  <article class="a-phase">
+    <div class="a-phase__index">03</div>
+    <div>
+      <div class="a-phase__head"><h3 class="a-phase__title">Windows</h3><span class="a-status" data-state="planned">计划</span></div>
+      <p class="a-prose">同一套代码；Mica Alt + 系统圆角；WebView2 席位；Grok Bot 的 UIA 驱动；托盘常驻。</p>
+    </div>
+  </article>
+</section>
+
+<section class="a-section" aria-labelledby="decisions-heading">
+  <h2 class="a-section__title" id="decisions-heading">待定决策与风险</h2>
+  <div class="a-grid a-grid--halves">
+    <div class="a-callout a-callout--decision"><p class="a-callout__title">名字</p>暂用 AgentDock 作为工作名；候选：Dial、Roster、呼叫台。发布前定。</div>
+    <div class="a-callout a-callout--decision"><p class="a-callout__title">切换确认</p>默认"点谁就切谁"，配 3 s 可撤销；可在设置改成"先确认"。</div>
+    <div class="a-callout a-callout--risk"><p class="a-callout__title">隐藏 webview 的麦克风与节流</p>WKWebView 的 getUserMedia 授权、页面不可见时 WebRTC 是否被节流，都要在钉子阶段实测；失败则改走 CDP 控制本机 Chrome。</div>
+    <div class="a-callout a-callout--risk"><p class="a-callout__title">自动化脆弱 + 条款</p>各家改版就断——驱动即数据可热更；网页自动化可能触碰服务条款，仅供个人使用，不分发账号数据。</div>
+    <div class="a-callout a-callout--risk"><p class="a-callout__title">灰度</p>dots、Muse voice chat 都在灰度，账号没拿到就接不了；席位会明确显示"待接入"而不是报错。</div>
+    <div class="a-callout a-callout--risk"><p class="a-callout__title">商标</p>官方图标仅用于标识服务；若发布需逐家核对品牌使用条款，必要时改为自绘单色图标。</div>
+  </div>
+</section>
+
+
+      <footer class="a-footnote">v2 · 2026-10-17。产品信息核对自各家官方文档（learn.chatgpt.com dots/pets、docs.x.ai Grok Bot、support.microsoft.com Copilot Voice、meta.com Muse）及 2026-10 公开报道；Grok Bot 无网页版、dots 与 Muse voice chat 仍在灰度，接入以实际账号可用为准。原型图为示意，真实玻璃由 macOS/Windows 系统渲染；配套代码见 github.com/we1jia/AgentDock。</footer>
+    </main>
+    <script>
+/* Devin artifact kit — self-contained behavior for standalone HTML artifacts.
+   No build step, no imports, no network calls. Every widget is progressive
+   enhancement: the markup stays readable and printable with scripting off. */
+(function () {
+  "use strict";
+
+  var root = document.documentElement;
+  var THEMES = { light: 1, dark: 1 };
+
+  function showError(message) {
+    document.querySelectorAll("[data-a-error]").forEach(function (region) {
+      region.hidden = false;
+      var detail = region.querySelector("[data-a-error-detail]");
+      if (detail && message) detail.textContent = message;
+    });
+  }
+
+  window.addEventListener("error", function (event) {
+    showError(event.message);
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    showError(String(event.reason || "An interactive control failed."));
+  });
+
+  /* ---------- theme ----------
+     Order of precedence:
+       1. an explicit host signal (`?theme=`/`#theme=`, a `devin:theme`
+          message from an embedding page, or a preset `data-theme`),
+       2. a reader's in-document choice,
+       3. the OS/browser preference via `prefers-color-scheme`.
+     Hosts that expose no signal simply fall through to step 3. */
+  function hostTheme() {
+    var search = new URLSearchParams(
+      window.location.search + "&" + window.location.hash.replace(/^#/, "")
+    );
+    var fromUrl = search.get("theme");
+    if (fromUrl && THEMES[fromUrl]) return fromUrl;
+    var preset = root.getAttribute("data-theme");
+    if (preset && THEMES[preset]) return preset;
+    return null;
+  }
+
+  function systemTheme() {
+    return window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
+  }
+
+  var pinned = hostTheme();
+
+  function apply(theme) {
+    root.setAttribute("data-theme", theme);
+    document.querySelectorAll("[data-a-theme-toggle]").forEach(function (el) {
+      var label =
+        theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+      el.setAttribute("aria-label", label);
+      el.setAttribute("title", label);
+    });
+  }
+
+  apply(pinned || systemTheme());
+
+  if (window.matchMedia) {
+    var media = window.matchMedia("(prefers-color-scheme: dark)");
+    var onChange = function () {
+      if (!pinned) apply(systemTheme());
+    };
+    if (media.addEventListener) media.addEventListener("change", onChange);
+    else if (media.addListener) media.addListener(onChange);
+  }
+
+  window.addEventListener("message", function (event) {
+    if (window.parent === window || event.source !== window.parent) return;
+    var data = event.data;
+    if (!data || data.type !== "devin:theme" || !THEMES[data.theme]) return;
+    pinned = data.theme;
+    apply(pinned);
+  });
+
+  document.addEventListener("click", function (event) {
+    var toggle = event.target.closest("[data-a-theme-toggle]");
+    if (!toggle) return;
+    pinned = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    apply(pinned);
+  });
+
+  /* ---------- tabs ----------
+     <div data-a-tabs role="tablist">
+       <button class="a-btn" role="tab" aria-controls="panel-id">Label</button>
+     Panels are plain elements toggled with `hidden`, so print reveals the
+     active one and `.a-print-reveal` can opt others in. */
+  function selectTab(list, tab) {
+    list.querySelectorAll('[role="tab"]').forEach(function (candidate) {
+      var selected = candidate === tab;
+      candidate.setAttribute("aria-selected", String(selected));
+      candidate.tabIndex = selected ? 0 : -1;
+      var panel = document.getElementById(
+        candidate.getAttribute("aria-controls") || ""
+      );
+      if (panel) panel.hidden = !selected;
+    });
+  }
+
+  document.querySelectorAll("[data-a-tabs]").forEach(function (list) {
+    var tabs = Array.prototype.slice.call(
+      list.querySelectorAll('[role="tab"]')
+    );
+    if (!tabs.length) return;
+    var active =
+      tabs.filter(function (t) {
+        return t.getAttribute("aria-selected") === "true";
+      })[0] || tabs[0];
+    selectTab(list, active);
+
+    list.addEventListener("click", function (event) {
+      var tab = event.target.closest('[role="tab"]');
+      if (tab) selectTab(list, tab);
+    });
+
+    list.addEventListener("keydown", function (event) {
+      var step =
+        event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (!step) return;
+      event.preventDefault();
+      var current = tabs.indexOf(document.activeElement);
+      var next = tabs[(current + step + tabs.length) % tabs.length];
+      next.focus();
+      selectTab(list, next);
+    });
+  });
+
+  /* ---------- row filters ----------
+     <select data-a-filter="#table-id" data-a-filter-key="team">
+     Rows opt in with a matching `data-team` attribute; "all" clears it. */
+  document.querySelectorAll("[data-a-filter]").forEach(function (control) {
+    var target = document.querySelector(control.getAttribute("data-a-filter"));
+    var key = control.getAttribute("data-a-filter-key") || "filter";
+    if (!target) return;
+
+    var emptySelector = control.getAttribute("data-a-filter-empty");
+    var empty = emptySelector ? document.querySelector(emptySelector) : null;
+
+    var applyFilter = function () {
+      var value = control.value;
+      var shown = 0;
+      /* Re-read the rows every time: a script may have replaced them since
+         the last pass, and those rows must obey the current selection too. */
+      target.querySelectorAll("[data-" + key + "]").forEach(function (row) {
+        var match = value === "all" || row.getAttribute("data-" + key) === value;
+        row.hidden = !match;
+        if (match) shown += 1;
+      });
+      if (empty) empty.hidden = shown !== 0;
+      target.hidden = shown === 0 && !!empty;
+    };
+
+    control.addEventListener("change", applyFilter);
+    applyFilter();
+
+    /* Rows swapped in by a script are filtered as soon as they land, so a
+       redraw never shows rows the current selection excludes. Only childList
+       is watched, so the `hidden` writes above cannot retrigger this. */
+    new MutationObserver(function () {
+      applyFilter();
+    }).observe(target, { childList: true, subtree: true });
+  });
+
+  /* ---------- pinned columns ----------
+     <table class="a-table" data-a-sticky-columns="2">
+     CSS pins the first column on its own. The kit measures the leading
+     columns so every pinned cell gets its cumulative `--a-sticky-left`, and
+     re-measures when the table resizes, its rows change, or a filter hides
+     rows. Cells spanning past the last pinned column stay unpinned. The
+     scroll wrapper carries `data-a-scrolled` while the table is scrolled
+     sideways, so the divider only shows with columns underneath it. */
+  function stickyCount(table) {
+    var count = parseInt(table.getAttribute("data-a-sticky-columns"), 10);
+    return count > 0 ? count : 0;
+  }
+
+  function layoutSticky(table) {
+    var count = stickyCount(table);
+    var pinned = [];
+    var widths = [];
+    var columns = 0;
+    /* Rows spanned into from above shift where later cells start. */
+    var carried = [];
+    Array.prototype.forEach.call(table.rows, function (row, index) {
+      var taken = carried[index] || [];
+      var column = 0;
+      Array.prototype.forEach.call(row.cells, function (cell) {
+        while (taken[column]) column += 1;
+        var end = column + Math.max(1, cell.colSpan || 1);
+        if (end <= count) {
+          pinned.push({ cell: cell, start: column, end: end });
+          /* Hidden rows measure 0, so a later visible row fills the gap. */
+          if (end === column + 1 && !widths[column]) {
+            widths[column] = cell.getBoundingClientRect().width;
+          }
+        }
+        for (var below = 1; below < (cell.rowSpan || 1); below += 1) {
+          var next = (carried[index + below] = carried[index + below] || []);
+          for (var spanned = column; spanned < end; spanned += 1) {
+            next[spanned] = true;
+          }
+        }
+        column = end;
+        columns = Math.max(columns, end);
+      });
+    });
+
+    var edge = Math.min(count, columns);
+    var offsets = [0];
+    for (var position = 1; position < edge; position += 1) {
+      /* Not rendered yet (a closed disclosure or hidden tab): keep the last
+         layout and measure again once the table has a size. */
+      if (!widths[position - 1]) return;
+      offsets[position] = offsets[position - 1] + widths[position - 1];
+    }
+
+    var keep = new Set();
+    pinned.forEach(function (entry) {
+      keep.add(entry.cell);
+      entry.cell.setAttribute("data-a-sticky", entry.end === edge ? "edge" : "");
+      entry.cell.style.setProperty(
+        "--a-sticky-left",
+        offsets[entry.start] + "px"
+      );
+    });
+    table.querySelectorAll("[data-a-sticky]").forEach(function (cell) {
+      if (keep.has(cell)) return;
+      cell.removeAttribute("data-a-sticky");
+      cell.style.removeProperty("--a-sticky-left");
+    });
+    if (count) table.setAttribute("data-a-sticky-ready", "");
+    else table.removeAttribute("data-a-sticky-ready");
+  }
+
+  document
+    .querySelectorAll(".a-table[data-a-sticky-columns]")
+    .forEach(function (table) {
+      var queued = false;
+      var schedule = function () {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(function () {
+          queued = false;
+          layoutSticky(table);
+        });
+      };
+      layoutSticky(table);
+      if (window.ResizeObserver) new ResizeObserver(schedule).observe(table);
+      /* Only structure and content are watched, so the kit's own
+         `data-a-sticky` and offset writes cannot retrigger this. */
+      new MutationObserver(schedule).observe(table, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["hidden", "colspan", "rowspan", "data-a-sticky-columns"]
+      });
+
+      /* The wrapper element survives a chart moving it into its "Data
+         table" disclosure, so the listener does too. */
+      var scroller = table.closest(".a-table-scroll");
+      if (!scroller) return;
+      var syncScrolled = function () {
+        scroller.toggleAttribute("data-a-scrolled", scroller.scrollLeft > 0);
+      };
+      scroller.addEventListener("scroll", syncScrolled, { passive: true });
+      syncScrolled();
+    });
+
+  /* ---------- tooltips ----------
+     One shared tooltip serves every chart and any element carrying
+     `data-a-tip`. Pointer, keyboard focus, and touch all route through the
+     same show/hide pair, so an exact value is never hover-only. */
+  var tipEl = null;
+  var tipRelease = null;
+  var tipHost = null;
+
+  function tipNode() {
+    if (tipEl) return tipEl;
+    tipEl = document.createElement("div");
+    tipEl.className = "a-tip a-no-print";
+    tipEl.setAttribute("role", "tooltip");
+    tipEl.hidden = true;
+    document.body.appendChild(tipEl);
+    return tipEl;
+  }
+
+  function hideTip() {
+    var release = tipRelease;
+    tipRelease = null;
+    tipHost = null;
+    if (release) release();
+    if (tipEl) tipEl.hidden = true;
+  }
+
+  function positionTip(anchor, pointer) {
+    var el = tipNode();
+    var width = el.offsetWidth;
+    var height = el.offsetHeight;
+    var edge = 8;
+    var x = pointer ? pointer.x + 14 : anchor.left + anchor.width / 2 - width / 2;
+    var y = pointer ? pointer.y - height - 16 : anchor.top - height - 10;
+    if (y < edge) y = pointer ? pointer.y + 22 : anchor.bottom + 10;
+    x = Math.max(edge, Math.min(x, window.innerWidth - width - edge));
+    y = Math.max(edge, Math.min(y, window.innerHeight - height - edge));
+    el.style.transform =
+      "translate(" + Math.round(x) + "px, " + Math.round(y) + "px)";
+  }
+
+  function tipRow(row) {
+    var line = document.createElement("div");
+    line.className =
+      "a-tip__row" + (row.series ? " a-series-" + row.series : "");
+    if (row.series) {
+      var swatch = document.createElement("span");
+      swatch.className = "a-tip__swatch";
+      line.appendChild(swatch);
+    }
+    var name = document.createElement("span");
+    name.className = "a-tip__name";
+    name.textContent = row.name || "";
+    line.appendChild(name);
+    var value = document.createElement("span");
+    value.className = "a-tip__value";
+    value.textContent = row.value == null || row.value === "" ? "—" : row.value;
+    line.appendChild(value);
+    return line;
+  }
+
+  /* `content` is { title, text, rows: [{ name, value, series }] }. `release`
+     runs when the tooltip is replaced or dismissed so the owner can drop its
+     highlight state. */
+  function showTip(content, host, anchor, pointer, release) {
+    if (tipRelease && tipRelease !== release) {
+      var previous = tipRelease;
+      tipRelease = null;
+      previous();
+    }
+    tipRelease = release || null;
+    tipHost = host || null;
+    var el = tipNode();
+    el.textContent = "";
+    if (content.title) {
+      var title = document.createElement("div");
+      title.className = "a-tip__title";
+      title.textContent = content.title;
+      el.appendChild(title);
+    }
+    if (content.text) {
+      var text = document.createElement("div");
+      text.className = "a-tip__text";
+      text.textContent = content.text;
+      el.appendChild(text);
+    }
+    (content.rows || []).forEach(function (row) {
+      el.appendChild(tipRow(row));
+    });
+    el.hidden = false;
+    positionTip(anchor, pointer);
+  }
+
+  /* Escape hatch for hand-authored marks: `data-a-tip` holds the value text
+     and the optional `data-a-tip-title` holds a heading. */
+  function annotatedHost(node) {
+    return node && node.closest ? node.closest("[data-a-tip]") : null;
+  }
+
+  function showAnnotatedTip(host, pointer) {
+    showTip(
+      {
+        title: host.getAttribute("data-a-tip-title") || "",
+        text: host.getAttribute("data-a-tip") || ""
+      },
+      host,
+      host.getBoundingClientRect(),
+      pointer,
+      null
+    );
+  }
+
+  document.addEventListener("pointerover", function (event) {
+    var host = annotatedHost(event.target);
+    if (!host) return;
+    showAnnotatedTip(
+      host,
+      event.pointerType === "touch" ? null : { x: event.clientX, y: event.clientY }
+    );
+  });
+
+  document.addEventListener("pointermove", function (event) {
+    if (!tipHost || event.pointerType === "touch") return;
+    if (!tipHost.hasAttribute || !tipHost.hasAttribute("data-a-tip")) return;
+    if (annotatedHost(event.target) !== tipHost) return;
+    positionTip(tipHost.getBoundingClientRect(), {
+      x: event.clientX,
+      y: event.clientY
+    });
+  });
+
+  document.addEventListener("pointerout", function (event) {
+    var host = annotatedHost(event.target);
+    if (!host || host !== tipHost) return;
+    if (event.relatedTarget && host.contains(event.relatedTarget)) return;
+    hideTip();
+  });
+
+  document.addEventListener("focusin", function (event) {
+    var host = annotatedHost(event.target);
+    if (host) showAnnotatedTip(host, null);
+  });
+
+  document.addEventListener("focusout", function (event) {
+    var host = annotatedHost(event.target);
+    if (!host || host !== tipHost) return;
+    /* A still-hovered mark keeps its tooltip; `pointerout` closes that one. */
+    if (host.matches && host.matches(":hover")) return;
+    hideTip();
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") hideTip();
+  });
+
+  window.addEventListener("scroll", hideTip, true);
+  window.addEventListener("resize", hideTip);
+
+  /* ---------- charts ----------
+     <figure class="a-figure" data-a-chart="bar|stacked-bar|line"> wrapping a
+     plain <table> of the same numbers. The table is both the data source and
+     the no-script fallback: the kit draws the chart from it and then keeps it
+     under a disclosure as the exact-value equivalent. Each category gets a
+     hover band that also takes keyboard focus, so pointer, arrow keys, and
+     tap all produce the same readout. */
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var CHART_WIDTH = 640;
+  var CHART_TYPES = { bar: 1, "stacked-bar": 1, line: 1 };
+
+  function svgNode(name, attrs) {
+    var node = document.createElementNS(SVG_NS, name);
+    Object.keys(attrs || {}).forEach(function (key) {
+      node.setAttribute(key, String(attrs[key]));
+    });
+    return node;
+  }
+
+  /* `data-value` wins so cells can stay human-readable ("1,284", "18m 24s"). */
+  function cellNumber(cell) {
+    var explicit = cell.getAttribute("data-value");
+    var text = (explicit === null ? cell.textContent : explicit) || "";
+    var match = text
+      .replace(/\u2212/g, "-")
+      .replace(/,/g, "")
+      .match(/-?\d*\.?\d+/);
+    return match ? parseFloat(match[0]) : null;
+  }
+
+  function readChartTable(table) {
+    var headCells = table.querySelectorAll("thead th");
+    if (headCells.length < 2) return null;
+    var series = [];
+    for (var column = 1; column < headCells.length; column += 1) {
+      series.push(headCells[column].textContent.trim());
+    }
+    var categories = [];
+    table.querySelectorAll("tbody tr").forEach(function (row) {
+      var cells = row.children;
+      if (cells.length < 2) return;
+      /* A hidden row is filtered out, so the chart matches what is listed. */
+      if (row.hidden || row.hasAttribute("data-a-excluded")) return;
+      var point = {
+        label: cells[0].textContent.trim(),
+        row: row,
+        values: [],
+        texts: []
+      };
+      series.forEach(function (name, position) {
+        var cell = cells[position + 1];
+        point.values.push(cell ? cellNumber(cell) : null);
+        point.texts.push(cell ? cell.textContent.trim() : "");
+      });
+      categories.push(point);
+    });
+    return categories.length
+      ? { series: series, categories: categories }
+      : null;
+  }
+
+  function niceCeil(value) {
+    if (!(value > 0)) return 1;
+    var magnitude = Math.pow(10, Math.floor(Math.log(value) / Math.LN10));
+    var steps = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10];
+    for (var i = 0; i < steps.length; i += 1) {
+      if (value <= steps[i] * magnitude) return steps[i] * magnitude;
+    }
+    return 10 * magnitude;
+  }
+
+  function formatTick(value) {
+    var size = Math.abs(value);
+    if (size >= 1000000) {
+      return (value / 1000000).toFixed(size % 1000000 ? 1 : 0) + "M";
+    }
+    if (size >= 1000) return (value / 1000).toFixed(size % 1000 ? 1 : 0) + "k";
+    return String(Math.round(value * 100) / 100);
+  }
+
+  /* Per-figure render state so a chart can be drawn more than once: the
+     nodes from the previous pass are thrown away and rebuilt from whatever
+     the table says now. */
+  var chartState = new WeakMap();
+
+  function chartTable(figure) {
+    var details = figure.querySelector(".a-chart__data");
+    return (details || figure).querySelector("table");
+  }
+
+  /* The table is the source of truth, so any change to it — a filter hiding
+     rows, new rows, an edited cell — redraws the chart on its own. */
+  function watchChartTable(figure, state) {
+    if (state.observer) return;
+    var queued = false;
+    state.observer = new MutationObserver(function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(function () {
+        queued = false;
+        renderChart(figure);
+      });
+    });
+    /* Watching the disclosure rather than the table keeps the chart live even
+       when a script replaces the whole <table>. */
+    state.observer.observe(state.details, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["hidden", "data-a-excluded", "data-value"]
+    });
+  }
+
+  function renderChart(figure) {
+    var type = figure.getAttribute("data-a-chart");
+    var table = chartTable(figure);
+    if (!CHART_TYPES[type] || !table) return;
+
+    var state = chartState.get(figure);
+    if (!state) {
+      state = { nodes: [], details: null, observer: null, focused: null };
+      chartState.set(figure, state);
+    }
+
+    /* Keeping the reader's place: a re-render restores keyboard focus to the
+       same category when it survives. */
+    var hadFocus = state.nodes.some(function (node) {
+      return node.contains(document.activeElement);
+    });
+    var refocus = hadFocus ? state.focused : null;
+    if (tipHost && figure.contains(tipHost)) hideTip();
+    state.nodes.forEach(function (node) {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    });
+    state.nodes = [];
+
+    if (!state.details) {
+      var source = table.closest(".a-table-scroll") || table;
+      var details = document.createElement("details");
+      details.className = "a-disclosure a-chart__data";
+      var summary = document.createElement("summary");
+      summary.textContent = "Data table";
+      details.appendChild(summary);
+      source.parentNode.insertBefore(details, source);
+      details.appendChild(source);
+      state.details = details;
+    }
+    watchChartTable(figure, state);
+
+    var data = readChartTable(table);
+    if (!data) {
+      var empty = document.createElement("p");
+      empty.className = "a-chart__empty";
+      empty.textContent =
+        figure.getAttribute("data-a-chart-empty") ||
+        "No data for this selection.";
+      figure.insertBefore(empty, state.details);
+      state.nodes.push(empty);
+      state.focused = null;
+      return;
+    }
+
+    var stacked = type === "stacked-bar";
+    var isLine = type === "line";
+    var height = parseFloat(figure.getAttribute("data-a-chart-height")) || 220;
+    var unit = figure.getAttribute("data-a-chart-unit") || "";
+    var tickUnit = unit.length <= 2 ? unit : "";
+    var pad = { top: 14, right: 14, bottom: 30, left: 46 };
+    var plotWidth = CHART_WIDTH - pad.left - pad.right;
+    var plotHeight = height - pad.top - pad.bottom;
+    var bandWidth = plotWidth / data.categories.length;
+
+    var high = 0;
+    var low = 0;
+    data.categories.forEach(function (point) {
+      var sum = 0;
+      point.values.forEach(function (value) {
+        if (value === null) return;
+        sum += value > 0 ? value : 0;
+        low = Math.min(low, value);
+        if (!stacked) high = Math.max(high, value);
+      });
+      if (stacked) high = Math.max(high, sum);
+    });
+    var declaredMax = parseFloat(figure.getAttribute("data-a-chart-max"));
+    var maxY = isFinite(declaredMax) ? declaredMax : niceCeil(high);
+    var minY = low < 0 ? -niceCeil(-low) : 0;
+    var span = maxY - minY || 1;
+
+    var scaleY = function (value) {
+      return pad.top + ((maxY - value) / span) * plotHeight;
+    };
+    var centerX = function (index) {
+      return pad.left + bandWidth * (index + 0.5);
+    };
+    var describe = function (index) {
+      var point = data.categories[index];
+      return (
+        point.label +
+        ": " +
+        data.series
+          .map(function (name, position) {
+            return name + " " + (point.texts[position] || "no value");
+          })
+          .join(", ")
+      );
+    };
+
+    var caption = figure.querySelector("figcaption");
+    var svg = svgNode("svg", {
+      class: "a-chart",
+      viewBox: "0 0 " + CHART_WIDTH + " " + height,
+      role: "group",
+      "aria-label":
+        (figure.getAttribute("data-a-chart-label") ||
+          (caption ? caption.textContent.trim() : "Chart")) +
+        ". Use the arrow keys to read each value."
+    });
+
+    var grid = svgNode("g", { class: "a-chart__grid" });
+    var axis = svgNode("g", { class: "a-chart__axis" });
+    for (var tick = 0; tick <= 4; tick += 1) {
+      var value = minY + (span * tick) / 4;
+      var y = scaleY(value);
+      grid.appendChild(
+        svgNode("line", {
+          x1: pad.left,
+          y1: y,
+          x2: CHART_WIDTH - pad.right,
+          y2: y
+        })
+      );
+      var tickLabel = svgNode("text", {
+        x: pad.left - 8,
+        y: y + 3.5,
+        "text-anchor": "end"
+      });
+      tickLabel.textContent = formatTick(value) + tickUnit;
+      axis.appendChild(tickLabel);
+    }
+
+    var labelStep = Math.ceil(data.categories.length / 8);
+    data.categories.forEach(function (point, index) {
+      if (index % labelStep) return;
+      var text = svgNode("text", {
+        x: centerX(index),
+        y: height - 10,
+        "text-anchor": "middle"
+      });
+      text.textContent = point.label;
+      axis.appendChild(text);
+    });
+
+    var plot = svgNode("g", { class: "a-chart__plot" });
+    /* Past ~30 points a marker per category reads as a scatter plot instead
+       of a line, so dense series drop to a bare stroke and only the active
+       point is drawn (CSS gives it a radius again). */
+    var pointRadius = data.categories.length > 30 ? 0 : 2.75;
+    if (isLine) {
+      data.series.forEach(function (name, position) {
+        /* A missing value breaks the line rather than bridging the gap. */
+        var segments = [[]];
+        data.categories.forEach(function (point, index) {
+          var value = point.values[position];
+          if (value === null) {
+            if (segments[segments.length - 1].length) segments.push([]);
+            return;
+          }
+          segments[segments.length - 1].push(
+            centerX(index) + "," + scaleY(value)
+          );
+          plot.appendChild(
+            svgNode("circle", {
+              class: "a-chart__point a-series-" + (position + 1),
+              cx: centerX(index),
+              cy: scaleY(value),
+              r: pointRadius,
+              "data-a-index": index
+            })
+          );
+        });
+        segments.forEach(function (coordinates) {
+          if (!coordinates.length) return;
+          plot.insertBefore(
+            svgNode("polyline", {
+              class: "a-chart__series a-series-" + (position + 1),
+              points: coordinates.join(" ")
+            }),
+            plot.firstChild
+          );
+        });
+      });
+    } else {
+      var inset = bandWidth * 0.18;
+      var slot = (bandWidth - inset * 2) / (stacked ? 1 : data.series.length);
+      var baseline = scaleY(Math.max(minY, 0));
+      data.categories.forEach(function (point, index) {
+        var stackTop = 0;
+        data.series.forEach(function (name, position) {
+          var value = point.values[position];
+          if (value === null) return;
+          var from = baseline;
+          var to;
+          if (stacked) {
+            from = scaleY(stackTop);
+            stackTop += value;
+            to = scaleY(stackTop);
+          } else {
+            to = scaleY(value);
+          }
+          plot.appendChild(
+            svgNode("rect", {
+              class: "a-chart__bar a-series-" + (position + 1),
+              x:
+                pad.left +
+                bandWidth * index +
+                inset +
+                slot * (stacked ? 0 : position),
+              y: Math.min(from, to),
+              width: Math.max(1, slot - 2),
+              height: Math.max(1, Math.abs(to - from)),
+              rx: 2,
+              "data-a-index": index
+            })
+          );
+        });
+      });
+    }
+
+    var crosshair = svgNode("line", {
+      class: "a-chart__crosshair",
+      x1: pad.left,
+      x2: pad.left,
+      y1: pad.top,
+      y2: pad.top + plotHeight,
+      hidden: "hidden"
+    });
+
+    var overlay = svgNode("g", { class: "a-chart__bands" });
+    var bands = data.categories.map(function (point, index) {
+      var band = svgNode("rect", {
+        class: "a-chart__band",
+        x: pad.left + bandWidth * index,
+        y: pad.top,
+        width: bandWidth,
+        height: plotHeight,
+        tabindex: index === 0 ? 0 : -1,
+        role: "img",
+        "aria-label": describe(index)
+      });
+      overlay.appendChild(band);
+      return band;
+    });
+
+    svg.appendChild(grid);
+    svg.appendChild(axis);
+    svg.appendChild(plot);
+    svg.appendChild(crosshair);
+    svg.appendChild(overlay);
+
+    figure.insertBefore(svg, state.details);
+    state.nodes.push(svg);
+
+    if (data.series.length > 1) {
+      var legend = document.createElement("ul");
+      legend.className = "a-legend";
+      data.series.forEach(function (name, position) {
+        var item = document.createElement("li");
+        item.className = "a-series-" + (position + 1);
+        var swatch = document.createElement("span");
+        swatch.className = "a-legend__swatch";
+        item.appendChild(swatch);
+        item.appendChild(document.createTextNode(name));
+        legend.appendChild(item);
+      });
+      figure.insertBefore(legend, state.details);
+      state.nodes.push(legend);
+    }
+
+    var readout = document.createElement("p");
+    readout.className = "a-visually-hidden";
+    readout.setAttribute("aria-live", "polite");
+    figure.appendChild(readout);
+    state.nodes.push(readout);
+
+    var clear = function () {
+      bands.forEach(function (band) {
+        band.removeAttribute("data-a-active");
+      });
+      plot.querySelectorAll("[data-a-index]").forEach(function (mark) {
+        mark.removeAttribute("data-a-active");
+      });
+      crosshair.setAttribute("hidden", "hidden");
+      readout.textContent = "";
+    };
+
+    var activate = function (index, pointer) {
+      if (index < 0 || index >= bands.length) return;
+      clear();
+      bands[index].setAttribute("data-a-active", "true");
+      plot
+        .querySelectorAll('[data-a-index="' + index + '"]')
+        .forEach(function (mark) {
+          mark.setAttribute("data-a-active", "true");
+        });
+      if (isLine) {
+        crosshair.setAttribute("x1", centerX(index));
+        crosshair.setAttribute("x2", centerX(index));
+        crosshair.removeAttribute("hidden");
+      }
+      readout.textContent = describe(index);
+      showTip(
+        {
+          title: data.categories[index].label,
+          rows: data.series.map(function (name, position) {
+            return {
+              name: name,
+              value: data.categories[index].texts[position],
+              series: position + 1
+            };
+          })
+        },
+        bands[index],
+        bands[index].getBoundingClientRect(),
+        pointer,
+        clear
+      );
+    };
+
+    /* -1 outside the plot area, so the axis and margins read as no category. */
+    var indexAt = function (clientX) {
+      var box = svg.getBoundingClientRect();
+      if (!box.width) return -1;
+      var local = ((clientX - box.left) / box.width) * CHART_WIDTH;
+      if (local < pad.left || local > pad.left + plotWidth) return -1;
+      var index = Math.floor((local - pad.left) / bandWidth);
+      return Math.max(0, Math.min(data.categories.length - 1, index));
+    };
+
+    svg.addEventListener("pointermove", function (event) {
+      if (event.pointerType === "touch") return;
+      var index = indexAt(event.clientX);
+      if (index === -1) {
+        if (bands.indexOf(document.activeElement) === -1) hideTip();
+        return;
+      }
+      activate(index, { x: event.clientX, y: event.clientY });
+    });
+
+    svg.addEventListener("pointerdown", function (event) {
+      if (event.pointerType !== "touch") return;
+      activate(indexAt(event.clientX), null);
+    });
+
+    /* Touch leaves as soon as the finger lifts, so a tap keeps its readout. */
+    svg.addEventListener("pointerleave", function (event) {
+      if (event.pointerType === "touch") return;
+      if (bands.indexOf(document.activeElement) === -1) hideTip();
+    });
+
+    bands.forEach(function (band, index) {
+      band.addEventListener("focus", function () {
+        state.focused = {
+          index: index,
+          row: data.categories[index].row,
+          label: data.categories[index].label
+        };
+        activate(index, null);
+      });
+      band.addEventListener("blur", function () {
+        if (tipHost === band) hideTip();
+      });
+    });
+
+    svg.addEventListener("keydown", function (event) {
+      var current = bands.indexOf(document.activeElement);
+      if (current === -1) return;
+      var next = current;
+      if (event.key === "ArrowRight") next = current + 1;
+      else if (event.key === "ArrowLeft") next = current - 1;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = bands.length - 1;
+      else return;
+      event.preventDefault();
+      next = Math.max(0, Math.min(bands.length - 1, next));
+      bands.forEach(function (band, position) {
+        band.setAttribute("tabindex", position === next ? "0" : "-1");
+      });
+      bands[next].focus();
+    });
+
+    if (refocus) {
+      /* The same row, not the same slot: filtering rows above the reader's
+         position must not move them onto a different bar. */
+      var target = data.categories.findIndex(function (category) {
+        return category.row === refocus.row;
+      });
+      /* Rows rebuilt wholesale lose their identity, so fall back to the label
+         and then to the old slot. */
+      if (target === -1) {
+        target = data.categories.findIndex(function (category) {
+          return category.label === refocus.label;
+        });
+      }
+      if (target === -1) target = Math.min(refocus.index, bands.length - 1);
+      bands.forEach(function (band, position) {
+        band.setAttribute("tabindex", position === target ? "0" : "-1");
+      });
+      bands[target].focus();
+    }
+  }
+
+  function renderCharts(target) {
+    if (target === undefined || target === null) {
+      document.querySelectorAll("[data-a-chart]").forEach(renderChart);
+      return;
+    }
+    var scope =
+      typeof target === "string" ? document.querySelector(target) : target;
+    if (!scope) return;
+    if (scope.matches && scope.matches("[data-a-chart]")) renderChart(scope);
+    else scope.querySelectorAll("[data-a-chart]").forEach(renderChart);
+  }
+
+  renderCharts();
+
+  /* The only public surface of the kit: artifacts that swap or filter a
+     chart's rows themselves can force a redraw, though the table observer
+     above already covers ordinary DOM edits. */
+  window.artifactKit = window.artifactKit || {};
+  window.artifactKit.renderCharts = renderCharts;
+
+  /* Print carries the numbers, not the hover: expand every chart's data
+     table before the page is rendered. */
+  var printReopened = [];
+  window.addEventListener("beforeprint", function () {
+    hideTip();
+    document.querySelectorAll(".a-chart__data").forEach(function (details) {
+      if (details.open) return;
+      printReopened.push(details);
+      details.open = true;
+    });
+  });
+
+  window.addEventListener("afterprint", function () {
+    printReopened.forEach(function (details) {
+      details.open = false;
+    });
+    printReopened = [];
+  });
+
+  /* ---------- diagram: pan, zoom, select ----------
+     Pointer drag and wheel pan/zoom the viewport group; arrow keys and
+     +/-/0 do the same from the keyboard so the diagram is operable without
+     a pointing device. Node clicks (or Enter/Space) update the inspector. */
+  document.querySelectorAll("[data-a-diagram]").forEach(function (diagram) {
+    var svg = diagram.querySelector("[data-a-diagram-canvas]");
+    var viewport = diagram.querySelector("[data-a-diagram-viewport]");
+    if (!svg || !viewport) return;
+
+    var view = { x: 0, y: 0, scale: 1 };
+    var drag = null;
+
+    var render = function () {
+      viewport.setAttribute(
+        "transform",
+        "translate(" + view.x + " " + view.y + ") scale(" + view.scale + ")"
+      );
+    };
+
+    var zoomBy = function (factor) {
+      view.scale = Math.min(2.5, Math.max(0.5, view.scale * factor));
+      render();
+    };
+
+    svg.addEventListener("pointerdown", function (event) {
+      if (event.target.closest("[data-a-node]")) return;
+      drag = { x: event.clientX, y: event.clientY };
+      svg.setPointerCapture(event.pointerId);
+    });
+
+    svg.addEventListener("pointermove", function (event) {
+      if (!drag) return;
+      view.x += event.clientX - drag.x;
+      view.y += event.clientY - drag.y;
+      drag = { x: event.clientX, y: event.clientY };
+      render();
+    });
+
+    var endDrag = function () {
+      drag = null;
+    };
+    svg.addEventListener("pointerup", endDrag);
+    svg.addEventListener("pointercancel", endDrag);
+
+    svg.addEventListener(
+      "wheel",
+      function (event) {
+        if (!event.ctrlKey && !event.metaKey) return;
+        event.preventDefault();
+        zoomBy(event.deltaY < 0 ? 1.1 : 0.9);
+      },
+      { passive: false }
+    );
+
+    diagram.addEventListener("keydown", function (event) {
+      var pan = { ArrowUp: [0, 24], ArrowDown: [0, -24], ArrowLeft: [24, 0], ArrowRight: [-24, 0] }[
+        event.key
+      ];
+      if (pan && !event.target.closest("[data-a-node]")) {
+        event.preventDefault();
+        view.x += pan[0];
+        view.y += pan[1];
+        render();
+        return;
+      }
+      if (event.key === "+" || event.key === "=") zoomBy(1.1);
+      else if (event.key === "-") zoomBy(0.9);
+      else if (event.key === "0") {
+        view = { x: 0, y: 0, scale: 1 };
+        render();
+      }
+    });
+
+    diagram.querySelectorAll("[data-a-zoom]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var action = button.getAttribute("data-a-zoom");
+        if (action === "in") zoomBy(1.15);
+        else if (action === "out") zoomBy(0.87);
+        else {
+          view = { x: 0, y: 0, scale: 1 };
+          render();
+        }
+      });
+    });
+
+    var inspector = diagram.querySelector("[data-a-inspector]");
+    var select = function (node) {
+      diagram.querySelectorAll("[data-a-node]").forEach(function (other) {
+        other.setAttribute("aria-current", String(other === node));
+      });
+      if (!inspector) return;
+      var title = inspector.querySelector("[data-a-inspector-title]");
+      var body = inspector.querySelector("[data-a-inspector-body]");
+      if (title) title.textContent = node.getAttribute("data-a-title") || "";
+      if (body) body.textContent = node.getAttribute("data-a-detail") || "";
+    };
+
+    diagram.querySelectorAll("[data-a-node]").forEach(function (node) {
+      node.addEventListener("click", function () {
+        select(node);
+      });
+      node.addEventListener("keydown", function (event) {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        select(node);
+      });
+    });
+
+    render();
+  });
+})();
+    </script>
+  </body>
+</html>
