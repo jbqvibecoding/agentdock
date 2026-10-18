@@ -39,6 +39,11 @@ html[data-vibrancy="1"] .win { backdrop-filter: none; -webkit-backdrop-filter: n
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font-family: var(--font); color: var(--fg); -webkit-font-smoothing: antialiased; }
 body { background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none; }
+/* Linux (WebKitGTK/X11): no system material and RGBA windows can leak stale buffers → paint our own opaque, softly blurred backdrop */
+html[data-os="linux"] body { background: #cfd8f2; }
+html[data-os="linux"] body::before { content: ""; position: fixed; inset: -40px; z-index: -1; background: url(/wall-light.jpg) center / cover no-repeat; filter: blur(28px) saturate(115%); }
+html[data-os="linux"][data-theme="dark"] body { background: #1c1c1e; }
+html[data-os="linux"][data-theme="dark"] body::before { filter: blur(28px) brightness(.45) saturate(90%); }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 

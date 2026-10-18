@@ -285,6 +285,7 @@ function applySettings(s: AppSettings) {
 async function boot() {
   const host = await api.invoke<HostInfo>("host_info");
   document.documentElement.toggleAttribute("data-vibrancy", host.vibrancy);
+  document.documentElement.dataset.os = host.os;
   applySettings(await api.invoke<AppSettings>("get_settings"));
   seats = await api.invoke<SeatView[]>("get_seats");
   state = await api.invoke<DockState>("get_state");

@@ -303,7 +303,8 @@ function renderAbout() {
 async function show(p: PageId) {
   page = p;
   document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === p));
-  const [t, s] = TITLES[p]; $("#title").textContent = t; $("#subtitle").textContent = s;
+  const [t, s] = TITLES[p]; $("#title").textContent = t;
+  $("#subtitle").textContent = s.replace("⌥", pretty("Alt")).replace("⌥", pretty("Alt"));
   if (p === "seats") await renderSeats(); else if (p === "hotkeys") await renderHotkeys(); else if (p === "appearance") renderAppearance(); else if (p === "mic") await renderMic(); else renderAbout();
 }
 document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.addEventListener("click", () => show(b.dataset.page as PageId)));
@@ -311,6 +312,7 @@ document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.addE
 async function boot() {
   host = await api.invoke<HostInfo>("host_info");
   document.documentElement.toggleAttribute("data-vibrancy", host.vibrancy);
+  document.documentElement.dataset.os = host.os;
   $("#ver").textContent = host.version;
   settings = await api.invoke<AppSettings>("get_settings"); applySettingsLocally();
   [seats, drivers] = await Promise.all([api.invoke<SeatView[]>("get_seats"), api.invoke<DriverInfo[]>("list_drivers")]);
