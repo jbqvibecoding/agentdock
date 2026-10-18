@@ -682,9 +682,10 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
 /// sized to the window, with the same continuous corner radius the frontend uses.
 #[cfg(target_os = "macos")]
 mod liquid_glass {
-    use objc2::rc::Retained;
+    use objc2::rc::{Allocated, Retained};
     use objc2::runtime::AnyObject;
-    use objc2::{msg_send, AnyThread, ClassType};
+    use objc2::{msg_send, ClassType};
+    use objc2_foundation::NSObjectProtocol;
     use objc2_app_kit::{NSAutoresizingMaskOptions, NSColor, NSView, NSWindow, NSWindowOrderingMode};
     use tauri::{Runtime, WebviewWindow};
 
@@ -702,12 +703,13 @@ mod liquid_glass {
             window.setBackgroundColor(Some(&NSColor::clearColor()));
             let Some(content) = window.contentView() else { return Err("no contentView".into()) };
             let bounds = content.bounds();
-            let glass: Retained<AnyObject> = msg_send![cls.alloc(), initWithFrame: bounds];
+            let alloc: Allocated<AnyObject> = msg_send![cls, alloc];
+            let glass: Retained<AnyObject> = msg_send![alloc, initWithFrame: bounds];
             let glass_view: &NSView = &*(Retained::as_ptr(&glass) as *const NSView);
             glass_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
             let _: () = msg_send![&*glass, setCornerRadius: corner_radius];
             let _: () = msg_send![&*glass, setTintColor: std::ptr::null::<AnyObject>()];
-            content.addSubview_positioned_relativeTo(glass_view, NSWindowOrderingMode::NSWindowBelow, None);
+            content.addSubview_positioned_relativeTo(glass_view, NSWindowOrderingMode::Below, None);
             // Keep the webview itself transparent so the glass shows through.
             for sub in content.subviews().iter() {
                 if !std::ptr::eq(&*sub as *const NSView, glass_view) {
