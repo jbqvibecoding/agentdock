@@ -16,6 +16,7 @@ one click to call, one click to mute, one click to hang up or hand the call to t
 <br/>
 
 <img src="docs/screenshots/hero-light.png" width="920" alt="AgentDock idle pill" />
+<br/>
 
 <p><sub>Light · idle. Left to right: collapse · system mute · seats (dot / Grok Bot / Copilot / Muse) · add seat · ⇅ orientation grip</sub></p>
 

@@ -16,6 +16,7 @@
 <br/>
 
 <img src="docs/screenshots/hero-light.png" width="920" alt="AgentDock 空闲态胶囊：电源、麦克风、四位 agent、添加、方向把手" />
+<br/>
 
 <p><sub>浅色 · 空闲态。胶囊从左到右：收起 · 系统闭麦 · 席位（dot / Grok Bot / Copilot / Muse）· 添加席位 · ⇅ 方向把手</sub></p>
 
