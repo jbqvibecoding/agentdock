@@ -91,7 +91,7 @@ async function renderSeats() {
       b.addEventListener("click", async () => { await api.invoke("connect_account", { seatId: s.id }); toast("登录窗已打开，登录完成后会自动收起"); });
       acts.append(b);
     } else {
-      const b = el("button", `btn sm${needsLogin ? " primary" : ""}`, s.status === "unavailable" ? "未安装" : "授予辅助功能权限 →");
+      const b = el("button", `btn sm${needsLogin ? " primary" : ""}`, s.status === "unavailable" ? "未安装" : "授权辅助功能 →");
       b.disabled = s.status === "unavailable";
       b.addEventListener("click", async () => { try { await api.invoke("connect_account", { seatId: s.id }); toast("已打开系统设置 › 辅助功能"); } catch (e) { toast(String(e)); } });
       acts.append(b);
@@ -116,7 +116,7 @@ async function renderSeats() {
     });
     list.append(r);
   }
-  const add = el("div", "row");
+  const add = el("div", "row stack");
   const sel = el("select") as HTMLSelectElement;
   for (const d of drivers) sel.append(new Option(`${d.display_name}（${d.kind === "web" ? "网页" : "App"}）`, d.id));
   const name = el("input") as HTMLInputElement; name.type = "text"; name.placeholder = "给这位 agent 起个名字"; name.style.width = "180px";

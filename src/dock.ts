@@ -116,8 +116,8 @@ function renderStatusText() {
     statusEl.innerHTML = `<div class="name">${escapeHtml(s.name)}</div><div class="sub">${hint}</div>`;
     statusEl.classList.remove("idle");
   } else {
-    statusEl.innerHTML = `<div class="name">${state.muted ? "已闭麦" : "空闲"}</div>`;
-    statusEl.classList.add("idle");
+    statusEl.innerHTML = state.muted ? `<div class="name">已闭麦</div>` : "";
+    statusEl.classList.toggle("idle", !state.muted);
   }
 }
 
@@ -254,7 +254,7 @@ function startWave() {
       bars[i] += (target - bars[i]) * .25;
       const h = Math.max(2.5, bars[i] * (Hh - 6));
       const x = i * (bw + gap), y = (Hh - h) / 2;
-      ctx.fillStyle = getComputedStyle(dock).getPropertyValue("--fg").trim() || "#fff";
+      ctx.fillStyle = getComputedStyle(dock).getPropertyValue("--sym").trim() || "#5c6b99";
       ctx.globalAlpha = state.muted ? .35 : .92;
       roundRect(ctx, x, y, bw, h, bw / 2);
     }
