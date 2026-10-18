@@ -1,6 +1,9 @@
 # AgentDock
 
-一条悬浮在桌面上的「个人 agent 语音通讯录」。把你订阅的各家常驻 agent（ChatGPT dot、Grok Bot、Copilot、Devin、Muse）当成一排可呼叫的联系人：一键呼叫、一键闭麦、一键挂断或切到另一位。灵动岛式三级形态，玻璃由系统渲染（macOS `NSVisualEffectView` / Windows Mica）。
+一条悬浮在桌面上的「个人 agent 语音通讯录」。把你订阅的各家常驻 agent（ChatGPT dot、Grok Bot、Copilot、Devin、Muse）当成一排可呼叫的联系人：一键呼叫、一键闭麦、一键挂断或切到另一位。灵动岛式三级形态，玻璃由系统渲染（macOS 26 `NSGlassEffectView` Liquid Glass，老系统 `NSVisualEffectView`；Windows Mica）。
+
+- 不固定位置：按住胶囊的玻璃空白处或小圆点拖到任意位置，松手即记忆（设置 › 外观 › 位置 = 自由）；也可选一个屏幕边缘吸附。
+- 横向 / 竖向：设置 › 外观 › 方向。竖向时整条胶囊立起来像侧边 Dock，通话中波形与文字竖排；小圆点与宠物形态不受影响。
 
 ![dock](.shots/sheet-dock-dark.png)
 
@@ -66,8 +69,11 @@ Grok Bot 没有网页版，用 `AXButton[Start voice chat]` 这类 AX 选择器�
 ## 测试
 
 ```bash
-cd src-tauri && cargo test          # 状态机 / 席位 / 设置 / 快捷键 / 驱动 19 个单元测试
+cd src-tauri && cargo test          # 状态机 / 席位 / 设置 / 放置 / 快捷键 / 驱动 22 个单元测试
 npm run build                        # 前端类型检查 + 打包
+npx vite --port 1420 & python3 tests/e2e_mock.py   # 浏览器 mock E2E 20 项（状态机→DOM、竖向、拖拽、设置页）
+bash tests/e2e_xvfb.sh               # Linux 真实二进制冒烟（xvfb）
+DOCS_RS=1 cargo check --target aarch64-apple-darwin  # 在 Linux 上交叉检查 macOS objc2 代码
 python3 .shots/shoot.py              # 浏览器 mock 下的 Dock 与设置页截图（深浅色）
 ```
 
