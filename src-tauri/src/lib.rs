@@ -306,39 +306,77 @@ fn undo_switch(app: AppHandle) {
 #[tauri::command]
 fn resize_dock(app: AppHandle, width: f64, height: f64) -> CmdResult<()> {
     let win = app.get_webview_window("dock").ok_or("no dock window")?;
-    let snap = app.state::<AppState>().settings.lock().unwrap().snap;
+    let (snap, anchor) = {
+        let st = app.state::<AppState>();
+        let s = st.settings.lock().unwrap();
+        (s.snap, s.dock_anchor)
+    };
     #[cfg(target_os = "macos")]
     {
         // AppKit setters only take effect on the main thread; commands run on the async runtime.
         let radius = (width.min(height) / 2.0).min(28.0);
         let _ = app.run_on_main_thread(move || liquid_glass::set_corner_radius(radius));
     }
-    position_dock(&win, width, height, snap).map_err(err)
+    position_dock(&win, width, height, snap, anchor).map_err(err)
 }
 
-fn position_dock<R: Runtime>(win: &WebviewWindow<R>, width: f64, height: f64, snap: settings::Snap) -> tauri::Result<()> {
-    use settings::Snap::*;
+/// Webview-side errors and diagnostics land in the Rust log (there is no console on a hidden pill).
+#[tauri::command]
+fn ui_log(level: String, msg: String) {
+    match level.as_str() {
+        "error" => tracing::error!(target: "agentdock_lib::ui", "{msg}"),
+        "warn" => tracing::warn!(target: "agentdock_lib::ui", "{msg}"),
+        _ => tracing::info!(target: "agentdock_lib::ui", "{msg}"),
+    }
+}
+
+/// One frame of a user drag: put the window so the point grabbed at pointer-down (`offset`, logical px
+/// inside the window) stays under the cursor. The OS cursor position is used instead of webview
+/// screenX/Y, which lag behind while the window itself is moving (double-counted on WebKitGTK).
+#[tauri::command]
+fn drag_dock(app: AppHandle, offset_x: f64, offset_y: f64) -> CmdResult<()> {
+    let win = app.get_webview_window("dock").ok_or("no dock window")?;
+    let sc = win.scale_factor().map_err(err)?;
+    let cursor = app.cursor_position().map_err(err)?;
+    win.set_position(tauri::LogicalPosition::new(cursor.x / sc - offset_x, cursor.y / sc - offset_y)).map_err(err)
+}
+
+/// Called by the dock once a drag ends: the pill's centre becomes the anchor and snapping is off.
+#[tauri::command]
+fn remember_dock_position(app: AppHandle) -> CmdResult<()> {
+    let win = app.get_webview_window("dock").ok_or("no dock window")?;
+    let sc = win.scale_factor().map_err(err)?;
+    let pos = win.outer_position().map_err(err)?;
+    let size = win.outer_size().map_err(err)?;
+    let anchor = settings::DockAnchor {
+        x: (pos.x as f64 + size.width as f64 / 2.0) / sc,
+        y: (pos.y as f64 + size.height as f64 / 2.0) / sc,
+    };
+    let st = app.state::<AppState>();
+    let settings = {
+        let mut s = st.settings.lock().unwrap();
+        s.snap = settings::Snap::Free;
+        s.dock_anchor = Some(anchor);
+        s.clone()
+    };
+    tracing::info!("dock anchored at ({:.0}, {:.0})", anchor.x, anchor.y);
+    settings.save(&settings::settings_path(&st.config_dir)).map_err(err)?;
+    let _ = app.emit("settings:changed", &settings);
+    Ok(())
+}
+
+fn position_dock<R: Runtime>(win: &WebviewWindow<R>, width: f64, height: f64, snap: settings::Snap, anchor: Option<settings::DockAnchor>) -> tauri::Result<()> {
     let monitor = win.current_monitor()?.or(win.primary_monitor()?);
-    let (mw, mh, mx, my, scale) = match monitor {
+    let rect = match monitor {
         Some(m) => {
             let s = m.size();
             let p = m.position();
             let sc = m.scale_factor();
-            (s.width as f64 / sc, s.height as f64 / sc, p.x as f64 / sc, p.y as f64 / sc, sc)
+            (p.x as f64 / sc, p.y as f64 / sc, s.width as f64 / sc, s.height as f64 / sc)
         }
-        None => (1440.0, 900.0, 0.0, 0.0, 1.0),
+        None => (0.0, 0.0, 1440.0, 900.0),
     };
-    let _ = scale;
-    let margin = 8.0;
-    let x = match snap {
-        TopLeft | BottomLeft => mx + margin,
-        TopRight | BottomRight => mx + mw - width - margin,
-        TopCenter | BottomCenter => mx + (mw - width) / 2.0,
-    };
-    let y = match snap {
-        TopCenter | TopLeft | TopRight => my + margin,
-        BottomCenter | BottomLeft | BottomRight => my + mh - height - margin - 70.0,
-    };
+    let (x, y) = dock_origin(snap, anchor, width, height, rect);
     win.set_size(tauri::LogicalSize::new(width, height))?;
     win.set_position(tauri::LogicalPosition::new(x, y))?;
     // AppKit caches the shadow of a transparent window; after a pill↔dot resize the stale
@@ -349,6 +387,52 @@ fn position_dock<R: Runtime>(win: &WebviewWindow<R>, width: f64, height: f64, sn
         let _ = win.run_on_main_thread(move || unsafe { (&*(p as *mut objc2_app_kit::NSWindow)).invalidateShadow() });
     }
     Ok(())
+}
+
+/// Pure placement: top-left origin of a `width`×`height` pill on monitor `rect` = (x, y, w, h), logical px.
+/// `Free` keeps the pill centred on the user's anchor but never lets it leave the screen.
+fn dock_origin(snap: settings::Snap, anchor: Option<settings::DockAnchor>, width: f64, height: f64, rect: (f64, f64, f64, f64)) -> (f64, f64) {
+    use settings::Snap::*;
+    let (mx, my, mw, mh) = rect;
+    let margin = 8.0;
+    let clamp = |v: f64, lo: f64, hi: f64| v.max(lo).min(hi.max(lo));
+    match (snap, anchor) {
+        (Free, Some(a)) => (
+            clamp(a.x - width / 2.0, mx + margin, mx + mw - width - margin),
+            clamp(a.y - height / 2.0, my + margin, my + mh - height - margin),
+        ),
+        _ => {
+            let x = match snap {
+                TopLeft | BottomLeft => mx + margin,
+                TopRight | BottomRight => mx + mw - width - margin,
+                _ => mx + (mw - width) / 2.0,
+            };
+            let y = match snap {
+                BottomCenter | BottomLeft | BottomRight => my + mh - height - margin - 70.0,
+                _ => my + margin,
+            };
+            (x, y)
+        }
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::dock_origin;
+    use crate::settings::{DockAnchor, Snap};
+    const MON: (f64, f64, f64, f64) = (0.0, 0.0, 1440.0, 900.0);
+
+    #[test]
+    fn free_anchor_centres_and_clamps_to_screen() {
+        assert_eq!(dock_origin(Snap::Free, Some(DockAnchor { x: 720.0, y: 450.0 }), 100.0, 56.0, MON), (670.0, 422.0));
+        assert_eq!(dock_origin(Snap::Free, Some(DockAnchor { x: 5.0, y: 5000.0 }), 100.0, 56.0, MON), (8.0, 900.0 - 56.0 - 8.0));
+    }
+
+    #[test]
+    fn free_without_anchor_behaves_like_top_centre() {
+        assert_eq!(dock_origin(Snap::Free, None, 100.0, 56.0, MON), dock_origin(Snap::TopCenter, None, 100.0, 56.0, MON));
+        assert_eq!(dock_origin(Snap::BottomRight, None, 100.0, 56.0, MON), (1440.0 - 108.0, 900.0 - 56.0 - 78.0));
+    }
 }
 
 // ───────────────────────── commands: seats ─────────────────────────
@@ -577,7 +661,7 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> CmdResult<()> {
     if let Some(win) = app.get_webview_window("dock") {
         let size = win.inner_size().map_err(err)?;
         let sc = win.scale_factor().unwrap_or(1.0);
-        let _ = position_dock(&win, size.width as f64 / sc, size.height as f64 / sc, settings.snap);
+        let _ = position_dock(&win, size.width as f64 / sc, size.height as f64 / sc, settings.snap, settings.dock_anchor);
     }
     Ok(())
 }
@@ -886,8 +970,12 @@ pub fn run() {
             apply_glass(&dock, settings_win.as_ref());
             apply_theme(app.handle(), app.state::<AppState>().settings.lock().unwrap().theme);
             {
-                let snap = app.state::<AppState>().settings.lock().unwrap().snap;
-                let _ = position_dock(&dock, 640.0, 140.0, snap);
+                let (snap, anchor) = {
+                    let st = app.state::<AppState>();
+                    let s = st.settings.lock().unwrap();
+                    (s.snap, s.dock_anchor)
+                };
+                let _ = position_dock(&dock, 640.0, 140.0, snap, anchor);
             }
             if let Some(w) = &settings_win {
                 let app2 = app.handle().clone();
@@ -933,7 +1021,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock,
+            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat,
             driver_report, driver_error, set_seat_icon, reset_seat_icon, seat_icon_data,
             get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info

@@ -134,3 +134,15 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 .avatar svg, .avatar img { width: 26px; height: 26px; display: block; object-fit: cover; }
 .avatar.lg img { width: 100%; height: 100%; }
 .drag { position: absolute; left: 0; right: 0; top: 0; height: 6px; cursor: grab; }
+
+/* ───── vertical orientation (设置 › 外观 › 方向): the same pill stood on end, like a side dock ───── */
+.bar { cursor: grab; }
+#dock.dragging, #dock.dragging * { cursor: grabbing !important; }
+#dock.dragging .btn:hover { transform: none; }
+#dock[data-orient="vertical"] .bar { flex-direction: column; padding: var(--pad) 0; }
+#dock[data-orient="vertical"] .divider { width: 22px; height: 1px; margin: 2px 0; }
+#dock[data-orient="vertical"] .wave { width: 34px; height: 84px; }
+#dock[data-orient="vertical"] .status { writing-mode: vertical-rl; text-orientation: mixed; padding: 4px 0; justify-items: center; max-height: 128px; }
+#dock[data-orient="vertical"] .status .name, #dock[data-orient="vertical"] .status .sub { max-height: 128px; }
+#dock[data-orient="vertical"] .undo { writing-mode: vertical-rl; height: auto; width: 30px; padding: 12px 0; }
+#dock[data-orient="vertical"] .btn:hover { transform: translateX(-1px) scale(1.04); }

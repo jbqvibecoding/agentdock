@@ -50,6 +50,17 @@ async def main() -> int:
         check("collapse → dot form, 36px", await dock("form") == "dot" and await ev("getComputedStyle(document.getElementById('dock')).width") == "36px")
         await ev("document.getElementById('collapsed').click()"); await asyncio.sleep(0.6)
         check("expand again", await dock("form") == "bar")
+        await ev("window.__mockInvoke('save_settings', {settings: {...window.__mockSettings, orientation: 'vertical'}})"); await asyncio.sleep(0.8)
+        check("vertical orientation → column pill, taller than wide", await dock("orient") == "vertical" and await ev("getComputedStyle(document.querySelector('.bar')).flexDirection") == "column" and await ev("(r=>r.height>r.width)(document.getElementById('dock').getBoundingClientRect())"))
+        await ev("window.__mockInvoke('save_settings', {settings: {...window.__mockSettings, orientation: 'horizontal'}})"); await asyncio.sleep(0.8)
+        # drag: press on the pill's left padding (not a button), move, release → window moved + anchored
+        r = await ev("JSON.stringify(document.getElementById('dock').getBoundingClientRect())"); r = json.loads(r)
+        x0, y0 = r["x"] + 5, r["y"] + r["height"] / 2
+        await send("Input.dispatchMouseEvent", type="mousePressed", x=x0, y=y0, button="left", clickCount=1)
+        for i in range(1, 6): await send("Input.dispatchMouseEvent", type="mouseMoved", x=x0 + i * 12, y=y0 + i * 7, button="left"); await asyncio.sleep(0.03)
+        await send("Input.dispatchMouseEvent", type="mouseReleased", x=x0 + 60, y=y0 + 35, button="left", clickCount=1); await asyncio.sleep(0.3)
+        check("drag pill → window follows cursor with grab offset, then anchors (snap=free)", await ev("window.__mockDrags > 0") and await ev(f"window.__mockGrab && Math.abs(window.__mockGrab.x-({x0}))<1 && Math.abs(window.__mockGrab.y-({y0}))<1") and await ev("window.__mockAnchored === true") and await ev("window.__mockSettings.snap") == "free")
+        check("back to horizontal row", await dock("orient") == "horizontal" and await ev("(r=>r.width>r.height)(document.getElementById('dock').getBoundingClientRect())"))
         # settings page smoke
         await send("Page.navigate", url=URL + "settings.html?page=hotkeys"); await asyncio.sleep(1.2)
         check("settings: hotkeys page renders 3 globals", await ev("document.querySelectorAll('.key').length") == 3)

@@ -28,10 +28,12 @@ export interface SeatView extends Seat { probe: ProbeResult | null; driver_verif
 
 export type DefaultForm = "dot" | "capsule" | "expanded" | "pet";
 export type Theme = "system" | "light" | "dark";
-export type Snap = "top_center" | "bottom_center" | "top_left" | "top_right" | "bottom_left" | "bottom_right";
+export type Snap = "free" | "top_center" | "bottom_center" | "top_left" | "top_right" | "bottom_left" | "bottom_right";
+export type Orientation = "horizontal" | "vertical";
+export interface DockAnchor { x: number; y: number }
 export interface Hotkeys { toggle: string; mute: string; hangup: string; seat_modifier: string; push_to_talk: boolean }
 export interface AppSettings {
-  default_form: DefaultForm; theme: Theme; snap: Snap; show_names: "hover" | "always" | "never";
+  default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; show_names: "hover" | "always" | "never";
   reduce_motion: boolean; material_strength: number; hotkeys: Hotkeys; mute_mode: "system" | "seat";
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
 }
@@ -53,10 +55,11 @@ const mock = (() => {
     { id: "muse", name: "Muse", service: "Meta Muse", driver: { kind: "web", url: "https://muse.ai/", driver: "muse-voice" }, icon: { kind: "builtin", key: "muse" }, enabled: false, status: "pending", account: null, probe: null, driver_verified: false, silent: true },
   ];
   let settings: AppSettings = {
-    default_form: "dot", theme: "system", snap: "top_center", show_names: "hover", reduce_motion: false, material_strength: 0.5,
+    default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, show_names: "hover", reduce_motion: false, material_strength: 0.5,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", seat_modifier: "Alt", push_to_talk: false },
     mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false,
   };
+  if (typeof window !== "undefined") (window as any).__mockSettings = settings;
   let started = 0; let timer: number | undefined; let undoTimer: number | undefined;
   const setState = (s: DockState) => { state = s; emit("dock:state", state); };
   const startCall = (seat: string) => {
@@ -104,6 +107,9 @@ const mock = (() => {
     set_expanded: (a) => setState({ ...state, expanded: a.expanded }),
     undo_switch: () => { if (state.phase.phase === "switching") { window.clearInterval(undoTimer); setState({ ...state, phase: { phase: "in_call", seat: state.phase.from, elapsed_secs: Math.floor((Date.now() - started) / 1000) } }); } },
     resize_dock: () => undefined,
+    drag_dock: (a) => { const w = window as any; w.__mockDrags = (w.__mockDrags || 0) + 1; w.__mockGrab = { x: a.offsetX, y: a.offsetY }; },
+    remember_dock_position: () => { (window as any).__mockAnchored = true; settings = { ...settings, snap: "free" }; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
+    ui_log: () => undefined,
     connect_account: (a) => { const s = seats.find((x) => x.id === a.seatId); if (s) { s.status = "connected"; s.account = "demo@example.com"; emit("seats:changed", seats); } },
     disconnect_seat: (a) => { const s = seats.find((x) => x.id === a.seatId); if (s) { s.status = "needs_auth"; s.account = null; emit("seats:changed", seats); } },
     show_seat: () => undefined,
@@ -127,6 +133,11 @@ const mock = (() => {
     },
   };
 })();
+
+if (!inTauri && typeof window !== "undefined") {
+  // test hook for tests/e2e_mock.py (a dynamic import would get a fresh module instance under Vite HMR)
+  (window as any).__mockInvoke = (cmd: string, args?: Record<string, unknown>) => mock.invoke(cmd, args);
+}
 
 export const api = {
   isTauri: inTauri,

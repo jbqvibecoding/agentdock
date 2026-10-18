@@ -23,12 +23,30 @@ pub enum Theme {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Snap {
+    /// Not snapped: the pill stays wherever the user dragged it (see `AppSettings::dock_anchor`).
+    Free,
     TopCenter,
     BottomCenter,
     TopLeft,
     TopRight,
     BottomLeft,
     BottomRight,
+}
+
+/// Horizontal = Spotlight-style bar; Vertical = the same pill stood on end (a side dock).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Orientation {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+/// Centre of the pill in logical screen px; written when the user drags the dock.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DockAnchor {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +81,10 @@ pub struct AppSettings {
     pub default_form: DefaultForm,
     pub theme: Theme,
     pub snap: Snap,
+    #[serde(default)]
+    pub orientation: Orientation,
+    #[serde(default)]
+    pub dock_anchor: Option<DockAnchor>,
     pub show_names: ShowNames,
     pub reduce_motion: bool,
     /// 0.0–1.0, how strong the glass tint is on top of the system material.
@@ -80,6 +102,8 @@ impl Default for AppSettings {
             default_form: DefaultForm::Dot,
             theme: Theme::System,
             snap: Snap::TopCenter,
+            orientation: Orientation::Horizontal,
+            dock_anchor: None,
             show_names: ShowNames::Hover,
             reduce_motion: false,
             material_strength: 0.5,
@@ -136,6 +160,16 @@ mod tests {
         assert_eq!(s.hotkeys.toggle, "Alt+Space");
         assert_eq!(s.seat_hotkey(3).as_deref(), Some("Alt+3"));
         assert_eq!(s.seat_hotkey(10), None);
+    }
+
+    #[test]
+    fn files_written_before_orientation_and_anchor_still_load() {
+        let mut v = serde_json::to_value(AppSettings::default()).unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("orientation");
+        o.remove("dock_anchor");
+        let s: AppSettings = serde_json::from_value(v).unwrap();
+        assert_eq!(s, AppSettings::default());
     }
 
     #[test]

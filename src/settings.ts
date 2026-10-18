@@ -242,10 +242,11 @@ function renderAppearance() {
     row("材质", host.material ? (host.material === "NSGlassEffectView" ? "macOS 26 Liquid Glass（NSGlassEffectView）" : host.material === "NSVisualEffectView" ? "macOS 系统玻璃（NSVisualEffectView · HUD）" : `Windows ${host.material}`) : "当前平台无系统材质，使用模糊回退", matStrength),
   );
   const snap = el("select") as HTMLSelectElement;
-  for (const [v, l] of [["top_center", "顶部居中"], ["bottom_center", "底部居中"], ["top_left", "左上"], ["top_right", "右上"], ["bottom_left", "左下"], ["bottom_right", "右下"]] as [AppSettings["snap"], string][]) snap.append(new Option(l, v, false, v === settings.snap));
-  snap.addEventListener("change", () => saveSettings({ snap: snap.value as AppSettings["snap"] }));
+  for (const [v, l] of [["free", "自由（拖到哪就停在哪）"], ["top_center", "顶部居中"], ["bottom_center", "底部居中"], ["top_left", "左上"], ["top_right", "右上"], ["bottom_left", "左下"], ["bottom_right", "右下"]] as [AppSettings["snap"], string][]) snap.append(new Option(l, v, false, v === settings.snap));
+  snap.addEventListener("change", () => { const v = snap.value as AppSettings["snap"]; saveSettings(v === "free" ? { snap: v } : { snap: v, dock_anchor: null }); });
   const gLayout = group("布局",
-    row("吸附位置", "Dock 会贴到该屏幕边缘，位置记忆", snap),
+    row("方向", "横向像 Spotlight，竖向像侧边 Dock；小圆点与宠物形态不受影响", seg<AppSettings["orientation"]>([["horizontal", "横向"], ["vertical", "竖向"]], settings.orientation ?? "horizontal", (v) => saveSettings({ orientation: v }))),
+    row("位置", "直接拖动 Dock 的玻璃部分即可放到任意位置（自动记忆）；或选一个屏幕边缘吸附", snap),
     row("显示名字", "", seg<AppSettings["show_names"]>([["hover", "仅悬停"], ["always", "总是"], ["never", "从不"]], settings.show_names, (v) => saveSettings({ show_names: v }))),
     row("减弱动画", "跟随系统「减弱动态效果」时形变退化为淡入淡出", toggle(settings.reduce_motion, (v) => saveSettings({ reduce_motion: v }))),
   );

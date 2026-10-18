@@ -46,12 +46,15 @@ function currentSeatId(): string | null {
 const H = 56;
 const BTN = 44, PAD = 6;
 
+const vertical = () => dock.dataset.orient === "vertical";
+
+/** Length of the bar along its main axis, measured from the real flex content so text fits. */
 function measureBar(): number {
-  // Measure the actual flex content so text widths are accounted for.
-  bar.style.width = "max-content";
-  const w = Math.ceil(bar.scrollWidth) + PAD * 2;
-  bar.style.width = "";
-  return Math.max(w, BTN + PAD * 2);
+  const axis = vertical() ? "height" : "width";
+  bar.style[axis] = "max-content";
+  const len = Math.ceil(vertical() ? bar.scrollHeight : bar.scrollWidth) + PAD * 2;
+  bar.style[axis] = "";
+  return Math.max(len, BTN + PAD * 2);
 }
 
 let lastSize = { w: 0, h: 0 };
@@ -60,6 +63,7 @@ async function fit(form: "dot" | "pet" | "bar") {
   let w: number, h: number;
   if (form === "dot") { w = 36; h = 36; }
   else if (form === "pet") { w = 92; h = 40; }
+  else if (vertical()) { w = H; h = measureBar(); }
   else { w = measureBar(); h = H; }
   dock.style.width = `${w}px`;
   dock.style.height = `${h}px`;
@@ -178,7 +182,7 @@ async function render() {
     st.innerHTML = `<div class="name">${escapeHtml(s?.name ?? p.seat)}</div><div class="sub">${p.phase === "calling" ? "正在呼叫…" : `${escapeHtml(s?.service ?? "")} · ${fmtTime(p.elapsed_secs)}`}</div>`;
     frag.append(st);
     const wave = el("canvas", "wave") as HTMLCanvasElement;
-    wave.width = 168; wave.height = 68;
+    if (vertical()) { wave.width = 68; wave.height = 168; } else { wave.width = 168; wave.height = 68; }
     frag.append(wave);
     waveCanvas = wave;
     frag.append(micBtn);
@@ -248,7 +252,10 @@ function startWave() {
     const dpr = 2; const W = c.width / dpr, Hh = c.height / dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, Hh);
-    const n = bars.length, gap = 2.6, bw = (W - gap * (n - 1)) / n;
+    // bars run along the pill's main axis; in the vertical pill the canvas is taller than wide
+    const vert = Hh > W;
+    const L = vert ? Hh : W, T = vert ? W : Hh;
+    const n = bars.length, gap = 2.6, bw = (L - gap * (n - 1)) / n;
     if (analyser && !state.muted) { analyser.getByteFrequencyData(buf); }
     for (let i = 0; i < n; i++) {
       let target: number;
@@ -256,11 +263,11 @@ function startWave() {
       else if (analyser) target = Math.min(1, (buf[i + 2] / 255) * 1.6 + .06);
       else target = .18 + .14 * Math.sin(t / 420 + i * .9) + .08 * Math.sin(t / 190 + i * 1.7);
       bars[i] += (target - bars[i]) * .25;
-      const h = Math.max(2.5, bars[i] * (Hh - 6));
-      const x = i * (bw + gap), y = (Hh - h) / 2;
+      const len = Math.max(2.5, bars[i] * (T - 6));
+      const along = i * (bw + gap), across = (T - len) / 2;
       ctx.fillStyle = getComputedStyle(dock).getPropertyValue("--sym").trim() || "#5c6b99";
       ctx.globalAlpha = state.muted ? .35 : .92;
-      roundRect(ctx, x, y, bw, h, bw / 2);
+      if (vert) roundRect(ctx, across, along, len, bw, bw / 2); else roundRect(ctx, along, across, bw, len, bw / 2);
     }
     raf = requestAnimationFrame(draw);
   };
@@ -281,8 +288,49 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && state.expanded && state.phase.phase === "idle") api.invoke("set_expanded", { expanded: false });
 });
 
+// ───────── drag: grab the glass itself (any non-button area, or the dot) and put the Dock anywhere ─────────
+// The window follows the OS cursor (one IPC per frame; Rust reads the real cursor position) instead
+// of the OS move loop, which behaves differently per window manager. A 4px threshold keeps plain
+// clicks on the dot working; on release the new centre is persisted as the anchor (snap → "free").
+const uiLog = (level: "debug" | "warn" | "error", msg: string) => { if (api.isTauri) void api.invoke("ui_log", { level, msg }); };
+window.addEventListener("error", (e) => uiLog("error", `${e.message} @${e.filename}:${e.lineno}`));
+window.addEventListener("unhandledrejection", (e) => uiLog("error", `unhandled: ${String((e as PromiseRejectionEvent).reason)}`));
+let grab: { x: number; y: number } | null = null;   // pointer-down point, in window px
+let dragging = false;
+let dragRaf = 0;
+function followCursor() {
+  dragRaf = 0;
+  if (grab && dragging) void api.invoke("drag_dock", { offsetX: grab.x, offsetY: grab.y });
+}
+dock.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || (e.target as HTMLElement).closest("button, canvas")) return;
+  grab = { x: e.clientX, y: e.clientY };
+});
+window.addEventListener("pointermove", (e) => {
+  if (!grab) return;
+  if (!dragging) {
+    if (Math.hypot(e.clientX - grab.x, e.clientY - grab.y) < 4) return;
+    dragging = true;
+    dock.setPointerCapture(e.pointerId);
+    dock.classList.add("dragging");
+  }
+  if (!dragRaf) dragRaf = requestAnimationFrame(followCursor);
+});
+const endDrag = () => {
+  grab = null;
+  if (!dragging) return;
+  dragging = false;
+  dock.classList.remove("dragging");
+  cancelAnimationFrame(dragRaf);
+  dragRaf = 0;
+  void api.invoke("remember_dock_position");
+};
+window.addEventListener("pointerup", endDrag);
+window.addEventListener("pointercancel", endDrag);
+
 function applySettings(s: AppSettings) {
   settings = s;
+  dock.dataset.orient = s.orientation ?? "horizontal";
   applyTheme(s.theme);
   document.documentElement.toggleAttribute("data-reduce-motion", s.reduce_motion);
   document.documentElement.style.setProperty("--material", String(s.material_strength));
