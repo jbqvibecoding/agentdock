@@ -16,6 +16,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --fg: rgba(255,255,255,.94); --fg-2: rgba(255,255,255,.62); --fg-3: rgba(255,255,255,.40);
     --slab: rgba(255,255,255,.10); --slab-top: rgba(255,255,255,.16); --pane: rgba(255,255,255,.06);
     --lens: rgba(255,255,255,.10); --lens-2: rgba(255,255,255,.16); --lens-hover: rgba(255,255,255,.26);
@@ -26,6 +27,7 @@
   }
 }
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --fg: rgba(255,255,255,.94); --fg-2: rgba(255,255,255,.62); --fg-3: rgba(255,255,255,.40);
   --slab: rgba(255,255,255,.10); --slab-top: rgba(255,255,255,.16); --pane: rgba(255,255,255,.06);
   --lens: rgba(255,255,255,.10); --lens-2: rgba(255,255,255,.16); --lens-hover: rgba(255,255,255,.26);

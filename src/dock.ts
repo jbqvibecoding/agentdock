@@ -270,6 +270,8 @@ function stopWave() { cancelAnimationFrame(raf); raf = 0; }
 // ───────── wiring ─────────
 collapsed.addEventListener("click", () => api.invoke("set_expanded", { expanded: true }));
 collapsed.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") api.invoke("set_expanded", { expanded: true }); });
+dock.addEventListener("mouseleave", () => { if (hoverSeat) { hoverSeat = null; renderStatusText(); } });
+window.addEventListener("blur", () => { if (hoverSeat) { hoverSeat = null; renderStatusText(); } });
 dock.addEventListener("contextmenu", (e) => { e.preventDefault(); api.invoke("open_settings"); });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && state.expanded && state.phase.phase === "idle") api.invoke("set_expanded", { expanded: false });
