@@ -71,6 +71,12 @@ pub struct Hotkeys {
     pub toggle: String,
     pub mute: String,
     pub hangup: String,
+    /// Flip the pill between horizontal and vertical.
+    #[serde(default = "default_orientation_key")]
+    pub orientation: String,
+    /// Flip the collapsed form between the small dot and the pet avatar.
+    #[serde(default = "default_form_key")]
+    pub form: String,
     /// Modifier prefix for seat 1–9, e.g. "Alt" → Alt+1 … Alt+9.
     pub seat_modifier: String,
     pub push_to_talk: bool,
@@ -96,6 +102,32 @@ pub struct AppSettings {
     pub confirm_switch: bool,
 }
 
+fn default_orientation_key() -> String {
+    "Alt+O".into()
+}
+fn default_form_key() -> String {
+    "Alt+P".into()
+}
+
+impl Orientation {
+    pub fn toggled(self) -> Self {
+        match self {
+            Orientation::Horizontal => Orientation::Vertical,
+            Orientation::Vertical => Orientation::Horizontal,
+        }
+    }
+}
+
+impl DefaultForm {
+    /// Dot ↔ pet; the capsule/expanded forms also jump to the pet first so the key always does something visible.
+    pub fn toggled_collapsed(self) -> Self {
+        match self {
+            DefaultForm::Pet => DefaultForm::Dot,
+            _ => DefaultForm::Pet,
+        }
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
@@ -111,6 +143,8 @@ impl Default for AppSettings {
                 toggle: "Alt+Space".into(),
                 mute: "Alt+M".into(),
                 hangup: "Alt+Escape".into(),
+                orientation: default_orientation_key(),
+                form: default_form_key(),
                 seat_modifier: "Alt".into(),
                 push_to_talk: false,
             },
@@ -163,11 +197,23 @@ mod tests {
     }
 
     #[test]
+    fn toggles_flip_orientation_and_collapsed_form() {
+        assert_eq!(Orientation::Horizontal.toggled(), Orientation::Vertical);
+        assert_eq!(Orientation::Vertical.toggled(), Orientation::Horizontal);
+        assert_eq!(DefaultForm::Dot.toggled_collapsed(), DefaultForm::Pet);
+        assert_eq!(DefaultForm::Pet.toggled_collapsed(), DefaultForm::Dot);
+        assert_eq!(DefaultForm::Capsule.toggled_collapsed(), DefaultForm::Pet);
+    }
+
+    #[test]
     fn files_written_before_orientation_and_anchor_still_load() {
         let mut v = serde_json::to_value(AppSettings::default()).unwrap();
         let o = v.as_object_mut().unwrap();
         o.remove("orientation");
         o.remove("dock_anchor");
+        let hk = o.get_mut("hotkeys").unwrap().as_object_mut().unwrap();
+        hk.remove("orientation");
+        hk.remove("form");
         let s: AppSettings = serde_json::from_value(v).unwrap();
         assert_eq!(s, AppSettings::default());
     }

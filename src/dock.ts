@@ -67,6 +67,7 @@ async function fit(form: "dot" | "pet" | "bar") {
   else { w = measureBar(); h = H; }
   dock.style.width = `${w}px`;
   dock.style.height = `${h}px`;
+  if (w === lastSize.w && h === lastSize.h) return;   // hover re-layouts must not spam resize_dock
   const grow = w > lastSize.w || h > lastSize.h;
   window.clearTimeout(pendingShrink);
   const resize = () => api.invoke("resize_dock", { width: Math.max(w, 36), height: Math.max(h, 36) });
@@ -283,7 +284,7 @@ collapsed.addEventListener("click", () => api.invoke("set_expanded", { expanded:
 collapsed.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") api.invoke("set_expanded", { expanded: true }); });
 dock.addEventListener("mouseleave", () => { if (hoverSeat) { hoverSeat = null; renderStatusText(); } });
 window.addEventListener("blur", () => { if (hoverSeat) { hoverSeat = null; renderStatusText(); } });
-dock.addEventListener("contextmenu", (e) => { e.preventDefault(); api.invoke("open_settings"); });
+dock.addEventListener("contextmenu", (e) => { e.preventDefault(); api.invoke("dock_menu"); });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && state.expanded && state.phase.phase === "idle") api.invoke("set_expanded", { expanded: false });
 });

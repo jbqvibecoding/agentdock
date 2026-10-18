@@ -338,7 +338,19 @@ fn drag_dock(app: AppHandle, offset_x: f64, offset_y: f64) -> CmdResult<()> {
     let win = app.get_webview_window("dock").ok_or("no dock window")?;
     let sc = win.scale_factor().map_err(err)?;
     let cursor = app.cursor_position().map_err(err)?;
-    win.set_position(tauri::LogicalPosition::new(cursor.x / sc - offset_x, cursor.y / sc - offset_y)).map_err(err)
+    let (x, y) = (cursor.x / sc - offset_x, cursor.y / sc - offset_y);
+    // The webview keeps calling `resize_dock` while the pointer moves (hover/status re-layout), and
+    // that re-applies the *stored* anchor, yanking the window back mid-drag — whichever call landed
+    // last won, so some drags silently ended where they started. Track the live centre in memory
+    // (not on disk) so any concurrent `position_dock` resolves to the point under the cursor.
+    let size = win.outer_size().map_err(err)?;
+    {
+        let st = app.state::<AppState>();
+        let mut s = st.settings.lock().unwrap();
+        s.snap = settings::Snap::Free;
+        s.dock_anchor = Some(settings::DockAnchor { x: x + size.width as f64 / sc / 2.0, y: y + size.height as f64 / sc / 2.0 });
+    }
+    win.set_position(tauri::LogicalPosition::new(x, y)).map_err(err)
 }
 
 /// Called by the dock once a drag ends: the pill's centre becomes the anchor and snapping is off.
@@ -652,18 +664,115 @@ fn get_settings(st: tauri::State<AppState>) -> AppSettings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, settings: AppSettings) -> CmdResult<()> {
+    persist_settings(&app, settings)
+}
+
+/// Shortcut / menu toggles: 横向 ↔ 竖向.
+#[tauri::command]
+fn toggle_orientation(app: AppHandle) -> CmdResult<()> {
+    let mut s = app.state::<AppState>().settings.lock().unwrap().clone();
+    s.orientation = s.orientation.toggled();
+    persist_settings(&app, s)
+}
+
+/// Shortcut / menu toggles: 小圆点 ↔ 宠物 as the collapsed form.
+#[tauri::command]
+fn toggle_collapsed_form(app: AppHandle) -> CmdResult<()> {
+    let mut s = app.state::<AppState>().settings.lock().unwrap().clone();
+    s.default_form = s.default_form.toggled_collapsed();
+    persist_settings(&app, s)
+}
+
+/// Right-click on the pill: the few things you'd otherwise open 设置 for.
+#[tauri::command]
+fn dock_menu(app: AppHandle) -> CmdResult<()> {
+    use tauri::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem};
+    let win = app.get_webview_window("dock").ok_or("no dock window")?;
+    let (orientation, form, expanded) = {
+        let st = app.state::<AppState>();
+        let expanded = st.machine.lock().unwrap().state.expanded;
+        let s = st.settings.lock().unwrap();
+        let out = (s.orientation, s.default_form, expanded);
+        out
+    };
+    let hk = app.state::<AppState>().settings.lock().unwrap().hotkeys.clone();
+    let tip = |k: &str| k.replace("Alt", "⌥").replace("Control", "⌃").replace("Super", "⌘").replace("Shift", "⇧").replace('+', "");
+    let orient_label = match orientation {
+        settings::Orientation::Horizontal => format!("切换为竖向    {}", tip(&hk.orientation)),
+        settings::Orientation::Vertical => format!("切换为横向    {}", tip(&hk.orientation)),
+    };
+    let form_label = match form {
+        settings::DefaultForm::Pet => format!("收起时显示小圆点    {}", tip(&hk.form)),
+        _ => format!("收起时显示宠物形象    {}", tip(&hk.form)),
+    };
+    let toggle_label = format!("{}    {}", if expanded { "收起" } else { "展开" }, tip(&hk.toggle));
+    let items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
+        Box::new(MenuItem::with_id(&app, "dock-toggle", toggle_label, true, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-orientation", orient_label, true, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-form", form_label, true, None::<&str>).map_err(err)?),
+        Box::new(PredefinedMenuItem::separator(&app).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "settings", "设置…", true, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "quit", "退出 AgentDock", true, None::<&str>).map_err(err)?),
+    ];
+    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = items.iter().map(|b| b.as_ref()).collect();
+    let menu = Menu::with_items(&app, &refs).map_err(err)?;
+    menu.popup(win.as_ref().window()).map_err(err)
+}
+
+/// Window-menu (pill context menu) events; the tray has its own handler.
+fn on_app_menu(app: &AppHandle, id: &str) {
+    match id {
+        "dock-toggle" => dispatch(app, Event::ToggleExpanded),
+        "dock-orientation" => { let _ = toggle_orientation(app.clone()); }
+        "dock-form" => { let _ = toggle_collapsed_form(app.clone()); }
+        "settings" => { let _ = open_settings(app.clone()); }
+        "quit" => app.exit(0),
+        _ => {}
+    }
+}
+
+fn persist_settings(app: &AppHandle, settings: AppSettings) -> CmdResult<()> {
     let st = app.state::<AppState>();
-    *st.settings.lock().unwrap() = settings.clone();
+    let (hotkeys_changed, placement_changed) = {
+        let mut cur = st.settings.lock().unwrap();
+        let out = (cur.hotkeys != settings.hotkeys, cur.snap != settings.snap || cur.dock_anchor != settings.dock_anchor);
+        *cur = settings.clone();
+        out
+    };
     settings.save(&settings::settings_path(&st.config_dir)).map_err(err)?;
     let _ = app.emit("settings:changed", &settings);
-    apply_theme(&app, settings.theme);
-    register_hotkeys(&app).map_err(err)?;
-    if let Some(win) = app.get_webview_window("dock") {
-        let size = win.inner_size().map_err(err)?;
-        let sc = win.scale_factor().unwrap_or(1.0);
-        let _ = position_dock(&win, size.width as f64 / sc, size.height as f64 / sc, settings.snap, settings.dock_anchor);
+    apply_theme(app, settings.theme);
+    // Re-registering from inside a shortcut callback (⌥O / ⌥P toggles) deadlocks the global-shortcut
+    // plugin on the main thread, so only touch the registrations when the bindings really changed.
+    if hotkeys_changed {
+        register_hotkeys(app).map_err(err)?;
+    }
+    // Only move the window when the user changed where it lives. Anything that changes the pill's
+    // size (横向 ↔ 竖向, forms) is re-fitted by the webview itself via `resize_dock` after
+    // `settings:changed`; repositioning here with the stale size would race that and win.
+    if placement_changed {
+        if let Some(win) = app.get_webview_window("dock") {
+            let _ = reposition_dock(&win, settings.snap, settings.dock_anchor);
+        }
     }
     Ok(())
+}
+
+fn reposition_dock<R: Runtime>(win: &WebviewWindow<R>, snap: settings::Snap, anchor: Option<settings::DockAnchor>) -> tauri::Result<()> {
+    let sc = win.scale_factor()?;
+    let size = win.inner_size()?;
+    let monitor = win.current_monitor()?.or(win.primary_monitor()?);
+    let rect = match monitor {
+        Some(m) => {
+            let s = m.size();
+            let p = m.position();
+            let msc = m.scale_factor();
+            (p.x as f64 / msc, p.y as f64 / msc, s.width as f64 / msc, s.height as f64 / msc)
+        }
+        None => (0.0, 0.0, 1440.0, 900.0),
+    };
+    let (x, y) = dock_origin(snap, anchor, size.width as f64 / sc, size.height as f64 / sc, rect);
+    win.set_position(tauri::LogicalPosition::new(x, y))
 }
 
 #[tauri::command]
@@ -721,17 +830,20 @@ fn register_hotkeys<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-fn on_hotkey<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, pressed: bool) {
+fn on_hotkey(app: &AppHandle, shortcut: &Shortcut, pressed: bool) {
     let st = app.state::<AppState>();
     let action = st.hotkey_map.lock().unwrap().iter().find(|(s, _)| s == shortcut).map(|(_, a)| a.clone());
     let push_to_talk = st.settings.lock().unwrap().hotkeys.push_to_talk;
     let Some(action) = action else { return };
+    tracing::info!("hotkey {shortcut:?} → {action:?} pressed={pressed}");
     match (action, pressed) {
         (HotkeyAction::Toggle, true) if push_to_talk => dispatch(app, Event::SetMuted(false)),
         (HotkeyAction::Toggle, false) if push_to_talk => dispatch(app, Event::SetMuted(true)),
         (HotkeyAction::Toggle, true) => dispatch(app, Event::ToggleExpanded),
         (HotkeyAction::Mute, true) => dispatch(app, Event::ToggleMute),
         (HotkeyAction::Hangup, true) => dispatch(app, Event::Hangup),
+        (HotkeyAction::Orientation, true) => { let _ = toggle_orientation(app.clone()); }
+        (HotkeyAction::Form, true) => { let _ = toggle_collapsed_form(app.clone()); }
         (HotkeyAction::Seat { index }, true) => {
             let id = st.seats.lock().unwrap().enabled().get(index - 1).map(|s| s.id.clone());
             if let Some(id) = id {
@@ -1080,6 +1192,7 @@ pub fn run() {
 
             build_tray(app.handle())?;
             register_hotkeys(app.handle())?;
+            app.on_menu_event(|app, ev| on_app_menu(app, ev.id().as_ref()));
 
             // Tick: 1 Hz state ticks; probe the active seat at 2 Hz and idle seats every 10 s.
             let handle = app.handle().clone();
@@ -1110,7 +1223,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log,
+            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat,
             driver_report, driver_error, set_seat_icon, reset_seat_icon, seat_icon_data,
             get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info

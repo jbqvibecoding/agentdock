@@ -207,6 +207,8 @@ async function renderHotkeys() {
     row("展开 / 收起 Dock", "通话中也可用，不会打断通话", keyChip(h.toggle, c(h.toggle), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, toggle: v } }).then(renderHotkeys))),
     row("闭麦 / 开麦", "系统级，对所有席位一致", keyChip(h.mute, c(h.mute), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, mute: v } }).then(renderHotkeys))),
     row("挂断", "", keyChip(h.hangup, c(h.hangup), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, hangup: v } }).then(renderHotkeys))),
+    row("横向 / 竖向", "整条胶囊在 Spotlight 式横条与侧边 Dock 式竖条之间切换", keyChip(h.orientation, c(h.orientation), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, orientation: v } }).then(renderHotkeys))),
+    row("小圆点 / 宠物", "切换收起时的形象；右键胶囊也有同样的菜单", keyChip(h.form, c(h.form), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, form: v } }).then(renderHotkeys))),
   );
   const seatMod = el("select") as HTMLSelectElement;
   for (const m of ["Alt", "Control", "Super", "Control+Alt", "Super+Shift"]) seatMod.append(new Option(`${m.split("+").map(pretty).join("")} + 1…9`, m, false, m === h.seat_modifier));
@@ -245,7 +247,7 @@ function renderAppearance() {
   for (const [v, l] of [["free", "自由（拖到哪就停在哪）"], ["top_center", "顶部居中"], ["bottom_center", "底部居中"], ["top_left", "左上"], ["top_right", "右上"], ["bottom_left", "左下"], ["bottom_right", "右下"]] as [AppSettings["snap"], string][]) snap.append(new Option(l, v, false, v === settings.snap));
   snap.addEventListener("change", () => { const v = snap.value as AppSettings["snap"]; saveSettings(v === "free" ? { snap: v } : { snap: v, dock_anchor: null }); });
   const gLayout = group("布局",
-    row("方向", "横向像 Spotlight，竖向像侧边 Dock；小圆点与宠物形态不受影响", seg<AppSettings["orientation"]>([["horizontal", "横向"], ["vertical", "竖向"]], settings.orientation ?? "horizontal", (v) => saveSettings({ orientation: v }))),
+    row("方向", `横向像 Spotlight，竖向像侧边 Dock；快捷键 ${settings.hotkeys.orientation.split("+").map(pretty).join("")} 或右键胶囊可随时切换`, seg<AppSettings["orientation"]>([["horizontal", "横向"], ["vertical", "竖向"]], settings.orientation ?? "horizontal", (v) => saveSettings({ orientation: v }))),
     row("位置", "直接拖动 Dock 的玻璃部分即可放到任意位置（自动记忆）；或选一个屏幕边缘吸附", snap),
     row("显示名字", "", seg<AppSettings["show_names"]>([["hover", "仅悬停"], ["always", "总是"], ["never", "从不"]], settings.show_names, (v) => saveSettings({ show_names: v }))),
     row("减弱动画", "跟随系统「减弱动态效果」时形变退化为淡入淡出", toggle(settings.reduce_motion, (v) => saveSettings({ reduce_motion: v }))),
