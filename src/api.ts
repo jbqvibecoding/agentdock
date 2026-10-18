@@ -30,10 +30,11 @@ export type DefaultForm = "dot" | "capsule" | "expanded" | "pet";
 export type Theme = "system" | "light" | "dark";
 export type Snap = "free" | "top_center" | "bottom_center" | "top_left" | "top_right" | "bottom_left" | "bottom_right";
 export type Orientation = "horizontal" | "vertical";
+export type CollapseMode = "auto" | "pinned_expanded" | "pinned_collapsed";
 export interface DockAnchor { x: number; y: number }
 export interface Hotkeys { toggle: string; mute: string; hangup: string; orientation: string; form: string; seat_modifier: string; push_to_talk: boolean }
 export interface AppSettings {
-  default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; auto_collapse_secs: number; show_names: "hover" | "always" | "never";
+  default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; auto_collapse_secs: number; collapse_mode: CollapseMode; show_names: "hover" | "always" | "never";
   reduce_motion: boolean; material_strength: number; hotkeys: Hotkeys; mute_mode: "system" | "seat";
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
 }
@@ -55,7 +56,7 @@ const mock = (() => {
     { id: "muse", name: "Muse", service: "Meta Muse", driver: { kind: "web", url: "https://muse.ai/", driver: "muse-voice" }, icon: { kind: "builtin", key: "muse" }, enabled: false, status: "pending", account: null, probe: null, driver_verified: false, silent: true },
   ];
   let settings: AppSettings = {
-    default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, show_names: "hover", reduce_motion: false, material_strength: 0.5,
+    default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
     mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false,
   };

@@ -148,8 +148,8 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 #dock[data-orient="vertical"] .btn:hover { transform: translateX(-1px) scale(1.04); }
 
 /* ───── grip: iOS-grabber-style handle at the pill's end (tap = 横/竖, hold = move) ───── */
-.grip { flex: none; width: 14px; height: 32px; margin-left: -4px; display: grid; place-items: center; align-content: center; gap: 3px; border-radius: 7px; cursor: grab; opacity: .55; transition: opacity 160ms ease, background 160ms ease; }
-.grip i { display: block; width: 4px; height: 4px; border-radius: 50%; background: var(--sym); }
-.grip:hover { opacity: 1; background: var(--lens); }
-#dock.dragging .grip { opacity: 1; }
-#dock[data-orient="vertical"] .grip { width: 32px; height: 14px; margin: -4px 0 0 0; grid-auto-flow: column; }
+.grip { flex: none; width: 26px; height: 26px; margin-left: -6px; display: grid; place-items: center; border-radius: 50%; cursor: grab; color: var(--sym); opacity: .5; transition: opacity 160ms ease, background 160ms ease, transform 260ms var(--spring); }
+.grip svg { width: 16px; height: 16px; display: block; }
+.grip:hover { opacity: 1; background: var(--lens); transform: scale(1.08); }
+#dock.dragging .grip { opacity: 1; transform: none; }
+#dock[data-orient="vertical"] .grip { margin: -6px 0 0 0; }

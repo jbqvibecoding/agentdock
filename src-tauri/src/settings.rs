@@ -42,6 +42,15 @@ pub enum Orientation {
     Vertical,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CollapseMode {
+    #[default]
+    Auto,
+    PinnedExpanded,
+    PinnedCollapsed,
+}
+
 /// Centre of the pill in logical screen px; written when the user drags the dock.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DockAnchor {
@@ -94,6 +103,10 @@ pub struct AppSettings {
     /// Idle seconds before an expanded, un-hovered pill folds back into the dot/pet (0 = never).
     #[serde(default = "default_auto_collapse")]
     pub auto_collapse_secs: u32,
+    /// Auto = fold after `auto_collapse_secs`; PinnedExpanded = never fold by itself;
+    /// PinnedCollapsed = hover only previews, folds right back when the pointer leaves.
+    #[serde(default)]
+    pub collapse_mode: CollapseMode,
     pub show_names: ShowNames,
     pub reduce_motion: bool,
     /// 0.0–1.0, how strong the glass tint is on top of the system material.
@@ -143,6 +156,7 @@ impl Default for AppSettings {
             orientation: Orientation::Horizontal,
             dock_anchor: None,
             auto_collapse_secs: default_auto_collapse(),
+            collapse_mode: CollapseMode::Auto,
             show_names: ShowNames::Hover,
             reduce_motion: false,
             material_strength: 0.5,
@@ -219,6 +233,7 @@ mod tests {
         o.remove("orientation");
         o.remove("dock_anchor");
         o.remove("auto_collapse_secs");
+        o.remove("collapse_mode");
         let hk = o.get_mut("hotkeys").unwrap().as_object_mut().unwrap();
         hk.remove("orientation");
         hk.remove("form");

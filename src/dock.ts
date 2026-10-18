@@ -294,9 +294,14 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ───────── grip: the grabber at the pill's end — tap flips 横向/竖向, hold-and-drag moves the Dock ─────────
+// The symbol shows what a tap turns the pill into: ⇅ "stand it up" on the horizontal bar, ⇄ "lay it flat" on the vertical one.
+const GRIP_SVG = {
+  toVertical: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16V4M4.5 6.5 7 4l2.5 2.5M13 4v12M10.5 13.5 13 16l2.5-2.5"/></svg>',
+  toHorizontal: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h12M13.5 4.5 16 7l-2.5 2.5M16 13H4M6.5 10.5 4 13l2.5 2.5"/></svg>',
+};
 function grip(): HTMLDivElement {
-  const g = el("div", "grip", "<i></i><i></i><i></i>");
-  g.title = "点一下：横向 / 竖向 · 按住拖动：移动";
+  const g = el("div", "grip", vertical() ? GRIP_SVG.toHorizontal : GRIP_SVG.toVertical);
+  g.title = vertical() ? "点一下：放平为横向 · 按住拖动：移动" : "点一下：立起为竖向 · 按住拖动：移动";
   g.addEventListener("click", () => { if (Date.now() - lastDragEnd > 300) void api.invoke("toggle_orientation"); });
   return g;
 }
@@ -307,13 +312,20 @@ function grip(): HTMLDivElement {
 let idleTimer: number | undefined;
 let idleDeadline = 0;
 let hovering = false;
+// Auto: fold after N s. Pinned-expanded: never by itself. Pinned-collapsed: hover is only a preview.
+function idleDelayMs(): number {
+  const mode = settings?.collapse_mode ?? "auto";
+  if (mode === "pinned_expanded") return 0;
+  if (mode === "pinned_collapsed") return 600;
+  return (settings?.auto_collapse_secs ?? 0) * 1000;
+}
 function touchIdle() {
-  idleDeadline = Date.now() + (settings?.auto_collapse_secs ?? 0) * 1000;
+  idleDeadline = Date.now() + idleDelayMs();
   scheduleIdleCheck();
 }
 function scheduleIdleCheck() {
   window.clearTimeout(idleTimer);
-  if (!(settings?.auto_collapse_secs ?? 0)) return;
+  if (!idleDelayMs()) return;
   idleTimer = window.setTimeout(checkIdle, Math.max(50, idleDeadline - Date.now()));
 }
 async function checkIdle() {
