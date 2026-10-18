@@ -338,13 +338,24 @@ async function checkIdle() {
   void api.invoke("set_expanded", { expanded: false });
 }
 let hoverExpandTimer: number | undefined;
-dock.addEventListener("pointerenter", () => {
+function pointerEntered() {
+  if (hovering) return;
   hovering = true;
   window.clearTimeout(idleTimer);
   // resting on the dot for a moment opens it, so the hotkey is never required
   if (!state.expanded) hoverExpandTimer = window.setTimeout(() => { if (hovering && !state.expanded && !dragging) void api.invoke("set_expanded", { expanded: true }); }, 300);
-});
-dock.addEventListener("pointerleave", () => { hovering = false; window.clearTimeout(hoverExpandTimer); touchIdle(); });
+}
+function pointerLeft() {
+  if (!hovering) return;
+  hovering = false;
+  window.clearTimeout(hoverExpandTimer);
+  touchIdle();
+}
+dock.addEventListener("pointerenter", pointerEntered);
+dock.addEventListener("pointerleave", pointerLeft);
+// macOS: the webview gets no pointer events while the Dock isn't the key window (it never is, by
+// design), so Rust polls the OS cursor against the window rect and reports enter/leave here.
+void api.on<boolean>("dock:hover", (over) => (over ? pointerEntered() : pointerLeft()));
 
 // ───────── drag: grab the glass itself (any non-button area, or the dot) and put the Dock anywhere ─────────
 // The window follows the OS cursor (one IPC per frame; Rust reads the real cursor position) instead

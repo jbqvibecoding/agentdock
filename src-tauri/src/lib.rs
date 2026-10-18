@@ -357,9 +357,41 @@ fn drag_dock(app: AppHandle, offset_x: f64, offset_y: f64) -> CmdResult<()> {
 /// state goes stale when the window grows under the pointer).
 #[tauri::command]
 fn cursor_over_dock(app: AppHandle) -> bool {
+    cursor_in_dock(&app)
+}
+
+/// Compare in *logical* (point) coordinates: tao reports the cursor in physical pixels of the
+/// primary monitor but the window in physical pixels of *its own* monitor, so on a mixed-DPI
+/// multi-display setup the raw numbers disagree by the scale ratio. Both logical values share the
+/// same top-left-of-main-display origin, so this is exact on every screen.
+fn cursor_in_dock(app: &AppHandle) -> bool {
     let Some(win) = app.get_webview_window("dock") else { return false };
-    let (Ok(c), Ok(p), Ok(s)) = (app.cursor_position(), win.outer_position(), win.outer_size()) else { return false };
-    c.x >= p.x as f64 && c.y >= p.y as f64 && c.x < (p.x + s.width as i32) as f64 && c.y < (p.y + s.height as i32) as f64
+    let (Ok(c), Ok(p), Ok(s), Ok(ws)) =
+        (app.cursor_position(), win.outer_position(), win.outer_size(), win.scale_factor())
+    else { return false };
+    let cs = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(ws);
+    let (cx, cy) = (c.x / cs, c.y / cs);
+    let (x, y) = (p.x as f64 / ws, p.y as f64 / ws);
+    let (w, h) = (s.width as f64 / ws, s.height as f64 / ws);
+    cx >= x && cy >= y && cx < x + w && cy < y + h
+}
+
+/// WKWebView only receives mouse-moved/entered/exited while its window is key, and the Dock is
+/// never key by design (`focus: false`): parked next to another app it gets no `:hover`, no
+/// pointerenter/leave — so hover-to-expand and the pinned-collapsed preview never fire. Poll the
+/// OS cursor at 10 Hz and tell the dock when it enters or leaves the window rect.
+fn spawn_hover_watcher(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut over = false;
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let now = cursor_in_dock(&app);
+            if now != over {
+                over = now;
+                let _ = app.emit("dock:hover", over);
+            }
+        }
+    });
 }
 
 /// Called by the dock once a drag ends: the pill's centre becomes the anchor and snapping is off.
@@ -1202,6 +1234,7 @@ pub fn run() {
             build_tray(app.handle())?;
             register_hotkeys(app.handle())?;
             app.on_menu_event(|app, ev| on_app_menu(app, ev.id().as_ref()));
+            spawn_hover_watcher(app.handle().clone());
 
             // Tick: 1 Hz state ticks; probe the active seat at 2 Hz and idle seats every 10 s.
             let handle = app.handle().clone();
