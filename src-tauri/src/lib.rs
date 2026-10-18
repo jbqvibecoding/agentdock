@@ -753,6 +753,24 @@ fn apply_theme(app: &AppHandle, theme: settings::Theme) {
         settings::Theme::Light => Some(tauri::Theme::Light),
         settings::Theme::Dark => Some(tauri::Theme::Dark),
     });
+    // WKWebView re-derives `underPageBackgroundColor` from the new effective appearance (white in
+    // light, near-black in dark) and paints it as a plain square under the pill; clear it again once
+    // the appearance change has propagated.
+    #[cfg(target_os = "macos")]
+    if let Some(dock) = app.get_webview_window("dock") {
+        for delay_ms in [0u64, 250, 800] {
+            let dock = dock.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                let d2 = dock.clone();
+                let _ = dock.run_on_main_thread(move || {
+                    if let Err(e) = liquid_glass::clear_webview_backdrop(&d2) {
+                        tracing::warn!("dock webview backdrop (theme): {e}");
+                    }
+                });
+            });
+        }
+    }
 }
 
 fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&WebviewWindow<R>>) {
@@ -828,6 +846,10 @@ mod liquid_glass {
         unsafe {
             let glass = &*(ptr as *const AnyObject);
             let _: () = msg_send![glass, setCornerRadius: radius];
+            let layer: *mut AnyObject = msg_send![glass, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setCornerRadius: radius];
+            }
         }
     }
 
@@ -852,6 +874,8 @@ mod liquid_glass {
             let name = sub.class().name().to_string_lossy().into_owned();
             tracing::debug!("{}{name} {:?}", "  ".repeat(depth), sub.frame());
             if sub.respondsToSelector(objc2::sel!(setUnderPageBackgroundColor:)) {
+                let prev: *mut AnyObject = msg_send![&*sub, underPageBackgroundColor];
+                tracing::debug!("{name}: underPageBackgroundColor was {}", describe(prev));
                 let _: () = msg_send![&*sub, setUnderPageBackgroundColor: &*NSColor::clearColor()];
             }
             if sub.respondsToSelector(objc2::sel!(setDrawsBackground:)) {
@@ -861,6 +885,48 @@ mod liquid_glass {
                 let _: () = msg_send![&*sub, _setDrawsBackground: false];
             }
             clear_recursive(&sub, depth + 1);
+        }
+    }
+
+    /// Diagnostic: log the window + whole contentView tree (class, frame, opacity, layer colour).
+    pub fn dump_tree<R: Runtime>(win: &WebviewWindow<R>, tag: &str) {
+        let Ok(p) = win.ns_window() else { return };
+        unsafe {
+            let window: &NSWindow = &*(p as *mut NSWindow);
+            let bg = window.backgroundColor();
+            tracing::debug!("[{tag}] window opaque={} hasShadow={} bg={bg:?} frame={:?}", window.isOpaque(), window.hasShadow(), window.frame());
+            if let Some(c) = window.contentView() {
+                dump_view(&c, 0, tag);
+            }
+        }
+    }
+
+    unsafe fn describe(obj: *mut AnyObject) -> String {
+        if obj.is_null() {
+            return "nil".into();
+        }
+        let d: *mut AnyObject = msg_send![obj, description];
+        if d.is_null() {
+            return "?".into();
+        }
+        (&*(d as *const objc2_foundation::NSString)).to_string()
+    }
+
+    unsafe fn dump_view(v: &NSView, depth: usize, tag: &str) {
+        let name = v.class().name().to_string_lossy().into_owned();
+        let layer: *mut AnyObject = msg_send![v, layer];
+        let layer_desc = if layer.is_null() {
+            "no-layer".to_string()
+        } else {
+            let bg: *mut AnyObject = msg_send![layer, backgroundColor];
+            let r: f64 = msg_send![layer, cornerRadius];
+            let m: bool = msg_send![layer, masksToBounds];
+            let op: bool = msg_send![layer, isOpaque];
+            format!("layer(bg={} r={r} mask={m} opaque={op})", describe(bg))
+        };
+        tracing::debug!("[{tag}] {}{name} frame={:?} opaque={} alpha={} wantsLayer={} {layer_desc}", "  ".repeat(depth), v.frame(), v.isOpaque(), v.alphaValue(), v.wantsLayer());
+        for sub in v.subviews().iter() {
+            dump_view(&sub, depth + 1, tag);
         }
     }
 
@@ -883,6 +949,16 @@ mod liquid_glass {
             let glass_view: &NSView = &*(Retained::as_ptr(&glass) as *const NSView);
             glass_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
             let _: () = msg_send![&*glass, setCornerRadius: corner_radius];
+            // `cornerRadius` only shapes the glass material. After the window's appearance is
+            // overridden at runtime (settings › theme) the view's own tint pass fills its whole
+            // rectangular bounds, which showed as a faint box around the pill/dot in light mode.
+            // Clip the backing layer to the same rounded rect so nothing can paint outside it.
+            glass_view.setWantsLayer(true);
+            let layer: *mut AnyObject = msg_send![glass_view, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setMasksToBounds: true];
+                let _: () = msg_send![layer, setCornerRadius: corner_radius];
+            }
             *GLASS.lock().unwrap() = Retained::as_ptr(&glass) as usize;
             let _: () = msg_send![&*glass, setTintColor: std::ptr::null::<AnyObject>()];
             content.addSubview_positioned_relativeTo(glass_view, NSWindowOrderingMode::Below, None);
@@ -939,6 +1015,19 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        .on_page_load(|webview, payload| {
+            #[cfg(target_os = "macos")]
+            if webview.label() == "dock" && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                if let Some(w) = webview.window().get_webview_window("dock") {
+                    if let Err(e) = liquid_glass::clear_webview_backdrop(&w) {
+                        tracing::warn!("dock webview backdrop (post-load): {e}");
+                    }
+                    liquid_glass::dump_tree(&w, "page-load");
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (webview, payload);
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
