@@ -81,8 +81,8 @@ async function renderSeats() {
     const where = s.driver.kind === "web" ? `${new URL(s.driver.url).host}（网页 · 无感）` : `桌面 App（辅助功能自动化 · 半无感）`;
     const acct = s.account ? ` · ${esc(s.account)}` : "";
     const chips = s.enabled ? "" : '<span class="chip">未启用</span>';
-    r.append(el("div", "row__text", `<div class="row__name">${esc(s.name)} <span class="chip">${esc(s.service)}</span>${chips}</div><div class="row__sub" title="${s.driver_verified ? "" : "驱动选择器尚未在真机校验"}">${where}${acct}${s.driver_verified ? "" : " · 驱动待校验"}</div>`));
-    const st = el("span", "status", STATUS_LABEL[s.status] ?? s.status); st.dataset.s = s.status; r.append(st);
+    const statusHtml = `<span class="status" data-s="${s.status}">${STATUS_LABEL[s.status] ?? s.status}</span>`;
+    r.append(el("div", "row__text", `<div class="row__name">${esc(s.name)} <span class="chip">${esc(s.service)}</span>${chips}</div><div class="row__sub" title="${where}${acct}${s.driver_verified ? "" : " · 驱动选择器尚未在真机校验"}">${statusHtml} · ${where}${acct}</div>`));
 
     const acts = el("div", "actions");
     const needsLogin = s.status !== "connected";
