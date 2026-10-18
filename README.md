@@ -9,12 +9,7 @@
 把 ChatGPT dot、Grok Bot、Copilot、Devin、Muse 当成一排可呼叫的联系人：<br/>
 一键呼叫 · 一键闭麦 · 一键挂断或切到下一位。不是聊天窗口，不是模型路由器。
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台)
-[![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台)
-[![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app)
-[![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri)
-[![Tests](https://img.shields.io/badge/tests-23%20unit%20%C2%B7%2027%20e2e-2ea043)](#测试)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-23%20unit%20%C2%B7%2027%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [English](README.en.md) · [功能](#功能) · [安装](#安装) · [快捷键](#快捷键) · [架构](#架构) · [接入席位](#接入席位) · [隐私](#隐私与边界) · [路线图](#路线图)
 
@@ -22,7 +17,7 @@
 
 <img src="docs/screenshots/hero-light.png" width="920" alt="AgentDock 空闲态胶囊：电源、麦克风、四位 agent、添加、方向把手" />
 
-<sub>浅色 · 空闲态。胶囊从左到右：收起 · 系统闭麦 · 席位（dot / Grok Bot / Copilot / Muse）· 添加席位 · ⇅ 方向把手</sub>
+<p><sub>浅色 · 空闲态。胶囊从左到右：收起 · 系统闭麦 · 席位（dot / Grok Bot / Copilot / Muse）· 添加席位 · ⇅ 方向把手</sub></p>
 
 </div>
 

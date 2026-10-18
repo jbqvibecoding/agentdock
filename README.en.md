@@ -9,12 +9,7 @@
 Treat ChatGPT dot, Grok Bot, Copilot, Devin and Muse as contacts:<br/>
 one click to call, one click to mute, one click to hang up or hand the call to the next agent. Not a chat window. Not a model router.
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms)
-[![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms)
-[![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app)
-[![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri)
-[![Tests](https://img.shields.io/badge/tests-23%20unit%20%C2%B7%2027%20e2e-2ea043)](#testing)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-23%20unit%20%C2%B7%2027%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) · [Features](#features) · [Install](#install) · [Shortcuts](#shortcuts) · [Architecture](#architecture) · [Connecting seats](#connecting-seats) · [Privacy](#privacy--limits) · [Roadmap](#roadmap)
 
@@ -22,7 +17,7 @@ one click to call, one click to mute, one click to hang up or hand the call to t
 
 <img src="docs/screenshots/hero-light.png" width="920" alt="AgentDock idle pill" />
 
-<sub>Light · idle. Left to right: collapse · system mute · seats (dot / Grok Bot / Copilot / Muse) · add seat · ⇅ orientation grip</sub>
+<p><sub>Light · idle. Left to right: collapse · system mute · seats (dot / Grok Bot / Copilot / Muse) · add seat · ⇅ orientation grip</sub></p>
 
 </div>
 
