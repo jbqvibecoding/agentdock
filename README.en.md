@@ -166,20 +166,22 @@ Mouse:
 ## Architecture
 
 ```
-┌──────────────────────────── Tauri 2 ────────────────────────────┐
-│  Dock window (transparent · borderless · never key)  Settings    │
-│  src/dock.ts + dock.css                  src/settings.ts + .css │
-│        │  invoke / events                        │               │
-│  ──────┴──────────────────── Rust core ──────────┴─────────────  │
-│  state.rs    Idle → Calling → InCall → Switching(3s) │ NeedsHuman │
-│  seats.rs    seat model + seats.json      settings.rs  settings.json │
-│  hotkeys.rs  global shortcuts + conflicts mic.rs       system mute   │
-│  drivers/    drivers-as-data (JSON) · web.rs hidden webview · app.rs AX │
-│  lib.rs      commands · tray · native material · cursor hover poll · probes │
-└──────────────────────────────────────────────────────────────────┘
-          │ NSGlassEffectView / NSVisualEffectView / Mica (system material)
-          │ hidden WKWebView / WebView2 (one data directory per seat)
-          └ input-device volume / IAudioEndpointVolume / pactl
+Tauri 2
+├─ Dock window (transparent · borderless · never key)   src/dock.ts + dock.css
+├─ Settings window (transparent)                        src/settings.ts + settings.css
+│      │ invoke / events
+└─ Rust core
+   ├─ state.rs     Idle → Calling → InCall → Switching(3s undo) | NeedsHuman
+   ├─ seats.rs     seat model + seats.json
+   ├─ settings.rs  appearance / position / orientation / collapse policy / shortcuts → settings.json
+   ├─ hotkeys.rs   global shortcuts + conflict detection
+   ├─ mic.rs       system-level mute
+   ├─ drivers/     drivers-as-data (JSON) · web.rs hidden webview · app.rs Accessibility
+   └─ lib.rs       commands · tray · native material · cursor hover poll · probe loop
+          │
+          ├─ NSGlassEffectView / NSVisualEffectView / Mica   (system material)
+          ├─ hidden WKWebView / WebView2                      (one data directory per seat)
+          └─ input-device volume / IAudioEndpointVolume / pactl (mute)
 ```
 
 **Principles**

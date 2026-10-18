@@ -170,20 +170,22 @@ npm run tauri build      # 打包 .app / .dmg → src-tauri/target/release/bundl
 ## 架构
 
 ```
-┌──────────────────────────── Tauri 2 ────────────────────────────┐
-│  Dock 窗口 (透明 · 无边框 · 不抢焦点)      设置窗口 (透明)        │
-│  src/dock.ts + dock.css                  src/settings.ts + .css │
-│        │  invoke / events                        │               │
-│  ──────┴──────────────────── Rust core ──────────┴─────────────  │
-│  state.rs    状态机 Idle → Calling → InCall → Switching(3s) │ NeedsHuman
-│  seats.rs    席位模型 + seats.json        settings.rs  settings.json │
-│  hotkeys.rs  全局快捷键 + 冲突检测        mic.rs       系统级闭麦    │
-│  drivers/    驱动即数据 (JSON) · web.rs 隐藏 webview · app.rs AX  │
-│  lib.rs      命令 · 托盘 · 原生材质 · 光标 hover 轮询 · 探测循环   │
-└──────────────────────────────────────────────────────────────────┘
-          │ NSGlassEffectView / NSVisualEffectView / Mica (系统材质)
-          │ 隐藏 WKWebView / WebView2 (每席位独立数据目录)
-          └ 系统输入设备音量 / IAudioEndpointVolume / pactl
+Tauri 2
+├─ Dock 窗口（透明 · 无边框 · 不抢焦点）        src/dock.ts + dock.css
+├─ 设置窗口（透明）                              src/settings.ts + settings.css
+│      │ invoke / events
+└─ Rust core
+   ├─ state.rs     状态机 Idle → Calling → InCall → Switching(3s 可撤销) | NeedsHuman
+   ├─ seats.rs     席位模型 + seats.json
+   ├─ settings.rs  外观 / 位置 / 方向 / 收起策略 / 快捷键 → settings.json
+   ├─ hotkeys.rs   全局快捷键 + 冲突检测
+   ├─ mic.rs       系统级闭麦
+   ├─ drivers/     驱动即数据（JSON）· web.rs 隐藏 webview · app.rs Accessibility
+   └─ lib.rs       命令 · 托盘 · 原生材质 · 光标 hover 轮询 · 探测循环
+          │
+          ├─ NSGlassEffectView / NSVisualEffectView / Mica   （系统材质）
+          ├─ 隐藏 WKWebView / WebView2                        （每席位独立数据目录）
+          └─ 系统输入设备音量 / IAudioEndpointVolume / pactl  （闭麦）
 ```
 
 **设计原则**
