@@ -15,10 +15,10 @@
 
 <br/>
 
-<img src="docs/screenshots/hero-light.png" width="920" alt="AgentDock 空闲态胶囊：电源、麦克风、四位 agent、添加、方向把手" />
+<img src="docs/screenshots/mac-hero-light.png" width="920" alt="AgentDock 空闲态胶囊：电源、麦克风、四位 agent、添加、方向把手" />
 <br/>
 
-<p><sub>浅色 · 空闲态。胶囊从左到右：收起 · 系统闭麦 · 席位（dot / Grok Bot / Copilot / Muse）· 添加席位 · ⇅ 方向把手</sub></p>
+<p><sub>macOS 26 真机实拍 · 原生 NSGlassEffectView。胶囊从左到右：收起 · 系统闭麦 · 席位（dot / Grok Bot / Copilot / Muse）· 添加席位 · ⇅ 方向把手</sub></p>
 
 </div>
 
@@ -78,7 +78,35 @@ AgentDock 做的事情很窄：
 
 ## 截图
 
-> 下列图片由浏览器 mock 以 2x 渲染（状态可控、便于对比）；macOS 真机上玻璃由系统材质绘制，更通透。真机实拍见 [docs/screenshots/mac-*](docs/screenshots)。
+### macOS 26 真机实拍
+
+> 文件名 `mac-*`，macOS 26.6.2 · Apple Silicon，玻璃由系统 `NSGlassEffectView` 绘制。云端 Mac 无 HiDPI 显示器，因此为 1x 实拍（像素 = pt），未做放大。
+
+<div align="center">
+
+| 空闲 · 浅色 | 空闲 · 深色 |
+|:--:|:--:|
+| <img src="docs/screenshots/mac-idle-light.png" width="420" /> | <img src="docs/screenshots/mac-idle-dark.png" width="420" /> |
+| **通话中** | **闭麦** |
+| <img src="docs/screenshots/mac-incall-light.png" width="420" /> | <img src="docs/screenshots/mac-muted-light.png" width="420" /> |
+| **切换席位（3 秒可撤销）** | **把手悬停 ⇅** |
+| <img src="docs/screenshots/mac-switching-light.png" width="420" /> | <img src="docs/screenshots/mac-grip-hover-light.png" width="420" /> |
+| **右键原生菜单（标注当前快捷键）** | **小圆点 / 宠物 / 竖向** |
+| <img src="docs/screenshots/mac-menu-light.png" width="420" /> | <img src="docs/screenshots/mac-dot-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-pet-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-vertical-idle-light.png" height="260" /> &nbsp; <img src="docs/screenshots/mac-vertical-incall-light.png" height="260" /> |
+
+<br/>
+
+| 设置 › 席位 | 设置 › 外观（布局 · 收起方式） |
+|:--:|:--:|
+| <img src="docs/screenshots/mac-settings-seats-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-appearance-light.png" width="460" /> |
+| **设置 › 快捷键** | **设置 › 席位（深色）** |
+| <img src="docs/screenshots/mac-settings-hotkeys-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-seats-dark.png" width="460" /> |
+
+</div>
+
+### 状态总览（浏览器 mock · 2x）
+
+> 以下由浏览器 mock 以 2x 渲染（状态可控、便于逐项对比）；真机上玻璃由系统材质绘制，更通透。
 
 <div align="center">
 
