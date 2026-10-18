@@ -13,7 +13,7 @@ const TITLES: Record<PageId, [string, string]> = {
 let settings: AppSettings;
 let seats: SeatView[] = [];
 let drivers: DriverInfo[] = [];
-let host: HostInfo = { os: "unknown", vibrancy: false, version: "" };
+let host: HostInfo = { os: "unknown", vibrancy: false, material: undefined, version: "" };
 let page: PageId = "seats";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -239,7 +239,7 @@ function renderAppearance() {
   matStrength.addEventListener("change", () => saveSettings({ material_strength: Number(matStrength.value) }));
   const gTheme = group("外观",
     row("主题", "跟随系统时会随 macOS / Windows 的深浅色实时切换", seg<AppSettings["theme"]>([["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]], settings.theme, (v) => saveSettings({ theme: v }))),
-    row("材质", host.vibrancy ? (host.os === "macos" ? "macOS 系统玻璃（NSVisualEffectView · HUD）" : "Windows Mica / Acrylic") : "当前平台无系统材质，使用模糊回退", matStrength),
+    row("材质", host.material ? (host.material === "NSGlassEffectView" ? "macOS 26 Liquid Glass（NSGlassEffectView）" : host.material === "NSVisualEffectView" ? "macOS 系统玻璃（NSVisualEffectView · HUD）" : `Windows ${host.material}`) : "当前平台无系统材质，使用模糊回退", matStrength),
   );
   const snap = el("select") as HTMLSelectElement;
   for (const [v, l] of [["top_center", "顶部居中"], ["bottom_center", "底部居中"], ["top_left", "左上"], ["top_right", "右上"], ["bottom_left", "左下"], ["bottom_right", "右下"]] as [AppSettings["snap"], string][]) snap.append(new Option(l, v, false, v === settings.snap));
@@ -286,7 +286,7 @@ async function renderMic() {
 // ───────────── 关于 ─────────────
 function renderAbout() {
   const g = group("AgentDock",
-    row(`版本 ${esc(host.version)}`, `运行于 ${esc(host.os)} · 系统材质 ${host.vibrancy ? "可用" : "不可用（使用模糊回退）"}`, el("span", "chip", "Tauri 2 · Rust")),
+    row(`版本 ${esc(host.version)}`, `运行于 ${esc(host.os)} · 系统材质 ${host.material ? esc(host.material) : "不可用（使用模糊回退）"}`, el("span", "chip", "Tauri 2 · Rust")),
     row("隐私", "不录音、不读聊天内容、不保存密码；只触碰按钮、读通话状态和系统麦克风开关；席位数据目录加密。", el("span", "chip", "本地")),
   );
   const d = el("div", "group"); d.append(el("div", "group__title", "驱动"));
@@ -311,7 +311,8 @@ document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.addE
 
 async function boot() {
   host = await api.invoke<HostInfo>("host_info");
-  document.documentElement.toggleAttribute("data-vibrancy", host.vibrancy);
+  // The CSS keys off `[data-vibrancy="1"]`; toggleAttribute() would set an empty value and never match.
+  if (host.vibrancy) document.documentElement.setAttribute("data-vibrancy", "1"); else document.documentElement.removeAttribute("data-vibrancy");
   document.documentElement.dataset.os = host.os;
   $("#ver").textContent = host.version;
   settings = await api.invoke<AppSettings>("get_settings"); applySettingsLocally();

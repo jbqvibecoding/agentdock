@@ -307,6 +307,12 @@ fn undo_switch(app: AppHandle) {
 fn resize_dock(app: AppHandle, width: f64, height: f64) -> CmdResult<()> {
     let win = app.get_webview_window("dock").ok_or("no dock window")?;
     let snap = app.state::<AppState>().settings.lock().unwrap().snap;
+    #[cfg(target_os = "macos")]
+    {
+        // AppKit setters only take effect on the main thread; commands run on the async runtime.
+        let radius = (width.min(height) / 2.0).min(28.0);
+        let _ = app.run_on_main_thread(move || liquid_glass::set_corner_radius(radius));
+    }
     position_dock(&win, width, height, snap).map_err(err)
 }
 
@@ -334,7 +340,15 @@ fn position_dock<R: Runtime>(win: &WebviewWindow<R>, width: f64, height: f64, sn
         BottomCenter | BottomLeft | BottomRight => my + mh - height - margin - 70.0,
     };
     win.set_size(tauri::LogicalSize::new(width, height))?;
-    win.set_position(tauri::LogicalPosition::new(x, y))
+    win.set_position(tauri::LogicalPosition::new(x, y))?;
+    // AppKit caches the shadow of a transparent window; after a pill↔dot resize the stale
+    // rectangular shadow shows as a dark square behind the circle until it is recomputed.
+    #[cfg(target_os = "macos")]
+    if let Ok(p) = win.ns_window() {
+        let p = p as usize;
+        let _ = win.run_on_main_thread(move || unsafe { (&*(p as *mut objc2_app_kit::NSWindow)).invalidateShadow() });
+    }
+    Ok(())
 }
 
 // ───────────────────────── commands: seats ─────────────────────────
@@ -558,6 +572,7 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> CmdResult<()> {
     *st.settings.lock().unwrap() = settings.clone();
     settings.save(&settings::settings_path(&st.config_dir)).map_err(err)?;
     let _ = app.emit("settings:changed", &settings);
+    apply_theme(&app, settings.theme);
     register_hotkeys(&app).map_err(err)?;
     if let Some(win) = app.get_webview_window("dock") {
         let size = win.inner_size().map_err(err)?;
@@ -589,9 +604,13 @@ fn host_info() -> serde_json::Value {
     serde_json::json!({
         "os": std::env::consts::OS,
         "vibrancy": cfg!(any(target_os = "macos", target_os = "windows")),
+        "material": MATERIAL.lock().unwrap().clone(),
         "version": env!("CARGO_PKG_VERSION"),
     })
 }
+
+/// Which system material actually got applied to the dock window (reported in 设置 › 外观).
+static MATERIAL: Mutex<String> = Mutex::new(String::new());
 
 // ───────────────────────── hotkeys ─────────────────────────
 
@@ -641,18 +660,39 @@ fn on_hotkey<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut, pressed: bool)
 
 // ───────────────────────── glass ─────────────────────────
 
+/// 设置 › 外观 › 主题 must reach the native layer too: the system glass (NSGlassEffectView /
+/// NSVisualEffectView / Mica) renders in the *window's* appearance, so CSS alone would paint light
+/// text on a light pane. `None` follows the OS.
+fn apply_theme(app: &AppHandle, theme: settings::Theme) {
+    app.set_theme(match theme {
+        settings::Theme::System => None,
+        settings::Theme::Light => Some(tauri::Theme::Light),
+        settings::Theme::Dark => Some(tauri::Theme::Dark),
+    });
+}
+
 fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&WebviewWindow<R>>) {
     #[cfg(target_os = "macos")]
     {
         use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+        if let Err(e) = liquid_glass::clear_webview_backdrop(dock) {
+            tracing::warn!("dock webview backdrop: {e}");
+        }
         // macOS 26+: the real thing — NSGlassEffectView (Liquid Glass). Older systems: vibrancy.
         let glass_ok = liquid_glass::apply(dock, 28.0).unwrap_or_else(|e| {
             tracing::info!("NSGlassEffectView unavailable ({e}); falling back to NSVisualEffectView");
             false
         });
-        if !glass_ok {
-            if let Err(e) = apply_vibrancy(dock, NSVisualEffectMaterial::HudWindow, Some(NSVisualEffectState::Active), Some(28.0)) {
-                tracing::warn!("dock vibrancy: {e}");
+        if glass_ok {
+            tracing::info!("dock material: NSGlassEffectView (Liquid Glass)");
+            *MATERIAL.lock().unwrap() = "NSGlassEffectView".into();
+        } else {
+            match apply_vibrancy(dock, NSVisualEffectMaterial::HudWindow, Some(NSVisualEffectState::Active), Some(28.0)) {
+                Ok(()) => {
+                    tracing::info!("dock material: NSVisualEffectView (HudWindow)");
+                    *MATERIAL.lock().unwrap() = "NSVisualEffectView".into();
+                }
+                Err(e) => tracing::warn!("dock vibrancy: {e}"),
             }
         }
         if let Some(w) = settings_win {
@@ -664,8 +704,10 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
     #[cfg(target_os = "windows")]
     {
         use window_vibrancy::{apply_acrylic, apply_mica};
-        if apply_acrylic(dock, Some((18, 18, 18, 125))).is_err() {
-            let _ = apply_mica(dock, None);
+        if apply_acrylic(dock, Some((18, 18, 18, 125))).is_ok() {
+            *MATERIAL.lock().unwrap() = "Acrylic".into();
+        } else if apply_mica(dock, None).is_ok() {
+            *MATERIAL.lock().unwrap() = "Mica".into();
         }
         if let Some(w) = settings_win {
             let _ = apply_mica(w, None);
@@ -689,6 +731,55 @@ mod liquid_glass {
     use objc2_app_kit::{NSAutoresizingMaskOptions, NSColor, NSView, NSWindow, NSWindowOrderingMode};
     use tauri::{Runtime, WebviewWindow};
 
+    /// The glass view we inserted under the dock webview (0 = none / fallback path).
+    static GLASS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+
+    /// Keep the native glass shape congruent with the CSS pill: at 36×36 (dot form) a 28pt radius
+    /// renders as a rounded square peeking out from behind the circle, so clamp to half the side.
+    pub fn set_corner_radius(radius: f64) {
+        let ptr = *GLASS.lock().unwrap();
+        if ptr == 0 {
+            return;
+        }
+        unsafe {
+            let glass = &*(ptr as *const AnyObject);
+            let _: () = msg_send![glass, setCornerRadius: radius];
+        }
+    }
+
+    /// WKWebView paints `underPageBackgroundColor` (the system window background — near-black in
+    /// dark appearance) behind a page whose own background is transparent. It is a plain square, so
+    /// in dark mode it showed as a dark box behind the dot/pill. Clear it on every webview subview.
+    pub fn clear_webview_backdrop<R: Runtime>(win: &WebviewWindow<R>) -> Result<(), String> {
+        let ns_window = win.ns_window().map_err(|e| e.to_string())? as *mut NSWindow;
+        if ns_window.is_null() {
+            return Err("no NSWindow".into());
+        }
+        unsafe {
+            let window: &NSWindow = &*ns_window;
+            let Some(content) = window.contentView() else { return Ok(()) };
+            clear_recursive(&content, 0);
+        }
+        Ok(())
+    }
+
+    unsafe fn clear_recursive(view: &NSView, depth: usize) {
+        for sub in view.subviews().iter() {
+            let name = sub.class().name().to_string_lossy().into_owned();
+            tracing::debug!("{}{name} {:?}", "  ".repeat(depth), sub.frame());
+            if sub.respondsToSelector(objc2::sel!(setUnderPageBackgroundColor:)) {
+                let _: () = msg_send![&*sub, setUnderPageBackgroundColor: &*NSColor::clearColor()];
+            }
+            if sub.respondsToSelector(objc2::sel!(setDrawsBackground:)) {
+                let _: () = msg_send![&*sub, setDrawsBackground: false];
+            }
+            if sub.respondsToSelector(objc2::sel!(_setDrawsBackground:)) {
+                let _: () = msg_send![&*sub, _setDrawsBackground: false];
+            }
+            clear_recursive(&sub, depth + 1);
+        }
+    }
+
     pub fn apply<R: Runtime>(win: &WebviewWindow<R>, corner_radius: f64) -> Result<bool, String> {
         let Some(cls) = objc2::runtime::AnyClass::get(c"NSGlassEffectView") else { return Ok(false) };
         let ns_window = win.ns_window().map_err(|e| e.to_string())? as *mut NSWindow;
@@ -708,6 +799,7 @@ mod liquid_glass {
             let glass_view: &NSView = &*(Retained::as_ptr(&glass) as *const NSView);
             glass_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
             let _: () = msg_send![&*glass, setCornerRadius: corner_radius];
+            *GLASS.lock().unwrap() = Retained::as_ptr(&glass) as usize;
             let _: () = msg_send![&*glass, setTintColor: std::ptr::null::<AnyObject>()];
             content.addSubview_positioned_relativeTo(glass_view, NSWindowOrderingMode::Below, None);
             // Keep the webview itself transparent so the glass shows through.
@@ -759,7 +851,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 pub fn run() {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive("agentdock=info".parse().unwrap()))
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive("agentdock=info".parse().unwrap()).add_directive("agentdock_lib=info".parse().unwrap()))
         .init();
 
     tauri::Builder::default()
@@ -792,6 +884,7 @@ pub fn run() {
             let dock = app.get_webview_window("dock").expect("dock window");
             let settings_win = app.get_webview_window("settings");
             apply_glass(&dock, settings_win.as_ref());
+            apply_theme(app.handle(), app.state::<AppState>().settings.lock().unwrap().theme);
             {
                 let snap = app.state::<AppState>().settings.lock().unwrap().snap;
                 let _ = position_dock(&dock, 640.0, 140.0, snap);

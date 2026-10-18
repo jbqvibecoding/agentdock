@@ -55,19 +55,31 @@ mod backend {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
+    /// `None` when macOS reports `missing value`: no input device (headless Mac, VM, Mac mini
+    /// without a mic). The dock then keeps its own mute state and seats keep working.
+    fn read_level() -> Result<Option<u8>, MicError> {
+        let text = osascript("input volume of (get volume settings)")?;
+        if text == "missing value" {
+            return Ok(None);
+        }
+        text.parse::<u8>().map(Some).map_err(|e| MicError::Backend(format!("{e}: {text:?}")))
+    }
+
     pub fn input_level() -> Result<u8, MicError> {
-        osascript("input volume of (get volume settings)")?
-            .parse::<u8>()
-            .map_err(|e| MicError::Backend(e.to_string()))
+        Ok(read_level()?.unwrap_or(75))
     }
 
     pub fn set_muted(muted: bool, restore_level: u8) -> Result<(), MicError> {
+        if read_level()?.is_none() {
+            tracing::warn!("no audio input device; system mute skipped");
+            return Ok(());
+        }
         let level = if muted { 0 } else { restore_level.max(1) };
         osascript(&format!("set volume input volume {level}")).map(|_| ())
     }
 
     pub fn is_muted() -> Result<bool, MicError> {
-        Ok(input_level()? == 0)
+        Ok(read_level()? == Some(0))
     }
 }
 

@@ -94,6 +94,7 @@ async function seatButton(s: SeatView, small: boolean, active: boolean): Promise
   });
   b.dataset.seat = s.id;
   b.dataset.status = s.status;
+  if (settings?.show_names !== "never") b.title = `${s.name} · ${seatHint(s)}`;
   b.style.setProperty("--seat-tint", tintFor(s.id));
   const mark = el("div", "mark", await seatIcon(s));
   b.append(mark, el("i", "badge"));
@@ -110,17 +111,20 @@ async function seatButton(s: SeatView, small: boolean, active: boolean): Promise
 let statusEl: HTMLDivElement | null = null;
 function renderStatusText() {
   if (!statusEl || state.phase.phase !== "idle") return;
+  // The reference pill carries no text while idle; seat names are tooltips (see seatButton).
+  // "always" keeps the hovered name inline, measured into the pill width so it never overlaps.
   const s = hoverSeat ? seatById(hoverSeat) : null;
-  if (s && settings?.show_names !== "never") {
-    const hint = !s.enabled ? "未启用" : s.status === "pending" ? "待接入" : s.status === "needs_auth" ? "需登录 · 点击仍可尝试" : s.silent ? "无感呼叫" : "App 呼叫";
-    statusEl.innerHTML = `<div class="name">${escapeHtml(s.name)}</div><div class="sub">${hint}</div>`;
+  if (s && settings?.show_names === "always") {
+    statusEl.innerHTML = `<div class="name">${escapeHtml(s.name)}</div><div class="sub">${seatHint(s)}</div>`;
     statusEl.classList.remove("idle");
   } else {
-    statusEl.innerHTML = state.muted ? `<div class="name">已闭麦</div>` : "";
-    statusEl.classList.toggle("idle", !state.muted);
+    statusEl.innerHTML = "";
+    statusEl.classList.add("idle");
   }
+  if (dock.dataset.form === "bar") void fit("bar");
 }
 
+const seatHint = (s: SeatView) => !s.enabled ? "未启用" : s.status === "pending" ? "待接入" : s.status === "needs_auth" ? "需登录 · 点击仍可尝试" : s.silent ? "无感呼叫" : "App 呼叫";
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
 async function render() {
@@ -286,7 +290,8 @@ function applySettings(s: AppSettings) {
 
 async function boot() {
   const host = await api.invoke<HostInfo>("host_info");
-  document.documentElement.toggleAttribute("data-vibrancy", host.vibrancy);
+  // The CSS keys off `[data-vibrancy="1"]`; toggleAttribute() would set an empty value and never match.
+  if (host.vibrancy) document.documentElement.setAttribute("data-vibrancy", "1"); else document.documentElement.removeAttribute("data-vibrancy");
   document.documentElement.dataset.os = host.os;
   applySettings(await api.invoke<AppSettings>("get_settings"));
   seats = await api.invoke<SeatView[]>("get_seats");

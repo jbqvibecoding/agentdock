@@ -47,7 +47,7 @@
         "hiddenTitle": true,
         "visible": false,
         "center": true,
-        "shadow": false
+        "shadow": true
       }
     ],
     "security": {

@@ -56,7 +56,7 @@ async def main() -> int:
         await ev("document.querySelector('[data-page=appearance]').click()"); await asyncio.sleep(0.4)
         check("settings: appearance has 4 form cards", await ev("document.querySelectorAll('.card').length") == 4)
         await ev("document.querySelectorAll('.card')[3].click()"); await asyncio.sleep(0.3)
-        check("settings: picking a card saves default_form=pet", await ev("(async()=>{const {api}=await import('/src/api.ts');return (await api.invoke('get_settings')).default_form})()") == "pet")
+        check("settings: picking a card saves default_form=pet", await ev("window.__mockSettings && window.__mockSettings.default_form") == "pet" and await ev("document.querySelectorAll('.card')[3].classList.contains('is-on')"))
         errors = await ev("window.__errors || 0")
         check("no uncaught errors", errors == 0)
     chrome.terminate()

@@ -36,7 +36,7 @@ export interface AppSettings {
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
 }
 export interface DriverInfo { id: string; display_name: string; version: number; verified: boolean; kind: "web" | "app" }
-export interface HostInfo { os: string; vibrancy: boolean; version: string }
+export interface HostInfo { os: string; vibrancy: boolean; material?: string; version: string }
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -74,7 +74,7 @@ const mock = (() => {
     get_state: () => state,
     get_seats: () => seats,
     get_settings: () => settings,
-    save_settings: (a) => { settings = a.settings; emit("settings:changed", settings); },
+    save_settings: (a) => { settings = a.settings; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
     save_seats: (a) => { seats.splice(0, seats.length, ...a.seats.map((s: Seat) => ({ ...s, probe: null, driver_verified: false, silent: s.driver.kind === "web" }))); emit("seats:changed", seats); },
     reorder_seats: (a) => { const ids: string[] = a.ids; seats.sort((x, y) => ids.indexOf(x.id) - ids.indexOf(y.id)); emit("seats:changed", seats); },
     list_drivers: () => [

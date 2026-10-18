@@ -57,7 +57,9 @@ body { display: grid; place-items: start center; }
   transition: width var(--dur) var(--spring), height var(--dur) var(--spring), border-radius var(--dur) var(--spring);
   overflow: hidden; will-change: width, height; isolation: isolate;
 }
-html[data-vibrancy="1"] #dock { backdrop-filter: none; -webkit-backdrop-filter: none; background: linear-gradient(180deg, var(--pill-top), transparent 60%); }
+/* Native glass hosts: the system material supplies depth, and the window is sized exactly to the
+   pill, so an outer drop shadow would just be clipped into a dark square at the corners. */
+html[data-vibrancy="1"] #dock { backdrop-filter: none; -webkit-backdrop-filter: none; background: linear-gradient(180deg, var(--pill-top), transparent 60%); box-shadow: inset 0 0 0 1px var(--rim), inset 0 1px 0 var(--rim), inset 0 -1px 0 var(--rim-soft); }
 #dock::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(90% 60% at 50% -25%, rgba(255,255,255,.55), transparent 70%); }
 .bar, .dot { position: absolute; inset: 0; z-index: 1; }
 

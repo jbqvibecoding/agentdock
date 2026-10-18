@@ -63,7 +63,8 @@ button { cursor: pointer; }
 .nav__item:hover { background: var(--lens); }
 .nav__item.is-active { background: var(--sel); font-weight: 500; box-shadow: inset 0 0 0 1px var(--rim), 0 1px 3px rgba(40,60,120,.08); }
 .nav__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.nav__ic { width: 22px; text-align: center; font-size: 15px; color: var(--fg); opacity: .9; }
+.nav__ic { width: 22px; height: 22px; display: grid; place-items: center; color: var(--fg); opacity: .9; flex: none; }
+.nav__ic svg { width: 20px; height: 20px; display: block; }
 .side__foot { margin-top: auto; font-size: 11px; color: var(--fg-2); padding: 0 14px; }
 
 /* content pane: a lighter inset sheet */
