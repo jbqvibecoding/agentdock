@@ -113,6 +113,7 @@ async function seatButton(s: SeatView, small: boolean, active: boolean): Promise
   return b;
 }
 
+let prevForm = ""; let prevIdle = true;
 let statusEl: HTMLDivElement | null = null;
 function renderStatusText() {
   if (!statusEl || state.phase.phase !== "idle") return;
@@ -142,6 +143,8 @@ async function render() {
 
   const form: "dot" | "pet" | "bar" = state.expanded ? "bar" : settings?.default_form === "pet" ? "pet" : "dot";
   dock.dataset.form = form;
+  if ((form === "bar") !== (prevForm === "bar") || (p.phase === "idle") !== prevIdle) touchIdle();   // became idle+expanded → start the countdown
+  prevForm = form; prevIdle = p.phase === "idle";
 
   // collapsed content
   if (form === "pet") {
@@ -172,6 +175,7 @@ async function render() {
     frag.append(el("div", "divider"));
     for (const s of seats.filter((s) => s.enabled || s.status === "pending")) frag.append(await seatButton(s, false, false));
     frag.append(button("ghost add", SVG.plus, "添加席位", () => api.invoke("open_settings")));
+    frag.append(grip());
     renderStatusTextInto(statusEl);
   } else if (p.phase === "calling" || p.phase === "in_call") {
     const s = seatById(p.seat);
@@ -289,6 +293,47 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && state.expanded && state.phase.phase === "idle") api.invoke("set_expanded", { expanded: false });
 });
 
+// ───────── grip: the grabber at the pill's end — tap flips 横向/竖向, hold-and-drag moves the Dock ─────────
+function grip(): HTMLDivElement {
+  const g = el("div", "grip", "<i></i><i></i><i></i>");
+  g.title = "点一下：横向 / 竖向 · 按住拖动：移动";
+  g.addEventListener("click", () => { if (Date.now() - lastDragEnd > 300) void api.invoke("toggle_orientation"); });
+  return g;
+}
+
+// ───────── auto-collapse: an idle, un-hovered pill folds back into the dot/pet after N s ─────────
+// A deadline rather than a bare timeout: the 1 Hz state ticks re-render the pill, and re-arming a
+// timeout on every render would mean it never fires.
+let idleTimer: number | undefined;
+let idleDeadline = 0;
+let hovering = false;
+function touchIdle() {
+  idleDeadline = Date.now() + (settings?.auto_collapse_secs ?? 0) * 1000;
+  scheduleIdleCheck();
+}
+function scheduleIdleCheck() {
+  window.clearTimeout(idleTimer);
+  if (!(settings?.auto_collapse_secs ?? 0)) return;
+  idleTimer = window.setTimeout(checkIdle, Math.max(50, idleDeadline - Date.now()));
+}
+async function checkIdle() {
+  if (!state.expanded || state.phase.phase !== "idle") return;
+  if (Date.now() < idleDeadline) { scheduleIdleCheck(); return; }
+  // The webview's enter/leave tracking is lost when the window resizes under the pointer, so ask
+  // the OS where the cursor really is instead of trusting `hovering`.
+  const over = dragging || (api.isTauri ? await api.invoke<boolean>("cursor_over_dock") : hovering);
+  if (over) { touchIdle(); return; }
+  void api.invoke("set_expanded", { expanded: false });
+}
+let hoverExpandTimer: number | undefined;
+dock.addEventListener("pointerenter", () => {
+  hovering = true;
+  window.clearTimeout(idleTimer);
+  // resting on the dot for a moment opens it, so the hotkey is never required
+  if (!state.expanded) hoverExpandTimer = window.setTimeout(() => { if (hovering && !state.expanded && !dragging) void api.invoke("set_expanded", { expanded: true }); }, 300);
+});
+dock.addEventListener("pointerleave", () => { hovering = false; window.clearTimeout(hoverExpandTimer); touchIdle(); });
+
 // ───────── drag: grab the glass itself (any non-button area, or the dot) and put the Dock anywhere ─────────
 // The window follows the OS cursor (one IPC per frame; Rust reads the real cursor position) instead
 // of the OS move loop, which behaves differently per window manager. A 4px threshold keeps plain
@@ -298,6 +343,7 @@ window.addEventListener("error", (e) => uiLog("error", `${e.message} @${e.filena
 window.addEventListener("unhandledrejection", (e) => uiLog("error", `unhandled: ${String((e as PromiseRejectionEvent).reason)}`));
 let grab: { x: number; y: number } | null = null;   // pointer-down point, in window px
 let dragging = false;
+let lastDragEnd = 0;                                // lets the grip tell a tap from the end of a drag
 let dragRaf = 0;
 function followCursor() {
   dragRaf = 0;
@@ -321,10 +367,12 @@ const endDrag = () => {
   grab = null;
   if (!dragging) return;
   dragging = false;
+  lastDragEnd = Date.now();
   dock.classList.remove("dragging");
   cancelAnimationFrame(dragRaf);
   dragRaf = 0;
   void api.invoke("remember_dock_position");
+  touchIdle();
 };
 window.addEventListener("pointerup", endDrag);
 window.addEventListener("pointercancel", endDrag);
@@ -332,6 +380,7 @@ window.addEventListener("pointercancel", endDrag);
 function applySettings(s: AppSettings) {
   settings = s;
   dock.dataset.orient = s.orientation ?? "horizontal";
+  touchIdle();
   applyTheme(s.theme);
   document.documentElement.toggleAttribute("data-reduce-motion", s.reduce_motion);
   document.documentElement.style.setProperty("--material", String(s.material_strength));

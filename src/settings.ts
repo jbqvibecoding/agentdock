@@ -248,7 +248,8 @@ function renderAppearance() {
   snap.addEventListener("change", () => { const v = snap.value as AppSettings["snap"]; saveSettings(v === "free" ? { snap: v } : { snap: v, dock_anchor: null }); });
   const gLayout = group("布局",
     row("方向", `横向像 Spotlight，竖向像侧边 Dock；快捷键 ${settings.hotkeys.orientation.split("+").map(pretty).join("")} 或右键胶囊可随时切换`, seg<AppSettings["orientation"]>([["horizontal", "横向"], ["vertical", "竖向"]], settings.orientation ?? "horizontal", (v) => saveSettings({ orientation: v }))),
-    row("位置", "直接拖动 Dock 的玻璃部分即可放到任意位置（自动记忆）；或选一个屏幕边缘吸附", snap),
+    row("位置", "直接拖动 Dock 的玻璃部分或末端把手即可放到任意位置（自动记忆）；或选一个屏幕边缘吸附", snap),
+    row("自动收起", "空闲且鼠标不在上面时，展开的胶囊自动折回小圆点 / 宠物；鼠标停在圆点上 0.3 秒自动展开；通话中不收起", (() => { const sel = el("select") as HTMLSelectElement; for (const [v, l] of [[0, "从不"], [3, "3 秒"], [8, "8 秒"], [15, "15 秒"], [30, "30 秒"]] as [number, string][]) sel.append(new Option(l, String(v), false, v === settings.auto_collapse_secs)); sel.addEventListener("change", () => saveSettings({ auto_collapse_secs: Number(sel.value) })); return sel; })()),
     row("显示名字", "", seg<AppSettings["show_names"]>([["hover", "仅悬停"], ["always", "总是"], ["never", "从不"]], settings.show_names, (v) => saveSettings({ show_names: v }))),
     row("减弱动画", "跟随系统「减弱动态效果」时形变退化为淡入淡出", toggle(settings.reduce_motion, (v) => saveSettings({ reduce_motion: v }))),
   );

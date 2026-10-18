@@ -353,6 +353,15 @@ fn drag_dock(app: AppHandle, offset_x: f64, offset_y: f64) -> CmdResult<()> {
     win.set_position(tauri::LogicalPosition::new(x, y)).map_err(err)
 }
 
+/// Is the OS cursor inside the dock window? Used by the auto-collapse countdown (webview hover
+/// state goes stale when the window grows under the pointer).
+#[tauri::command]
+fn cursor_over_dock(app: AppHandle) -> bool {
+    let Some(win) = app.get_webview_window("dock") else { return false };
+    let (Ok(c), Ok(p), Ok(s)) = (app.cursor_position(), win.outer_position(), win.outer_size()) else { return false };
+    c.x >= p.x as f64 && c.y >= p.y as f64 && c.x < (p.x + s.width as i32) as f64 && c.y < (p.y + s.height as i32) as f64
+}
+
 /// Called by the dock once a drag ends: the pill's centre becomes the anchor and snapping is off.
 #[tauri::command]
 fn remember_dock_position(app: AppHandle) -> CmdResult<()> {
@@ -1223,7 +1232,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log, toggle_orientation, toggle_collapsed_form, dock_menu,
+            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat,
             driver_report, driver_error, set_seat_icon, reset_seat_icon, seat_icon_data,
             get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info

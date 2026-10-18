@@ -68,6 +68,13 @@ async def main() -> int:
         await ev("window.__mockInvoke('toggle_collapsed_form')"); await asyncio.sleep(0.3)
         await ev("document.getElementById('dock').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true}))"); await asyncio.sleep(0.2)
         check("right-click pill opens native menu (dock_menu)", await ev("window.__mockMenuOpened") == 1)
+        check("grip handle at the pill's end", await ev("!!document.querySelector('.bar .grip')"))
+        await ev("document.querySelector('.bar .grip').click()"); await asyncio.sleep(0.8)
+        check("tap grip → vertical", await dock("orient") == "vertical")
+        await ev("document.querySelector('.bar .grip').click()"); await asyncio.sleep(0.8)
+        await ev("window.__mockInvoke('save_settings', {settings: {...window.__mockSettings, auto_collapse_secs: 1}})"); await asyncio.sleep(1.7)
+        check("auto-collapse after 1 s idle → dot", await dock("form") == "dot")
+        await ev("window.__mockInvoke('save_settings', {settings: {...window.__mockSettings, auto_collapse_secs: 0}})"); await ev("document.getElementById('collapsed').click()"); await asyncio.sleep(0.6)
         check("back to horizontal row", await dock("orient") == "horizontal" and await ev("(r=>r.width>r.height)(document.getElementById('dock').getBoundingClientRect())"))
         # settings page smoke
         await send("Page.navigate", url=URL + "settings.html?page=hotkeys"); await asyncio.sleep(1.2)

@@ -33,7 +33,7 @@ export type Orientation = "horizontal" | "vertical";
 export interface DockAnchor { x: number; y: number }
 export interface Hotkeys { toggle: string; mute: string; hangup: string; orientation: string; form: string; seat_modifier: string; push_to_talk: boolean }
 export interface AppSettings {
-  default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; show_names: "hover" | "always" | "never";
+  default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; auto_collapse_secs: number; show_names: "hover" | "always" | "never";
   reduce_motion: boolean; material_strength: number; hotkeys: Hotkeys; mute_mode: "system" | "seat";
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
 }
@@ -55,7 +55,7 @@ const mock = (() => {
     { id: "muse", name: "Muse", service: "Meta Muse", driver: { kind: "web", url: "https://muse.ai/", driver: "muse-voice" }, icon: { kind: "builtin", key: "muse" }, enabled: false, status: "pending", account: null, probe: null, driver_verified: false, silent: true },
   ];
   let settings: AppSettings = {
-    default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, show_names: "hover", reduce_motion: false, material_strength: 0.5,
+    default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, show_names: "hover", reduce_motion: false, material_strength: 0.5,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
     mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false,
   };
@@ -110,6 +110,7 @@ const mock = (() => {
     drag_dock: (a) => { const w = window as any; w.__mockDrags = (w.__mockDrags || 0) + 1; w.__mockGrab = { x: a.offsetX, y: a.offsetY }; },
     remember_dock_position: () => { (window as any).__mockAnchored = true; settings = { ...settings, snap: "free" }; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
     ui_log: () => undefined,
+    cursor_over_dock: () => false,
     toggle_orientation: () => { settings = { ...settings, orientation: settings.orientation === "vertical" ? "horizontal" : "vertical" }; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
     toggle_collapsed_form: () => { settings = { ...settings, default_form: settings.default_form === "pet" ? "dot" : "pet" }; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
     dock_menu: () => { (window as any).__mockMenuOpened = ((window as any).__mockMenuOpened || 0) + 1; },

@@ -91,6 +91,9 @@ pub struct AppSettings {
     pub orientation: Orientation,
     #[serde(default)]
     pub dock_anchor: Option<DockAnchor>,
+    /// Idle seconds before an expanded, un-hovered pill folds back into the dot/pet (0 = never).
+    #[serde(default = "default_auto_collapse")]
+    pub auto_collapse_secs: u32,
     pub show_names: ShowNames,
     pub reduce_motion: bool,
     /// 0.0–1.0, how strong the glass tint is on top of the system material.
@@ -102,6 +105,9 @@ pub struct AppSettings {
     pub confirm_switch: bool,
 }
 
+fn default_auto_collapse() -> u32 {
+    8
+}
 fn default_orientation_key() -> String {
     "Alt+O".into()
 }
@@ -136,6 +142,7 @@ impl Default for AppSettings {
             snap: Snap::TopCenter,
             orientation: Orientation::Horizontal,
             dock_anchor: None,
+            auto_collapse_secs: default_auto_collapse(),
             show_names: ShowNames::Hover,
             reduce_motion: false,
             material_strength: 0.5,
@@ -211,6 +218,7 @@ mod tests {
         let o = v.as_object_mut().unwrap();
         o.remove("orientation");
         o.remove("dock_anchor");
+        o.remove("auto_collapse_secs");
         let hk = o.get_mut("hotkeys").unwrap().as_object_mut().unwrap();
         hk.remove("orientation");
         hk.remove("form");
