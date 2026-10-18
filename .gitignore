@@ -2,11 +2,6 @@ node_modules
 dist
 src-tauri/target
 src-tauri/gen/schemas
-.shots/*.png
-!.shots/sheet-settings-dark.png
-!.shots/sheet-settings-light.png
-!.shots/sheet-dock-dark.png
-!.shots/sheet-dock-light.png
-!.shots/settings-seats-dark.png
-!.shots/settings-appearance-light.png
+.shots/*
+!.shots/shoot.py
 .DS_Store
