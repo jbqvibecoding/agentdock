@@ -645,8 +645,15 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
     #[cfg(target_os = "macos")]
     {
         use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
-        if let Err(e) = apply_vibrancy(dock, NSVisualEffectMaterial::HudWindow, Some(NSVisualEffectState::Active), Some(28.0)) {
-            tracing::warn!("dock vibrancy: {e}");
+        // macOS 26+: the real thing — NSGlassEffectView (Liquid Glass). Older systems: vibrancy.
+        let glass_ok = liquid_glass::apply(dock, 28.0).unwrap_or_else(|e| {
+            tracing::info!("NSGlassEffectView unavailable ({e}); falling back to NSVisualEffectView");
+            false
+        });
+        if !glass_ok {
+            if let Err(e) = apply_vibrancy(dock, NSVisualEffectMaterial::HudWindow, Some(NSVisualEffectState::Active), Some(28.0)) {
+                tracing::warn!("dock vibrancy: {e}");
+            }
         }
         if let Some(w) = settings_win {
             if let Err(e) = apply_vibrancy(w, NSVisualEffectMaterial::Sidebar, None, Some(12.0)) {
@@ -667,6 +674,52 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (dock, settings_win);
+    }
+}
+
+/// Native Liquid Glass on macOS 26 (Tahoe) and later via `NSGlassEffectView`, looked up at runtime
+/// so the binary still runs on older systems. The glass view is inserted *behind* the WKWebView,
+/// sized to the window, with the same continuous corner radius the frontend uses.
+#[cfg(target_os = "macos")]
+mod liquid_glass {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::{msg_send, AnyThread, ClassType};
+    use objc2_app_kit::{NSAutoresizingMaskOptions, NSColor, NSView, NSWindow, NSWindowOrderingMode};
+    use tauri::{Runtime, WebviewWindow};
+
+    pub fn apply<R: Runtime>(win: &WebviewWindow<R>, corner_radius: f64) -> Result<bool, String> {
+        let Some(cls) = objc2::runtime::AnyClass::get(c"NSGlassEffectView") else { return Ok(false) };
+        let ns_window = win.ns_window().map_err(|e| e.to_string())? as *mut NSWindow;
+        if ns_window.is_null() {
+            return Err("no NSWindow".into());
+        }
+        // SAFETY: Tauri hands us a live NSWindow pointer; we only call documented AppKit API on the
+        // main thread (Tauri's setup hook runs there).
+        unsafe {
+            let window: &NSWindow = &*ns_window;
+            window.setOpaque(false);
+            window.setBackgroundColor(Some(&NSColor::clearColor()));
+            let Some(content) = window.contentView() else { return Err("no contentView".into()) };
+            let bounds = content.bounds();
+            let glass: Retained<AnyObject> = msg_send![cls.alloc(), initWithFrame: bounds];
+            let glass_view: &NSView = &*(Retained::as_ptr(&glass) as *const NSView);
+            glass_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
+            let _: () = msg_send![&*glass, setCornerRadius: corner_radius];
+            let _: () = msg_send![&*glass, setTintColor: std::ptr::null::<AnyObject>()];
+            content.addSubview_positioned_relativeTo(glass_view, NSWindowOrderingMode::NSWindowBelow, None);
+            // Keep the webview itself transparent so the glass shows through.
+            for sub in content.subviews().iter() {
+                if !std::ptr::eq(&*sub as *const NSView, glass_view) {
+                    let _: () = msg_send![&*sub, setValue: &*NSColor::clearColor(), forKey: &*objc2_foundation::NSString::from_str("backgroundColor")];
+                    if sub.respondsToSelector(objc2::sel!(setDrawsBackground:)) {
+                        let _: () = msg_send![&*sub, setDrawsBackground: false];
+                    }
+                }
+            }
+        }
+        let _ = NSView::class();
+        Ok(true)
     }
 }
 

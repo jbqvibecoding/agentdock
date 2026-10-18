@@ -3,8 +3,8 @@ PORT=9333
 chrome = subprocess.Popen(["google-chrome","--headless=new","--no-sandbox","--disable-gpu",f"--remote-debugging-port={PORT}","--window-size=1200,800","--hide-scrollbars","about:blank"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 time.sleep(2.5)
 ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json").read())[0]["webSocketDebuggerUrl"]
-WALL_DARK="radial-gradient(60% 50% at 30% 20%, #ff7a59 0%, transparent 60%), radial-gradient(50% 50% at 80% 90%, #3dd6f5 0%, transparent 60%), linear-gradient(135deg,#1b2a4a 0%,#4b2a6b 50%,#0f3b4f 100%)"
-WALL_LIGHT="radial-gradient(60% 50% at 30% 20%, #ffb199 0%, transparent 60%), radial-gradient(50% 50% at 80% 90%, #9ad7ff 0%, transparent 60%), linear-gradient(135deg,#f3e7d3 0%,#dfe9f5 50%,#f7dce2 100%)"
+WALL_DARK="url(/wall-dark.jpg) center/cover"
+WALL_LIGHT="url(/wall-light.jpg) center/cover"
 async def main():
     async with websockets.connect(ws_url, max_size=50_000_000) as ws:
         mid=0

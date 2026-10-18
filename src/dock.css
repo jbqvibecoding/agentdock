@@ -15,13 +15,21 @@
   --fg: rgba(255, 255, 255, .96);
   --fg-2: rgba(255, 255, 255, .62);
   --fg-3: rgba(255, 255, 255, .34);
-  --glass: rgba(255, 255, 255, .10);
+  --blur: 7px;
+  --bright: 1.04;
+  --glass-top: rgba(255, 255, 255, .22);
+  --glass: rgba(255, 255, 255, .08);
+  --glass-bottom: rgba(255, 255, 255, .04);
   --glass-strong: rgba(255, 255, 255, .16);
-  --rim-top: rgba(255, 255, 255, .55);
-  --rim-bottom: rgba(255, 255, 255, .10);
-  --lens: rgba(255, 255, 255, .09);
-  --lens-hover: rgba(255, 255, 255, .18);
-  --shadow: 0 18px 44px rgba(0, 0, 0, .38), 0 2px 8px rgba(0, 0, 0, .22);
+  --rim-top: rgba(255, 255, 255, .70);
+  --rim-bottom: rgba(255, 255, 255, .16);
+  --rim-opacity: .9;
+  --refract: rgba(255, 255, 255, .35);
+  --spec: rgba(255, 255, 255, .34);
+  --spec-2: rgba(255, 255, 255, .14);
+  --lens: rgba(255, 255, 255, .13);
+  --lens-hover: rgba(255, 255, 255, .24);
+  --shadow: 0 24px 60px rgba(0, 0, 0, .36), 0 4px 12px rgba(0, 0, 0, .18);
   --red: #ff453a;
   --amber: #ff9f0a;
   --green: #30d158;
@@ -32,26 +40,47 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --fg: rgba(0, 0, 0, .88);
-    --fg-2: rgba(0, 0, 0, .55);
-    --fg-3: rgba(0, 0, 0, .30);
-    --glass: rgba(255, 255, 255, .55);
+    --fg: rgba(0, 0, 0, .86);
+    --fg-2: rgba(0, 0, 0, .52);
+    --fg-3: rgba(0, 0, 0, .28);
+    --blur: 10px;
+    --bright: 1.08;
+    --glass-top: rgba(255, 255, 255, .62);
+    --glass: rgba(255, 255, 255, .34);
+    --glass-bottom: rgba(255, 255, 255, .26);
     --glass-strong: rgba(255, 255, 255, .70);
-    --rim-top: rgba(255, 255, 255, .95);
-    --rim-bottom: rgba(255, 255, 255, .40);
-    --lens: rgba(255, 255, 255, .45);
-    --lens-hover: rgba(255, 255, 255, .75);
-    --shadow: 0 16px 40px rgba(40, 30, 60, .22), 0 2px 6px rgba(40, 30, 60, .12);
+    --rim-top: rgba(255, 255, 255, 1);
+    --rim-bottom: rgba(255, 255, 255, .55);
+    --rim-opacity: 1;
+    --refract: rgba(255, 255, 255, .9);
+    --spec: rgba(255, 255, 255, .8);
+    --spec-2: rgba(255, 255, 255, .5);
+    --lens: rgba(255, 255, 255, .42);
+    --lens-hover: rgba(255, 255, 255, .72);
+    --shadow: 0 22px 54px rgba(50, 40, 80, .22), 0 3px 10px rgba(50, 40, 80, .10);
     --mark-bg: #1c1c1e;
   }
 }
 :root[data-theme="light"] {
-  --fg: rgba(0, 0, 0, .88); --fg-2: rgba(0, 0, 0, .55); --fg-3: rgba(0, 0, 0, .30);
-  --glass: rgba(255, 255, 255, .55); --glass-strong: rgba(255, 255, 255, .70);
-  --rim-top: rgba(255, 255, 255, .95); --rim-bottom: rgba(255, 255, 255, .40);
-  --lens: rgba(255, 255, 255, .45); --lens-hover: rgba(255, 255, 255, .75);
-  --shadow: 0 16px 40px rgba(40, 30, 60, .22), 0 2px 6px rgba(40, 30, 60, .12);
-  --mark-bg: #1c1c1e;
+    --fg: rgba(0, 0, 0, .86);
+    --fg-2: rgba(0, 0, 0, .52);
+    --fg-3: rgba(0, 0, 0, .28);
+    --blur: 10px;
+    --bright: 1.08;
+    --glass-top: rgba(255, 255, 255, .62);
+    --glass: rgba(255, 255, 255, .34);
+    --glass-bottom: rgba(255, 255, 255, .26);
+    --glass-strong: rgba(255, 255, 255, .70);
+    --rim-top: rgba(255, 255, 255, 1);
+    --rim-bottom: rgba(255, 255, 255, .55);
+    --rim-opacity: 1;
+    --refract: rgba(255, 255, 255, .9);
+    --spec: rgba(255, 255, 255, .8);
+    --spec-2: rgba(255, 255, 255, .5);
+    --lens: rgba(255, 255, 255, .42);
+    --lens-hover: rgba(255, 255, 255, .72);
+    --shadow: 0 22px 54px rgba(50, 40, 80, .22), 0 3px 10px rgba(50, 40, 80, .10);
+    --mark-bg: #1c1c1e;
 }
 
 * { box-sizing: border-box; }
@@ -61,35 +90,49 @@ html, body {
 }
 body { display: grid; place-items: start center; }
 
-/* ── the pill ── */
+/* ── the pill ──
+   Liquid Glass is *clear*, not frosted: low blur so the wallpaper reads through, a bright
+   specular on the upper edge, a refracted light ring on the rim, and a deep soft shadow. */
 #dock {
   position: relative;
   height: var(--h);
   border-radius: var(--radius);
-  background: var(--glass);
-  backdrop-filter: blur(28px) saturate(170%);
-  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  background:
+    linear-gradient(180deg, var(--glass-top) 0%, var(--glass) 45%, var(--glass-bottom) 100%);
+  backdrop-filter: blur(var(--blur)) saturate(165%) brightness(var(--bright));
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(165%) brightness(var(--bright));
   box-shadow:
-    inset 0 1px 0 var(--rim-top),
+    inset 0 1.5px 0 var(--rim-top),
     inset 0 -1px 0 var(--rim-bottom),
-    inset 0 0 0 1px rgba(255, 255, 255, .06),
+    inset 0 -14px 22px -16px var(--refract),
+    inset 0 14px 22px -18px rgba(0, 0, 0, .18),
     var(--shadow);
   transition: width var(--dur) var(--spring), height var(--dur) var(--spring), border-radius var(--dur) var(--spring);
   overflow: hidden;
   will-change: width, height;
+  isolation: isolate;
 }
-html[data-vibrancy="1"] #dock { backdrop-filter: none; -webkit-backdrop-filter: none; background: transparent; box-shadow: inset 0 1px 0 var(--rim-top), inset 0 -1px 0 var(--rim-bottom); }
-#dock::before { /* soft specular */
-  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
-  background: radial-gradient(120% 90% at 50% -30%, rgba(255, 255, 255, .22), transparent 60%);
+html[data-vibrancy="1"] #dock { backdrop-filter: none; -webkit-backdrop-filter: none; background: linear-gradient(180deg, var(--glass-top), transparent 50%); }
+/* specular: a soft highlight band along the top like light hitting curved glass */
+#dock::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: 0;
+  background:
+    radial-gradient(70% 55% at 50% -20%, var(--spec) 0%, transparent 70%),
+    radial-gradient(40% 35% at 8% 110%, var(--spec-2) 0%, transparent 70%),
+    radial-gradient(40% 35% at 92% 110%, var(--spec-2) 0%, transparent 70%);
 }
-#dock::after { /* liquid sheen that drifts while in a call */
-  content: ""; position: absolute; inset: -40%; pointer-events: none; opacity: 0;
-  background: conic-gradient(from 180deg, transparent 0 40%, rgba(255, 255, 255, .10) 50%, transparent 60% 100%);
-  transition: opacity 600ms ease;
+/* rim: 1px ring whose brightness varies around the edge — the refracted light of a thick edge */
+#dock::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: 0;
+  padding: 1px;
+  background: conic-gradient(from 200deg,
+    rgba(255,255,255,.75) 0deg, rgba(255,255,255,.15) 70deg, rgba(255,255,255,.45) 150deg,
+    rgba(255,255,255,.10) 220deg, rgba(255,255,255,.65) 300deg, rgba(255,255,255,.75) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: var(--rim-opacity);
 }
-#dock[data-phase="in_call"]::after, #dock[data-phase="calling"]::after { opacity: 1; animation: sheen 9s linear infinite; }
-@keyframes sheen { to { transform: rotate(360deg); } }
+.bar, .dot { z-index: 1; }
 
 /* ── collapsed dot ── */
 #dock[data-form="dot"] { width: 36px; height: 36px; border-radius: 18px; }
@@ -106,7 +149,7 @@ html[data-vibrancy="1"] #dock { backdrop-filter: none; -webkit-backdrop-filter: 
 #dock[data-form="dot"][data-muted="true"] .dot::after { background: var(--amber); }
 @keyframes breathe { 0%, 100% { transform: scale(1); opacity: .75; } 50% { transform: scale(1.18); opacity: 1; } }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--seat-tint, var(--green)) 45%, transparent); } 70% { box-shadow: 0 0 0 9px transparent; } }
-@media (prefers-reduced-motion: reduce) { .dot::after { animation: none !important; } #dock::after { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .dot::after { animation: none !important; } }
 html[data-reduce-motion="1"] * { animation: none !important; transition-duration: 120ms !important; }
 
 /* ── pet (persistent companion) ── */
@@ -127,12 +170,12 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 .btn {
   width: var(--btn); height: var(--btn); border-radius: 50%; border: 0; padding: 0; margin: 0; flex: none;
   display: grid; place-items: center; cursor: pointer; color: var(--fg);
-  background: var(--lens);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 -1px 0 rgba(0, 0, 0, .08);
+  background: linear-gradient(180deg, var(--lens-hover) 0%, var(--lens) 60%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), inset 0 -1px 0 rgba(255, 255, 255, .10), inset 0 0 0 .5px rgba(255, 255, 255, .18), 0 2px 6px rgba(0, 0, 0, .10);
   transition: transform 260ms var(--spring), background 160ms ease, opacity 220ms ease, width 300ms var(--spring), height 300ms var(--spring);
   -webkit-tap-highlight-color: transparent;
 }
-.btn:hover { background: var(--lens-hover); transform: translateY(-1px) scale(1.04); }
+.btn:hover { background: var(--lens-hover); transform: translateY(-1px) scale(1.05); }
 .btn:active { transform: scale(.94); }
 .btn:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .btn svg { width: 20px; height: 20px; display: block; }
