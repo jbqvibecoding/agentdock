@@ -162,7 +162,7 @@ async function render() {
     collapsed.append(av, lines);
     collapsed.title = p.phase === "in_call" ? `${pet?.name} · ${fmtTime(p.elapsed_secs)}` : "展开 AgentDock";
   } else {
-    collapsed.innerHTML = "";
+    collapsed.innerHTML = `<svg class="dot-waves" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 6.2v3.6M8 4v8M11.5 6.2v3.6"/></svg>`;
     collapsed.title = p.phase === "in_call" ? `通话中 ${fmtTime(p.elapsed_secs)} · 点击展开` : "展开 AgentDock";
   }
 
