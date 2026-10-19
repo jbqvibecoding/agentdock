@@ -125,7 +125,8 @@ body { display: grid; place-items: start center; }
   backdrop-filter: blur(var(--pill-blur)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--pill-blur)) saturate(140%);
   box-shadow: inset 0 0 0 1px var(--rim), inset 0 1px 0 var(--rim), inset 0 -1px 0 var(--rim-soft), var(--shadow);
-  transition: width var(--dur) var(--spring-css), height var(--dur) var(--spring-css), border-radius var(--dur) var(--spring-css);
+  /* no-overshoot curve for the frame: a bounce on collapse would dip narrower than the dot */
+  transition: width var(--dur) var(--spring), height var(--dur) var(--spring), border-radius var(--dur) var(--spring);
   overflow: hidden; isolation: isolate;
 }
 /* Native glass hosts: NSGlassEffectView draws the material, the refraction band AND the specular rim.

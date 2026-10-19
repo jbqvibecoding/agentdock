@@ -9,7 +9,7 @@
 把 ChatGPT dot、Grok Bot、Copilot、Devin、Muse 当成一排可呼叫的联系人：<br/>
 一键呼叫 · 一键闭麦 · 一键挂断或切到下一位。不是聊天窗口，不是模型路由器。
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-43%20unit%20%C2%B7%2031%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-46%20unit%20%C2%B7%2031%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [English](README.en.md) · [功能](#功能) · [安装](#安装) · [快捷键](#快捷键) · [架构](#架构) · [接入席位](#接入席位) · [长期记忆](#长期记忆everos) · [隐私](#隐私与边界) · [路线图](#路线图)
 
@@ -317,7 +317,7 @@ npm run tauri dev
 ## 测试
 
 ```bash
-cd src-tauri && cargo test                             # 43 个单元测试：状态机 / 席位 / 设置兼容 / 放置 / 快捷键 / 驱动 / EverOS
+cd src-tauri && cargo test                             # 46 个单元测试：状态机 / Agent / 设置兼容 / 放置 / 形变弹簧 / 快捷键 / 驱动 / EverOS
 npm run build                                          # 前端类型检查 + 打包
 npx vite --port 1420 & python3 tests/e2e_mock.py       # 31 项浏览器 E2E：状态机→DOM、横竖、拖拽、把手、自动收起、三档收起、设置页（含记忆开关）
 bash tests/e2e_xvfb.sh                                 # Linux 真实二进制冒烟（Xvfb）

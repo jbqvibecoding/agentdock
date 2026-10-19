@@ -1096,7 +1096,9 @@ static MATERIAL: Mutex<String> = Mutex::new(String::new());
 static SETTINGS_RADIUS: Mutex<f64> = Mutex::new(0.0);
 
 /// One semi-implicit Euler step of a slightly under-damped spring (≈3 % overshoot) over a window
-/// frame `[x, y, w, h]`. Returns whether any component is still moving.
+/// frame in centre space `[cx, cy, w, h]`. Returns whether any component is still moving.
+/// Sizes may bounce past a larger target but never sag below a smaller one: a collapsing pill that
+/// dipped under the dot's 36pt width read as a vertical capsule for a few frames.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn spring_step(cur: &mut [f64; 4], vel: &mut [f64; 4], target: &[f64; 4], dt: f64) -> bool {
     const K: f64 = 520.0;
@@ -1106,9 +1108,23 @@ fn spring_step(cur: &mut [f64; 4], vel: &mut [f64; 4], target: &[f64; 4], dt: f6
     for i in 0..4 {
         vel[i] += (-K * (cur[i] - target[i]) - c * vel[i]) * dt;
         cur[i] += vel[i] * dt;
+        if i >= 2 && cur[i] < target[i] && vel[i] < 0.0 {
+            cur[i] = target[i];
+            vel[i] = 0.0;
+        }
         moving |= (cur[i] - target[i]).abs() > 0.25 || vel[i].abs() > 4.0;
     }
     moving
+}
+
+/// Morph state lives in centre space, so clamping a size never drags the centre sideways.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn frame_to_centre(f: [f64; 4]) -> [f64; 4] {
+    [f[0] + f[2] / 2.0, f[1] + f[3] / 2.0, f[2], f[3]]
+}
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn centre_to_frame(c: [f64; 4]) -> [f64; 4] {
+    [c[0] - c[2] / 2.0, c[1] - c[3] / 2.0, c[2], c[3]]
 }
 
 #[cfg(test)]
@@ -1128,6 +1144,19 @@ mod spring_tests {
         assert!((cur[2] - 408.0).abs() < 0.5 && (cur[0] - 314.0).abs() < 0.5);
         assert!(peak > 408.0 && peak < 408.0 + 0.06 * 372.0, "overshoot {peak:.1} should be a small bounce");
     }
+
+    #[test]
+    fn collapsing_never_sags_below_the_dot_and_keeps_its_centre() {
+        let start = super::frame_to_centre([314.0, 290.0, 408.0, 56.0]);
+        let target = super::frame_to_centre([500.0, 300.0, 36.0, 36.0]);
+        let (mut cur, mut vel) = (start, [0.0; 4]);
+        let mut min_side = f64::MAX;
+        while spring_step(&mut cur, &mut vel, &target, 1.0 / 240.0) {
+            min_side = min_side.min(cur[2]).min(cur[3]);
+        }
+        assert!(min_side >= 36.0, "dipped to {min_side:.1}");
+        assert_eq!(super::centre_to_frame(cur).map(|v| v.round()), [500.0, 300.0, 36.0, 36.0]);
+    }
 }
 
 /// Spring-driven morph of the dock window frame. The NSGlassEffectView autoresizes with the window,
@@ -1135,7 +1164,7 @@ mod spring_tests {
 /// A new target mid-flight keeps the current position and velocity, so quick toggles stay fluid.
 #[cfg(target_os = "macos")]
 mod morph {
-    use super::{liquid_glass, spring_step};
+    use super::{centre_to_frame, frame_to_centre, liquid_glass, spring_step};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     use tauri::{Runtime, WebviewWindow};
@@ -1159,12 +1188,12 @@ mod morph {
     pub fn animate_to<R: Runtime>(win: &WebviewWindow<R>, target: [f64; 4]) -> tauri::Result<()> {
         let gen = {
             let mut s = STATE.lock().unwrap();
-            s.target = target;
+            s.target = frame_to_centre(target);
             if s.running {
                 return Ok(());
             }
             let (sc, p, z) = (win.scale_factor()?, win.outer_position()?, win.outer_size()?);
-            s.cur = [p.x as f64 / sc, p.y as f64 / sc, z.width as f64 / sc, z.height as f64 / sc];
+            s.cur = frame_to_centre([p.x as f64 / sc, p.y as f64 / sc, z.width as f64 / sc, z.height as f64 / sc]);
             s.vel = [0.0; 4];
             s.running = true;
             s.gen += 1;
@@ -1195,7 +1224,7 @@ mod morph {
                         s.vel = [0.0; 4];
                         s.running = false;
                     }
-                    (s.cur, !moving)
+                    (centre_to_frame(s.cur), !moving)
                 };
                 frame_no += 1;
                 apply(&win, frame, done || frame_no % 4 == 0);

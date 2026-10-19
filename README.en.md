@@ -9,7 +9,7 @@
 Treat ChatGPT dot, Grok Bot, Copilot, Devin and Muse as contacts:<br/>
 one click to call, one click to mute, one click to hang up or hand the call to the next agent. Not a chat window. Not a model router.
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-43%20unit%20%C2%B7%2031%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-46%20unit%20%C2%B7%2031%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) · [Features](#features) · [Install](#install) · [Shortcuts](#shortcuts) · [Architecture](#architecture) · [Connecting seats](#connecting-seats) · [Memory](#long-term-memory-everos) · [Privacy](#privacy--limits) · [Roadmap](#roadmap)
 
@@ -313,7 +313,7 @@ Empty lists use the generic selectors. Desktop-app seats (Grok Bot) have no comp
 ## Testing
 
 ```bash
-cd src-tauri && cargo test                             # 43 unit tests: state machine / seats / settings compat / placement / hotkeys / drivers / EverOS
+cd src-tauri && cargo test                             # 46 unit tests: state machine / agents / settings compat / placement / morph spring / hotkeys / drivers / EverOS
 npm run build                                          # type-check + bundle
 npx vite --port 1420 & python3 tests/e2e_mock.py       # 31 browser E2E checks: state→DOM, orientation, drag, grip, auto-collapse, collapse modes, settings (incl. memory toggle)
 bash tests/e2e_xvfb.sh                                 # Linux real-binary smoke (Xvfb)

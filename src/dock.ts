@@ -201,7 +201,7 @@ async function render() {
     frag.append(statusEl);
     frag.append(el("div", "divider"));
     for (const s of seats.filter((s) => s.enabled || s.status === "pending")) frag.append(await seatButton(s, false, false));
-    frag.append(button("ghost add", SVG.plus, "添加席位", () => api.invoke("open_settings")));
+    frag.append(button("ghost add", SVG.plus, "添加 Agent", () => api.invoke("open_settings")));
     frag.append(grip());
     renderStatusTextInto(statusEl);
   } else if (p.phase === "calling" || p.phase === "in_call") {
