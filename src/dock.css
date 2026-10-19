@@ -1,14 +1,16 @@
 /* AgentDock — Dock pill. Reference: docs/ref/apple-ref-dock.png (see docs/ref/SPEC.md).
-   Light, near-white Liquid Glass with a hairline rim; round white glass buttons; slate-blue
-   monochrome symbols. The window IS the pill; on macOS the OS material sits behind. */
+   One Liquid Glass capsule; controls are glyphs and round agent avatars sitting directly on the glass,
+   and a single liquid lens follows the pointer between them (macOS 26 toolbar idiom). The window IS
+   the pill; on macOS the OS material sits behind and the window frame itself springs between shapes. */
 :root {
   --spring: cubic-bezier(.32, .72, 0, 1);
+  --spring-css: cubic-bezier(.34, 1.4, .64, 1);
   --dur: 460ms;
   --scale: 1;
   --h: calc(56px * var(--scale));
   --btn: calc(44px * var(--scale));
-  --gap: calc(12px * var(--scale));
-  --pad: calc(10px * var(--scale));
+  --gap: calc(4px * var(--scale));
+  --pad: calc(6px * var(--scale));
   --radius: calc(28px * var(--scale));
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 
@@ -23,12 +25,22 @@
   --lens-hover: linear-gradient(180deg, rgba(255, 255, 255, .88), rgba(255, 255, 255, .56));
   --lens-rim: rgba(255, 255, 255, .85);
   --lens-shadow: inset 0 1px .5px rgba(255, 255, 255, .95), inset 0 -1px .5px rgba(255, 255, 255, .35), inset 0 0 0 .75px rgba(255, 255, 255, .58), 0 4px 10px rgba(25, 45, 95, .12);
-  --sym: #5c6b99;            /* slate-blue SF-symbol tint */
-  --sym-faint: rgba(92, 107, 153, .55);
-  --divider: rgba(80, 100, 160, .28);
+  /* the liquid lens */
+  --drop-fill: rgba(255, 255, 255, .34);
+  --drop-sheen: rgba(255, 255, 255, .78);
+  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .95), inset 0 -.5px 1px rgba(255, 255, 255, .4), inset 0 0 0 .5px rgba(255, 255, 255, .7);
+  --drop-shadow: 0 6px 16px rgba(28, 40, 90, .16), 0 1px 3px rgba(28, 40, 90, .10);
+  --avatar-ring: 0 0 0 .5px rgba(0, 0, 0, .10), 0 1px 3px rgba(20, 30, 70, .18);
+  --sym: #4f5d8a;            /* slate-blue SF-symbol tint */
+  --sym-faint: rgba(79, 93, 138, .55);
+  --divider: rgba(80, 100, 160, .26);
   --fg: #1d1d1f; --fg-2: #6e6e73;
-  --red: #ff453a; --amber: #ff9f0a; --green: #34c759;
+  --red: #ff453a; --amber: #ff9f0a; --green: #30d158;
   --mark-bg: #0d0d0d; --mark-fg: #fff;
+}
+@supports (transition-timing-function: linear(0, 1)) {
+  /* critically-tuned spring (ζ≈0.7, ~4% overshoot) sampled into linear() */
+  :root { --spring-css: linear(0, 0.0269, 0.0956, 0.1903, 0.2987, 0.4113, 0.521, 0.6232, 0.7148, 0.7942, 0.861, 0.9154, 0.9582, 0.9907, 1.0142, 1.0302, 1.0399, 1.0448, 1.046, 1.0445, 1.0411, 1.0367, 1.0316, 1.0265, 1.0214, 1.0168, 1.0126, 1.0091, 1.0061, 1.0036, 1.0017, 1.0003, 0.9992, 0.9985, 0.9981, 0.9979, 1); }
 }
 /* dark: the same glass over a dark desktop — tinted, still light-feeling */
 @media (prefers-color-scheme: dark) {
@@ -40,7 +52,11 @@
     --lens-hover: linear-gradient(180deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, .18));
     --lens-rim: rgba(255, 255, 255, .48);
     --lens-shadow: inset 0 1px .5px rgba(255, 255, 255, .55), inset 0 -1px .5px rgba(255, 255, 255, .16), inset 0 0 0 .75px rgba(255, 255, 255, .28), 0 4px 12px rgba(0, 0, 0, .28);
-    --sym: rgba(255, 255, 255, .92); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .28);
+    --drop-fill: rgba(255, 255, 255, .13); --drop-sheen: rgba(255, 255, 255, .34);
+    --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .6), inset 0 -.5px 1px rgba(255, 255, 255, .14), inset 0 0 0 .5px rgba(255, 255, 255, .24);
+    --drop-shadow: 0 6px 18px rgba(0, 0, 0, .38), 0 1px 3px rgba(0, 0, 0, .25);
+    --avatar-ring: 0 0 0 .5px rgba(255, 255, 255, .16), 0 1px 4px rgba(0, 0, 0, .45);
+    --sym: rgba(255, 255, 255, .92); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .24);
     --fg: rgba(255, 255, 255, .95); --fg-2: rgba(255, 255, 255, .62);
   }
 }
@@ -52,8 +68,51 @@
   --lens-hover: linear-gradient(180deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, .18));
   --lens-rim: rgba(255, 255, 255, .48);
   --lens-shadow: inset 0 1px .5px rgba(255, 255, 255, .55), inset 0 -1px .5px rgba(255, 255, 255, .16), inset 0 0 0 .75px rgba(255, 255, 255, .28), 0 4px 12px rgba(0, 0, 0, .28);
-  --sym: rgba(255, 255, 255, .92); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .28);
+  --drop-fill: rgba(255, 255, 255, .13); --drop-sheen: rgba(255, 255, 255, .34);
+  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .6), inset 0 -.5px 1px rgba(255, 255, 255, .14), inset 0 0 0 .5px rgba(255, 255, 255, .24);
+  --drop-shadow: 0 6px 18px rgba(0, 0, 0, .38), 0 1px 3px rgba(0, 0, 0, .25);
+  --avatar-ring: 0 0 0 .5px rgba(255, 255, 255, .16), 0 1px 4px rgba(0, 0, 0, .45);
+  --sym: rgba(255, 255, 255, .92); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .24);
   --fg: rgba(255, 255, 255, .95); --fg-2: rgba(255, 255, 255, .62);
+}
+
+/* The glass decides. Native glass adapts its content appearance to whatever is behind it (dock.ts
+   mirrors that into data-glass), so glyphs flip between dark and light exactly like native controls
+   — the system theme alone can't know the Dock is sitting over a dark window. */
+:root[data-glass="light"] {
+  --sym: #3a4670; --sym-faint: rgba(58, 70, 112, .55); --divider: rgba(58, 72, 128, .22);
+  --fg: #1d1d1f; --fg-2: #5e5e66;
+  --drop-fill: rgba(255, 255, 255, .34); --drop-sheen: rgba(255, 255, 255, .78);
+  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .95), inset 0 -.5px 1px rgba(255, 255, 255, .4), inset 0 0 0 .5px rgba(255, 255, 255, .7);
+  --drop-shadow: 0 6px 16px rgba(28, 40, 90, .16), 0 1px 3px rgba(28, 40, 90, .10);
+  --avatar-ring: 0 0 0 .5px rgba(0, 0, 0, .10), 0 1px 3px rgba(20, 30, 70, .18);
+}
+:root[data-glass="dark"] {
+  --sym: rgba(255, 255, 255, .94); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .22);
+  --fg: rgba(255, 255, 255, .95); --fg-2: rgba(255, 255, 255, .62);
+  --drop-fill: rgba(255, 255, 255, .13); --drop-sheen: rgba(255, 255, 255, .34);
+  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .6), inset 0 -.5px 1px rgba(255, 255, 255, .14), inset 0 0 0 .5px rgba(255, 255, 255, .24);
+  --drop-shadow: 0 6px 18px rgba(0, 0, 0, .38), 0 1px 3px rgba(0, 0, 0, .25);
+  --avatar-ring: 0 0 0 .5px rgba(255, 255, 255, .16), 0 1px 4px rgba(0, 0, 0, .45);
+}
+/* Theme colour (设置 › 外观 › 主题色): the native glass is tinted by Rust; here the glyphs and the lens
+   take the same hue — deep on light glass, a pale wash on dark glass. */
+:root[data-accent="on"] {
+  --sym: color-mix(in srgb, var(--tint) 72%, #11131d);
+  --drop-fill: color-mix(in srgb, var(--tint) 16%, rgba(255, 255, 255, .36));
+  --drop-sheen: color-mix(in srgb, var(--tint) 10%, rgba(255, 255, 255, .8));
+}
+:root[data-accent="on"][data-glass="dark"], :root[data-accent="on"][data-theme="dark"]:not([data-glass="light"]) {
+  --sym: color-mix(in srgb, var(--tint) 24%, #ffffff);
+  --drop-fill: color-mix(in srgb, var(--tint) 34%, rgba(255, 255, 255, .08));
+  --drop-sheen: color-mix(in srgb, var(--tint) 22%, rgba(255, 255, 255, .4));
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="on"]:not([data-theme="light"]):not([data-glass="light"]) {
+    --sym: color-mix(in srgb, var(--tint) 24%, #ffffff);
+    --drop-fill: color-mix(in srgb, var(--tint) 34%, rgba(255, 255, 255, .08));
+    --drop-sheen: color-mix(in srgb, var(--tint) 22%, rgba(255, 255, 255, .4));
+  }
 }
 
 * { box-sizing: border-box; }
@@ -66,156 +125,127 @@ body { display: grid; place-items: start center; }
   backdrop-filter: blur(var(--pill-blur)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--pill-blur)) saturate(140%);
   box-shadow: inset 0 0 0 1px var(--rim), inset 0 1px 0 var(--rim), inset 0 -1px 0 var(--rim-soft), var(--shadow);
-  transition: width var(--dur) var(--spring), height var(--dur) var(--spring), border-radius var(--dur) var(--spring);
-  overflow: hidden; will-change: width, height; isolation: isolate;
+  transition: width var(--dur) var(--spring-css), height var(--dur) var(--spring-css), border-radius var(--dur) var(--spring-css);
+  overflow: hidden; isolation: isolate;
 }
-/* Native glass hosts: NSGlassEffectView supplies the optical displacement lensing and backdrop blur;
-   layer a subtle, material-scaled specular rim & top sheen congruent with the window edge. */
-html[data-vibrancy="1"] #dock {
-  backdrop-filter: none; -webkit-backdrop-filter: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, calc(.08 + var(--material, .5) * .24)), rgba(255, 255, 255, calc(.01 + var(--material, .5) * .08)) 62%);
-  box-shadow: inset 0 1px .5px var(--rim), inset 0 -1px .5px var(--rim-soft), inset 0 0 0 .75px var(--rim-soft);
-  transition: border-radius var(--dur) var(--spring);
-}
-#dock::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(90% 58% at 50% -22%, rgba(255, 255, 255, calc(.22 + var(--material, .5) * .36)), transparent 70%); }
+/* Native glass hosts: NSGlassEffectView draws the material, the refraction band AND the specular rim.
+   Painting a CSS rim on top put a second hairline ~1px inside the native one (the "overlapping edge"),
+   so the web layer stays fully transparent here and only adds a faint inner sheen to the pill. */
+html[data-vibrancy="1"] #dock { backdrop-filter: none; -webkit-backdrop-filter: none; background: none; box-shadow: none; transition: none; }
+/* macOS: Rust springs the NSWindow frame between shapes, so the pill simply fills the window. */
+html[data-morph="1"] #dock, html[data-morph="1"] #dock[data-form] { width: 100vw; height: 100vh; border-radius: min(50vw, 50vh); }
+#dock::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(90% 58% at 50% -22%, rgba(255, 255, 255, calc(.18 + var(--material, .5) * .3)), transparent 70%); }
+/* the native glass already has its own sheen; a CSS one read as a stray reflective band */
+html[data-vibrancy="1"] #dock::before { display: none; }
 .bar, .dot { position: absolute; inset: 0; z-index: 1; }
 
-/* collapsed dot & pet */
-#dock[data-form="dot"] {
-  width: calc(36px * var(--scale)); height: calc(36px * var(--scale)); border-radius: calc(18px * var(--scale));
-  background: radial-gradient(120% 120% at 30% 20%, rgba(255, 255, 255, .82), rgba(240, 245, 255, .42) 60%, rgba(210, 225, 255, .28));
-  box-shadow: inset 0 1.5px 1px rgba(255, 255, 255, .96), inset 0 -1px 1px rgba(120, 150, 220, .25), inset 0 0 0 .75px rgba(255, 255, 255, .72);
-}
-:root[data-theme="dark"] #dock[data-form="dot"] {
-  background: radial-gradient(120% 120% at 30% 20%, rgba(255, 255, 255, .28), rgba(140, 160, 220, .12) 60%, rgba(40, 50, 80, .24));
-  box-shadow: inset 0 1px .5px rgba(255, 255, 255, .65), inset 0 -1px 1px rgba(100, 140, 255, .22), inset 0 0 0 .75px rgba(255, 255, 255, .32);
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) #dock[data-form="dot"] {
-    background: radial-gradient(120% 120% at 30% 20%, rgba(255, 255, 255, .28), rgba(140, 160, 220, .12) 60%, rgba(40, 50, 80, .24));
-    box-shadow: inset 0 1px .5px rgba(255, 255, 255, .65), inset 0 -1px 1px rgba(100, 140, 255, .22), inset 0 0 0 .75px rgba(255, 255, 255, .32);
-  }
-}
-.dot { display: grid; place-items: center; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 200ms ease, transform 240ms var(--spring); }
-#dock[data-form="dot"] .dot, #dock[data-form="pet"] .dot { opacity: 1; pointer-events: auto; }
-#dock[data-form="dot"]:hover .dot { transform: scale(1.06); }
-.dot::after {
-  content: "";
-  width: calc(22px * var(--scale)); height: calc(22px * var(--scale)); border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, .92) 0%, rgba(255, 255, 255, 0) 42%),
-    conic-gradient(from 140deg at 50% 50%, #38bdf8, #6366f1, #a855f7, #ec4899, #38bdf8);
-  box-shadow:
-    inset 0 1px 1.5px rgba(255, 255, 255, .88),
-    inset 0 -1.5px 2px rgba(20, 30, 80, .35),
-    0 2px 8px rgba(99, 102, 241, .38);
-  animation: orb-breathe 4.2s ease-in-out infinite;
-}
-.dot-waves {
-  position: absolute; z-index: 2;
-  width: calc(13px * var(--scale)); height: calc(13px * var(--scale));
-  color: #fff; filter: drop-shadow(0 1px 1px rgba(20, 25, 60, .28));
-  pointer-events: none;
-}
-#dock[data-form="dot"][data-phase="in_call"] .dot::after, #dock[data-form="dot"][data-phase="calling"] .dot::after {
-  background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, .92) 0%, rgba(255, 255, 255, 0) 42%),
-    linear-gradient(135deg, #34d399, #10b981, #059669);
-  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, .88), 0 0 10px rgba(16, 185, 129, .55);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-#dock[data-form="dot"][data-muted="true"] .dot::after {
-  background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, .92) 0%, rgba(255, 255, 255, 0) 42%),
-    linear-gradient(135deg, #fbbf24, #f59e0b, #ea580c);
-  box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, .88), 0 2px 8px rgba(245, 158, 11, .45);
-}
-@keyframes orb-breathe { 0%, 100% { transform: scale(.96); filter: saturate(100%); } 50% { transform: scale(1.05); filter: saturate(120%) brightness(1.05); } }
-@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--seat-tint, var(--green)) 45%, transparent); } 70% { box-shadow: 0 0 0 9px transparent; } }
-@media (prefers-reduced-motion: reduce) { .dot::after { animation: none !important; } }
+/* ───── collapsed: a waveform glyph on the glass droplet ───── */
+#dock[data-form="dot"] { width: calc(36px * var(--scale)); height: calc(36px * var(--scale)); border-radius: calc(18px * var(--scale)); }
+.dot { display: grid; place-items: center; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 140ms ease; }
+#dock[data-form="dot"] .dot, #dock[data-form="pet"] .dot { opacity: 1; pointer-events: auto; transition: opacity 260ms ease 140ms; }
+.dot-glyph { width: calc(19px * var(--scale)); height: calc(19px * var(--scale)); display: block; color: var(--sym); fill: currentColor; transition: transform 520ms var(--spring-css), color 260ms ease; }
+.dot-glyph .b { transform-box: fill-box; transform-origin: center; animation: dot-wave 2.8s ease-in-out infinite; }
+.dot-glyph .b0 { animation-delay: -1.4s; } .dot-glyph .b1 { animation-delay: -1.05s; } .dot-glyph .b2 { animation-delay: -.7s; } .dot-glyph .b3 { animation-delay: -.35s; } .dot-glyph .b4 { animation-delay: 0s; }
+@keyframes dot-wave { 0%, 100% { transform: scaleY(.62); } 50% { transform: scaleY(1); } }
+@keyframes dot-talk { 0%, 100% { transform: scaleY(.34); } 50% { transform: scaleY(1); } }
+#dock[data-phase="calling"] .dot-glyph, #dock[data-phase="in_call"] .dot-glyph { color: var(--green); }
+#dock[data-phase="calling"] .dot-glyph .b, #dock[data-phase="in_call"] .dot-glyph .b { animation-name: dot-talk; animation-duration: 1s; }
+#dock[data-phase="needs_human"] .dot-glyph { color: var(--amber); }
+.dot-glyph.dot-mic { fill: none; color: var(--amber); }
+#dock.hot .dot-glyph { transform: scale(1.14); }
+#dock.pressing .dot-glyph { transform: scale(.84); transition-duration: 140ms; }
+@media (prefers-reduced-motion: reduce) { .dot-glyph .b { animation: none !important; } }
 html[data-reduce-motion="1"] * { animation: none !important; transition-duration: 120ms !important; }
+
 #dock[data-form="pet"] { width: calc(92px * var(--scale)); height: calc(40px * var(--scale)); border-radius: calc(20px * var(--scale)); }
 #dock[data-form="pet"] .dot { display: flex; align-items: center; gap: calc(8px * var(--scale)); padding: 0 calc(8px * var(--scale)) 0 calc(6px * var(--scale)); }
-#dock[data-form="pet"] .dot::after { display: none; }
-.pet-avatar { width: calc(28px * var(--scale)); height: calc(28px * var(--scale)); border-radius: 50%; overflow: hidden; flex: none; display: grid; place-items: center; background: var(--lens); }
-.pet-avatar svg, .pet-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.pet-avatar { width: calc(28px * var(--scale)); height: calc(28px * var(--scale)); border-radius: 50%; overflow: hidden; flex: none; display: grid; place-items: center; box-shadow: var(--avatar-ring); }
+.pet-avatar svg, .pet-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; transform: scale(1.12); }
 .pet-lines { display: grid; gap: calc(4px * var(--scale)); flex: 1; }
 .pet-lines i { display: block; height: calc(3px * var(--scale)); border-radius: 2px; background: var(--sym-faint); }
 .pet-lines i:last-child { width: 60%; opacity: .6; }
 
-/* expanded bar */
-.bar { display: flex; align-items: center; gap: var(--gap); padding: 0 var(--pad); opacity: 0; pointer-events: none; transition: opacity 220ms ease 80ms; white-space: nowrap; }
-#dock[data-form="bar"] .bar { opacity: 1; pointer-events: auto; }
+/* ───── expanded bar ───── */
+.bar { display: flex; align-items: center; justify-content: center; gap: var(--gap); padding: 0 var(--pad); opacity: 0; pointer-events: none; transition: opacity 110ms ease; white-space: nowrap; cursor: grab; }
+#dock[data-form="bar"] .bar { opacity: 1; pointer-events: auto; transition: opacity 180ms ease; }
 #dock[data-form="bar"] .dot { opacity: 0; pointer-events: none; }
+/* items bloom out from the centre as the droplet stretches into the pill */
+.bar > .enter { animation: item-in 580ms var(--spring-css) both; animation-delay: calc(var(--d, 0) * 26ms + 40ms); }
+@keyframes item-in { from { opacity: 0; transform: scale(.5); filter: blur(5px); } 55% { opacity: 1; filter: blur(0); } to { opacity: 1; transform: none; filter: none; } }
 
+/* ───── the liquid lens: one glass droplet shared by every control (positioned by dock.ts) ───── */
+.lens {
+  position: absolute; left: 0; top: 0; z-index: 0; width: 0; height: 0; opacity: 0; pointer-events: none;
+  border-radius: 999px; transform-origin: center; will-change: transform, width, height, opacity;
+  background: radial-gradient(130% 95% at var(--hx, 50%) -10%, var(--drop-sheen), rgba(255, 255, 255, 0) 60%), var(--drop-fill);
+  box-shadow: var(--drop-edge), var(--drop-shadow);
+}
+/* light pools where the pointer presses, like Liquid Glass illuminating from the touch point */
+.lens::after { content: ""; position: absolute; inset: 0; border-radius: inherit; opacity: var(--glow, 0); background: radial-gradient(65% 75% at var(--hx, 50%) var(--hy, 50%), rgba(255, 255, 255, .85), rgba(255, 255, 255, 0) 70%); }
+
+/* ───── controls: glyphs on glass ───── */
 .btn {
-  width: var(--btn); height: var(--btn); border-radius: 50%; border: 0; padding: 0; margin: 0; flex: none;
-  display: grid; place-items: center; cursor: pointer; color: var(--sym);
-  background: var(--lens);
-  backdrop-filter: blur(8px) saturate(140%);
-  -webkit-backdrop-filter: blur(8px) saturate(140%);
-  box-shadow: var(--lens-shadow);
-  transition: transform 260ms var(--spring), background 160ms ease, opacity 220ms ease, width 300ms var(--spring), height 300ms var(--spring);
+  position: relative; width: var(--btn); height: var(--btn); border-radius: 50%; border: 0; padding: 0; margin: 0; flex: none;
+  display: grid; place-items: center; cursor: default; color: var(--sym); background: transparent; outline: none;
+  transition: opacity 220ms ease, background 220ms ease, box-shadow 220ms ease;
   -webkit-tap-highlight-color: transparent;
 }
-.btn:hover { background: var(--lens-hover); transform: translateY(-1px) scale(1.04); }
-.btn:active { transform: scale(.94); }
-.btn:focus-visible { outline: 2px solid var(--sym); outline-offset: 2px; }
-.btn svg { width: calc(20px * var(--scale)); height: calc(20px * var(--scale)); display: block; }
-.btn.ghost { background: var(--lens); }           /* power/collapse: same white circle as the ref */
-.btn.red { background: var(--red); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), 0 4px 12px rgba(255,69,58,.30); }
-.btn.red:hover { background: #ff5a50; }
-.btn.amber { background: var(--amber); color: #fff; box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), 0 4px 12px rgba(255,159,10,.28); }
-.btn.add { background: var(--lens); box-shadow: var(--lens-shadow); color: var(--sym); }
-.btn.add:hover { background: var(--lens-hover); color: var(--sym); }
-.btn.add svg { width: calc(18px * var(--scale)); height: calc(18px * var(--scale)); }
+.btn:focus-visible { outline: 2px solid var(--sym); outline-offset: -2px; }
+.btn > svg { width: calc(20px * var(--scale)); height: calc(20px * var(--scale)); display: block; transition: transform 520ms var(--spring-css), color 260ms ease; }
+.btn.is-hot > svg { transform: scale(1.1); }
+.btn.is-pressed > svg { transform: scale(.84); transition-duration: 130ms; }
+.btn.add > svg { width: calc(18px * var(--scale)); height: calc(18px * var(--scale)); }
+/* toggles that are "on" fill like Control Center modules */
+.btn.red, .btn.amber { width: calc(40px * var(--scale)); height: calc(40px * var(--scale)); margin: 0 calc(2px * var(--scale)); color: #fff; }
+.btn.red { background: radial-gradient(120% 90% at 50% 0%, #ff7a70, var(--red) 60%); box-shadow: inset 0 1px .5px rgba(255, 255, 255, .5), 0 4px 12px rgba(255, 69, 58, .34); }
+.btn.red > svg { width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); filter: drop-shadow(0 .5px .5px rgba(120, 0, 0, .25)); }
+.btn.amber { background: radial-gradient(120% 90% at 50% 0%, #ffc04d, var(--amber) 60%); box-shadow: inset 0 1px .5px rgba(255, 255, 255, .5), 0 4px 12px rgba(255, 159, 10, .3); }
 
-.seat { position: relative; }
-.seat .mark { width: calc(28px * var(--scale)); height: calc(28px * var(--scale)); display: grid; place-items: center; border-radius: calc(7px * var(--scale)); overflow: hidden; box-shadow: 0 1px 3px rgba(0, 0, 0, .14); }
-.seat .mark svg, .seat .mark img { width: 100%; height: 100%; display: block; object-fit: cover; }
-.seat.sm { width: calc(36px * var(--scale)); height: calc(36px * var(--scale)); opacity: .78; }
-.seat.sm .mark { width: calc(22px * var(--scale)); height: calc(22px * var(--scale)); border-radius: calc(5.5px * var(--scale)); }
-.seat.sm:hover { opacity: 1; }
-.seat.disabled { opacity: .68; }
-.seat.disabled .mark { opacity: .5; filter: saturate(.2); }
-.seat.disabled:hover { transform: none; }
-.seat .badge { position: absolute; right: 0; bottom: 0; width: calc(10px * var(--scale)); height: calc(10px * var(--scale)); border-radius: 50%; border: calc(2px * var(--scale)) solid #fff; background: var(--amber); display: none; }
+/* agent seats: the official app icon as a round avatar (cropped past the squircle edge) */
+.seat .mark { position: relative; width: calc(30px * var(--scale)); height: calc(30px * var(--scale)); border-radius: 50%; overflow: hidden; box-shadow: var(--avatar-ring); transition: transform 520ms var(--spring-css), filter 220ms ease, opacity 220ms ease; }
+.seat .mark svg, .seat .mark img { width: 100%; height: 100%; display: block; object-fit: cover; transform: scale(1.12); }
+.seat .mark::after { content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none; box-shadow: inset 0 1px .5px rgba(255, 255, 255, .55), inset 0 0 0 .5px rgba(255, 255, 255, .22); }
+.seat.is-hot .mark { transform: scale(1.08); }
+.seat.is-pressed .mark { transform: scale(.86); transition-duration: 130ms; }
+.seat.sm { width: calc(38px * var(--scale)); height: calc(38px * var(--scale)); }
+.seat.sm .mark { width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); }
+.seat.disabled .mark { filter: grayscale(1); opacity: .42; }
+.seat .badge { position: absolute; right: calc(6px * var(--scale)); bottom: calc(6px * var(--scale)); z-index: 2; width: calc(10px * var(--scale)); height: calc(10px * var(--scale)); border-radius: 50%; border: calc(1.5px * var(--scale)) solid rgba(255, 255, 255, .95); background: var(--amber); display: none; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
 .seat[data-status="needs_auth"] .badge, .seat[data-status="unavailable"] .badge { display: block; }
 .seat[data-status="unavailable"] .badge { background: var(--red); }
-.seat.active { box-shadow: inset 0 0 0 1px var(--lens-rim), 0 0 0 2px var(--sym); }
+.seat.active .mark { box-shadow: 0 0 0 2px var(--sym), var(--avatar-ring); }
 
-.status { min-width: 0; display: grid; align-content: center; gap: calc(2px * var(--scale)); padding: 0 calc(4px * var(--scale)); }
+.status { min-width: 0; display: grid; align-content: center; gap: calc(2px * var(--scale)); padding: 0 calc(6px * var(--scale)); }
 .status .name { font-size: calc(13px * var(--scale)); font-weight: 600; letter-spacing: -.01em; line-height: 1.1; color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
 .status .sub { font-size: calc(11px * var(--scale)); line-height: 1.1; color: var(--fg-2); font-variant-numeric: tabular-nums; }
 .status.idle { display: none; }                  /* the reference shows no text while idle */
 
-.divider { width: 1px; height: calc(22px * var(--scale)); background: rgba(255, 255, 255, .55); box-shadow: 1px 0 0 var(--divider); flex: none; margin: 0 calc(2px * var(--scale)); }
+.divider { width: 1px; height: calc(24px * var(--scale)); flex: none; margin: 0 calc(4px * var(--scale)); background: linear-gradient(180deg, transparent, var(--divider) 25%, var(--divider) 75%, transparent); }
 .wave { width: calc(84px * var(--scale)); height: calc(34px * var(--scale)); display: block; flex: none; color: var(--sym); }
-.undo { height: calc(30px * var(--scale)); padding: 0 calc(12px * var(--scale)); border-radius: calc(15px * var(--scale)); border: 0; cursor: pointer; background: var(--lens); color: var(--fg); font: 600 calc(12px * var(--scale))/1 var(--font); font-variant-numeric: tabular-nums; box-shadow: inset 0 0 0 1px var(--lens-rim), var(--lens-shadow); }
-.undo:hover { background: var(--lens-hover); }
-.avatar { width: var(--btn); height: var(--btn); border-radius: 50%; overflow: hidden; display: grid; place-items: center; flex: none; background: var(--lens); box-shadow: inset 0 0 0 1px var(--lens-rim); }
-.avatar svg, .avatar img { width: calc(26px * var(--scale)); height: calc(26px * var(--scale)); display: block; object-fit: cover; }
-.avatar.lg img { width: 100%; height: 100%; }
+.undo { position: relative; height: calc(30px * var(--scale)); padding: 0 calc(12px * var(--scale)); border-radius: calc(15px * var(--scale)); border: 0; cursor: default; background: transparent; color: var(--fg); font: 600 calc(12px * var(--scale))/1 var(--font); font-variant-numeric: tabular-nums; box-shadow: inset 0 0 0 .75px var(--divider); }
+.avatar { position: relative; width: calc(38px * var(--scale)); height: calc(38px * var(--scale)); margin: 0 calc(3px * var(--scale)); border-radius: 50%; overflow: hidden; display: grid; place-items: center; flex: none; box-shadow: var(--avatar-ring); transition: transform 520ms var(--spring-css); }
+.avatar svg, .avatar img { width: 100%; height: 100%; display: block; object-fit: cover; transform: scale(1.12); }
+.avatar.is-hot { transform: scale(1.05); }
 .drag { position: absolute; left: 0; right: 0; top: 0; height: 6px; cursor: grab; }
 
 /* ───── vertical orientation (设置 › 外观 › 方向): the same pill stood on end, like a side dock ───── */
-.bar { cursor: grab; }
 #dock.dragging, #dock.dragging * { cursor: grabbing !important; }
 #dock.resizing, #dock.resizing * { cursor: nwse-resize !important; transition: none !important; }
 #dock[data-resize-edge="ew"] .bar, #dock[data-resize-edge="ew"] .dot { cursor: ew-resize; }
 #dock[data-resize-edge="ns"] .bar, #dock[data-resize-edge="ns"] .dot { cursor: ns-resize; }
-#dock.dragging .btn:hover, #dock.resizing .btn:hover { transform: none; }
 #dock[data-orient="vertical"] .bar { flex-direction: column; padding: var(--pad) 0; }
-#dock[data-orient="vertical"] .divider { width: calc(22px * var(--scale)); height: 1px; margin: calc(2px * var(--scale)) 0; }
+#dock[data-orient="vertical"] .divider { width: calc(24px * var(--scale)); height: 1px; margin: calc(4px * var(--scale)) 0; background: linear-gradient(90deg, transparent, var(--divider) 25%, var(--divider) 75%, transparent); }
+#dock[data-orient="vertical"] .btn.red, #dock[data-orient="vertical"] .btn.amber { margin: calc(2px * var(--scale)) 0; }
+#dock[data-orient="vertical"] .avatar { margin: calc(3px * var(--scale)) 0; }
 #dock[data-orient="vertical"] .wave { width: calc(34px * var(--scale)); height: calc(84px * var(--scale)); }
-#dock[data-orient="vertical"] .status { writing-mode: vertical-rl; text-orientation: mixed; padding: calc(4px * var(--scale)) 0; justify-items: center; max-height: calc(128px * var(--scale)); }
+#dock[data-orient="vertical"] .status { writing-mode: vertical-rl; text-orientation: mixed; padding: calc(6px * var(--scale)) 0; justify-items: center; max-height: calc(128px * var(--scale)); }
 #dock[data-orient="vertical"] .status .name, #dock[data-orient="vertical"] .status .sub { max-height: calc(128px * var(--scale)); }
 #dock[data-orient="vertical"] .undo { writing-mode: vertical-rl; height: auto; width: calc(30px * var(--scale)); padding: calc(12px * var(--scale)) 0; }
-#dock[data-orient="vertical"] .btn:hover { transform: translateX(-1px) scale(1.04); }
 
-/* ───── grip: iOS-grabber-style handle at the pill's end (tap = 横/竖, hold = move) ───── */
-.grip { flex: none; width: calc(28px * var(--scale)); height: calc(28px * var(--scale)); margin-left: calc(-4px * var(--scale)); display: grid; place-items: center; border-radius: 50%; cursor: grab; color: var(--sym); background: var(--lens); box-shadow: var(--lens-shadow); opacity: .88; transition: opacity 160ms ease, background 160ms ease, transform 260ms var(--spring); }
-.grip svg { width: calc(15px * var(--scale)); height: calc(15px * var(--scale)); display: block; }
-.grip:hover { opacity: 1; background: var(--lens-hover); transform: scale(1.08); }
-#dock.dragging .grip { opacity: 1; transform: none; }
-#dock[data-orient="vertical"] .grip { margin: calc(-4px * var(--scale)) 0 0 0; }
+/* ───── grip: the handle at the pill's end (tap = 横/竖, hold = move) ───── */
+.grip { position: relative; flex: none; width: calc(30px * var(--scale)); height: calc(30px * var(--scale)); display: grid; place-items: center; border-radius: 50%; cursor: grab; color: var(--sym); opacity: .6; transition: opacity 220ms ease; }
+.grip svg { width: calc(15px * var(--scale)); height: calc(15px * var(--scale)); display: block; transition: transform 520ms var(--spring-css); }
+.grip.is-hot { opacity: 1; }
+.grip.is-hot svg { transform: scale(1.1); }
+.grip.is-pressed svg { transform: scale(.84); transition-duration: 130ms; }
+#dock.dragging .grip { opacity: 1; }

@@ -1,4 +1,4 @@
-import { api, applyTheme, fmtTime, type AppSettings, type DockState, type HostInfo, type SeatView } from "./api";
+import { api, applyTheme, fmtTime, validAccent, type AppSettings, type DockState, type HostInfo, type SeatView } from "./api";
 import { iconFor, tintFor } from "./brand";
 
 const dock = document.getElementById("dock") as HTMLDivElement;
@@ -15,10 +15,16 @@ const SVG = {
   collapse: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4v6M6.2 6.2a5.4 5.4 0 1 0 7.6 0"/></svg>`,
   mic: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>`,
   micOff: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5M3 3l14 14"/></svg>`,
-  hangup: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3.2 11.6c3.9-3.8 9.7-3.8 13.6 0a1 1 0 0 1 0 1.4l-1.7 1.7a1 1 0 0 1-1.3.1l-2-1.4a1 1 0 0 1-.4-1l.2-1.2a9.6 9.6 0 0 0-3.2 0l.2 1.2a1 1 0 0 1-.4 1l-2 1.4a1 1 0 0 1-1.3-.1l-1.7-1.7a1 1 0 0 1 0-1.4z"/></svg>`,
+  // phone.down.fill proportions: a thick receiver band with rounded, drooping ear/mouth pads
+  hangup: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.4 11.6C7.4 6.2 16.6 6.2 21.6 11.6c.7.7.8 1.8.2 2.6l-1.7 2.1c-.6.7-1.6.9-2.4.4l-2.5-1.5c-.7-.4-1-1.2-.9-1.9l.3-1.5c-1.7-.5-3.5-.5-5.2 0l.3 1.5c.1.7-.2 1.5-.9 1.9l-2.5 1.5c-.8.5-1.8.3-2.4-.4l-1.7-2.1c-.6-.8-.5-1.9.2-2.6z"/></svg>`,
   eye: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.5"/></svg>`,
   plus: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>`,
 };
+
+// Collapsed glyphs: an SF-style waveform (bars breathe; in a call they talk), or mic.slash when muted.
+const DOT_WAVE = `<svg class="dot-glyph" viewBox="0 0 20 20" aria-hidden="true">${[[3, 4.5], [6.5, 8.5], [10, 13], [13.5, 8.5], [17, 4.5]]
+  .map(([x, h], i) => `<rect class="b b${i}" x="${x - 0.95}" y="${10 - h / 2}" width="1.9" height="${h}" rx="0.95"/>`).join("")}</svg>`;
+const DOT_MUTED = `<svg class="dot-glyph dot-mic" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5M3 3l14 14"/></svg>`;
 
 async function seatIcon(s: SeatView): Promise<string> {
   const key = s.icon.kind === "custom" ? `custom:${s.id}:${s.icon.path}` : `builtin:${s.icon.key}`;
@@ -63,6 +69,9 @@ function measureBar(s = currentScale()): number {
 
 let lastSize = { w: 0, h: 0 };
 let pendingShrink: number | undefined;
+let booting = true;
+// macOS: the native window springs between shapes (Rust), and the pill just fills it (CSS 100vw/vh).
+const nativeMorph = () => document.documentElement.dataset.morph === "1";
 async function fit(form: "dot" | "pet" | "bar") {
   const s = currentScale();
   const hBar = Math.round(H * s);
@@ -71,13 +80,15 @@ async function fit(form: "dot" | "pet" | "bar") {
   else if (form === "pet") { w = Math.round(92 * s); h = Math.round(40 * s); }
   else if (vertical()) { w = hBar; h = measureBar(s); }
   else { w = measureBar(s); h = hBar; }
-  dock.style.width = `${w}px`;
-  dock.style.height = `${h}px`;
+  if (nativeMorph()) { dock.style.removeProperty("width"); dock.style.removeProperty("height"); }
+  else { dock.style.width = `${w}px`; dock.style.height = `${h}px`; }
   if (w === lastSize.w && h === lastSize.h) return;   // hover re-layouts must not spam resize_dock
   const grow = w > lastSize.w || h > lastSize.h;
   window.clearTimeout(pendingShrink);
   const minSide = Math.round(36 * 0.7);
-  const resize = () => api.invoke("resize_dock", { width: Math.max(w, minSide), height: Math.max(h, minSide) });
+  // direct manipulation (edge-resize) and the first layout snap; everything else springs
+  const animate = !booting && liveScale === null && !settings?.reduce_motion;
+  const resize = () => api.invoke("resize_dock", { width: Math.max(w, minSide), height: Math.max(h, minSide), animate });
   if (api.isTauri || grow || liveScale !== null) await resize();
   else pendingShrink = window.setTimeout(resize, settings?.reduce_motion ? 140 : 480);
   lastSize = { w, h };
@@ -94,6 +105,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", html = ""):
 function button(cls: string, svg: string, label: string, onClick: () => void): HTMLButtonElement {
   const b = el("button", `btn ${cls}`, svg);
   b.type = "button";
+  b.dataset.k = label;   // stable identity across 1 Hz re-renders, so the lens/hover state carries over
   b.setAttribute("aria-label", label);
   b.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
   return b;
@@ -105,6 +117,7 @@ async function seatButton(s: SeatView, small: boolean, active: boolean): Promise
     api.invoke("call_seat", { seatId: s.id });
   });
   b.dataset.seat = s.id;
+  b.dataset.k = `seat:${s.id}`;
   b.dataset.status = s.status;
   if (settings?.show_names !== "never") b.title = `${s.name} · ${seatHint(s)}`;
   b.style.setProperty("--seat-tint", tintFor(s.id));
@@ -120,7 +133,8 @@ async function seatButton(s: SeatView, small: boolean, active: boolean): Promise
   return b;
 }
 
-let prevForm = ""; let prevIdle = true;
+let prevForm = ""; let prevIdle = true; let prevPhase = "";
+let lastDotGlyph = "";
 let statusEl: HTMLDivElement | null = null;
 function renderStatusText() {
   if (!statusEl || state.phase.phase !== "idle") return;
@@ -151,7 +165,9 @@ async function render() {
   const form: "dot" | "pet" | "bar" = state.expanded ? "bar" : settings?.default_form === "pet" ? "pet" : "dot";
   dock.dataset.form = form;
   if ((form === "bar") !== (prevForm === "bar") || (p.phase === "idle") !== prevIdle) touchIdle();   // became idle+expanded → start the countdown
-  prevForm = form; prevIdle = p.phase === "idle";
+  // controls bloom from the centre when the pill opens or its layout changes phase, not on 1 Hz ticks
+  const entering = form === "bar" && (prevForm !== "bar" || p.phase !== prevPhase);
+  prevForm = form; prevIdle = p.phase === "idle"; prevPhase = p.phase;
 
   // collapsed content
   if (form === "pet") {
@@ -160,19 +176,23 @@ async function render() {
     const av = el("div", "pet-avatar", pet ? await seatIcon(pet) : "");
     const lines = el("div", "pet-lines", "<i></i><i></i>");
     collapsed.append(av, lines);
+    lastDotGlyph = "";
     collapsed.title = p.phase === "in_call" ? `${pet?.name} · ${fmtTime(p.elapsed_secs)}` : "展开 AgentDock";
   } else {
-    collapsed.innerHTML = `<svg class="dot-waves" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.5 6.2v3.6M8 4v8M11.5 6.2v3.6"/></svg>`;
+    // only swap the glyph when it changes, so the breathing bars don't restart every tick
+    const glyph = state.muted ? DOT_MUTED : DOT_WAVE;
+    if (glyph !== lastDotGlyph) { collapsed.innerHTML = glyph; lastDotGlyph = glyph; }
     collapsed.title = p.phase === "in_call" ? `通话中 ${fmtTime(p.elapsed_secs)} · 点击展开` : "展开 AgentDock";
   }
 
-  if (form !== "bar") { await fit(form); return; }
+  if (form !== "bar") { await fit(form); kickLens(); return; }
   collapsed.removeAttribute("title");
 
   // expanded bar
   const frag = document.createDocumentFragment();
   const micBtn = button(state.muted ? "amber" : "", state.muted ? SVG.micOff : SVG.mic, state.muted ? "开麦" : "闭麦", () => api.invoke("toggle_mute"));
   micBtn.id = "mic";
+  micBtn.dataset.k = "mic";
 
   if (p.phase === "idle") {
     frag.append(button("ghost", SVG.collapse, "收起", () => api.invoke("set_expanded", { expanded: false })));
@@ -187,6 +207,7 @@ async function render() {
   } else if (p.phase === "calling" || p.phase === "in_call") {
     const s = seatById(p.seat);
     const av = el("div", "avatar", s ? await seatIcon(s) : "");
+    av.dataset.k = "avatar";
     av.title = "收起";
     av.addEventListener("click", () => api.invoke("set_expanded", { expanded: false }));
     frag.append(av);
@@ -211,6 +232,7 @@ async function render() {
     frag.append(st);
     const undo = el("button", "undo", `撤销 ${p.undo_secs_left}`);
     undo.type = "button";
+    undo.dataset.k = "undo";
     undo.addEventListener("click", () => api.invoke("undo_switch"));
     frag.append(undo);
     frag.append(micBtn);
@@ -228,7 +250,14 @@ async function render() {
   }
 
   bar.replaceChildren(frag);
+  if (entering && !settings?.reduce_motion) {
+    const kids = Array.from(bar.children) as HTMLElement[];
+    const mid = (kids.length - 1) / 2;
+    kids.forEach((k, i) => { k.style.setProperty("--d", String(Math.abs(i - mid))); k.classList.add("enter"); });
+  }
+  carryLensAcrossRender();
   await fit("bar");
+  kickLens();
   if (p.phase === "in_call" || p.phase === "calling") startWave(); else stopWave();
 }
 
@@ -310,6 +339,7 @@ const GRIP_SVG = {
 };
 function grip(): HTMLDivElement {
   const g = el("div", "grip", vertical() ? GRIP_SVG.toHorizontal : GRIP_SVG.toVertical);
+  g.dataset.k = "grip";
   g.title = vertical() ? "点一下：放平为横向 · 按住拖动：移动" : "点一下：立起为竖向 · 按住拖动：移动";
   g.addEventListener("click", () => { if (Date.now() - lastDragEnd > 300) void api.invoke("toggle_orientation"); });
   return g;
@@ -359,8 +389,149 @@ function pointerLeft() {
 dock.addEventListener("pointerenter", pointerEntered);
 dock.addEventListener("pointerleave", pointerLeft);
 // macOS: the webview gets no pointer events while the Dock isn't the key window (it never is, by
-// design), so Rust polls the OS cursor against the window rect and reports enter/leave here.
-void api.on<boolean>("dock:hover", (over) => (over ? pointerEntered() : pointerLeft()));
+// design), so Rust polls the OS cursor against the window rect and reports enter/leave here, and
+// streams the local position while inside (drives the liquid lens below).
+void api.on<boolean>("dock:hover", (over) => {
+  if (over) { pointerEntered(); return; }
+  pointerLeft();
+  ptr = null; kickLens();
+});
+void api.on<[number, number]>("dock:pointer", ([x, y]) => { ptr = { x, y }; kickLens(); });
+dock.addEventListener("pointermove", (e) => { ptr = { x: e.clientX, y: e.clientY }; kickLens(); });
+dock.addEventListener("pointerleave", () => { ptr = null; kickLens(); });
+
+// ───────── liquid lens: one glass droplet that follows the pointer between controls ─────────
+// Each edge of the droplet is its own spring. The edge facing the direction of travel is stiff and
+// the trailing edge soft, so sliding between buttons stretches the lens into a capsule that pulls
+// free and snaps back — the "sticky" Liquid Glass feel. While stretched it thins a little across
+// (volume-preserving); a press squashes it and pools light under the pointer, release overshoots.
+const lens = el("div", "lens");
+lens.setAttribute("aria-hidden", "true");
+dock.insertBefore(lens, bar);
+type Spring = { x: number; v: number };
+const spring = (x = 0): Spring => ({ x, v: 0 });
+const edge = { l: spring(), r: spring(), t: spring(), b: spring() };
+const vis = spring(), squeeze = spring(1);
+let ptr: { x: number; y: number } | null = null;
+let hot: HTMLElement | null = null;          // control under the pointer right now
+let anchor: HTMLElement | null = null;       // where the lens is (stays put while it fades out)
+let pressedEl: HTMLElement | null = null;
+let lensRaf = 0, lensLast = 0;
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+function stepSpring(s: Spring, target: number, k: number, zeta: number, dt: number) {
+  s.v += (-k * (s.x - target) - 2 * zeta * Math.sqrt(k) * s.v) * dt;
+  s.x += s.v * dt;
+}
+const near = (s: Spring, target: number, eps: number) => Math.abs(s.x - target) < eps && Math.abs(s.v) < eps * 6;
+
+function lensTargetAt(x: number, y: number): HTMLElement | null {
+  if (dock.dataset.form !== "bar" || dragging || resizing) return null;
+  const t = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>(".btn, .grip, .avatar, .undo");
+  return t && bar.contains(t) ? t : null;
+}
+
+/** After a re-render swaps the DOM, re-attach hover state to the control with the same identity. */
+function carryLensAcrossRender() {
+  const k = (hot ?? anchor)?.dataset.k;
+  if (!k) return;
+  const n = Array.from(bar.querySelectorAll<HTMLElement>("[data-k]")).find((e) => e.dataset.k === k) ?? null;
+  if (hot && n) { n.classList.add("is-hot"); hot = n; }
+  if (anchor) anchor = n;
+}
+
+function kickLens() {
+  if (lensRaf) return;
+  lensLast = performance.now();
+  lensRaf = requestAnimationFrame(lensFrame);
+}
+
+function lensFrame(now: number) {
+  lensRaf = 0;
+  const elapsed = Math.min(1 / 30, Math.max(1 / 240, (now - lensLast) / 1000));
+  lensLast = now;
+  const target = ptr ? lensTargetAt(ptr.x, ptr.y) : null;
+  if (target !== hot) { hot?.classList.remove("is-hot"); target?.classList.add("is-hot"); hot = target; }
+  dock.classList.toggle("hot", !!ptr && dock.dataset.form !== "bar" && !dragging);
+  if (anchor && !anchor.isConnected) anchor = null;
+  if (target) anchor = target;
+
+  const d = dock.getBoundingClientRect();
+  let goal: { l: number; r: number; t: number; b: number } | null = null;
+  if (anchor) {
+    const r = anchor.getBoundingClientRect();
+    const capsule = anchor.classList.contains("undo");
+    const side = Math.max(r.width, r.height);
+    const w = capsule ? r.width + 6 : side, h = capsule ? r.height + 6 : side;
+    const cx = r.left + r.width / 2 - d.left, cy = r.top + r.height / 2 - d.top;
+    goal = { l: cx - w / 2, r: cx + w / 2, t: cy - h / 2, b: cy + h / 2 };
+  }
+  const wantVis = target ? 1 : 0;
+  const reduce = !!settings?.reduce_motion;
+  const horiz = !vertical();
+  if (goal && (vis.x < 0.03 || reduce)) {
+    // appearing (or reduced motion): materialise in place instead of sliding in from a stale spot
+    edge.l = spring(goal.l); edge.r = spring(goal.r); edge.t = spring(goal.t); edge.b = spring(goal.b);
+  }
+  const steps = Math.ceil(elapsed * 240), dt = elapsed / steps;
+  for (let i = 0; i < steps; i++) {
+    if (goal && !reduce) {
+      // main axis = along the pill; cross axis = its thickness
+      const lo = horiz ? edge.l : edge.t, hi = horiz ? edge.r : edge.b;
+      const glo = horiz ? goal.l : goal.t, ghi = horiz ? goal.r : goal.b;
+      const clo = horiz ? edge.t : edge.l, chi = horiz ? edge.b : edge.r;
+      const gclo = horiz ? goal.t : goal.l, gchi = horiz ? goal.b : goal.r;
+      const travel = (glo + ghi) / 2 - (lo.x + hi.x) / 2;
+      const dir = Math.abs(travel) < 0.5 ? 0 : Math.sign(travel);
+      const STIFF = 900, SOFT = 210, MID = 520;
+      stepSpring(hi, ghi, dir > 0 ? STIFF : dir < 0 ? SOFT : MID, dir < 0 ? 0.95 : 0.78, dt);
+      stepSpring(lo, glo, dir < 0 ? STIFF : dir > 0 ? SOFT : MID, dir > 0 ? 0.95 : 0.78, dt);
+      stepSpring(clo, gclo, MID, 0.82, dt);
+      stepSpring(chi, gchi, MID, 0.82, dt);
+    }
+    stepSpring(vis, wantVis, 420, 1, dt);
+    stepSpring(squeeze, pressedEl ? 0.86 : 1, 760, pressedEl ? 0.9 : 0.38, dt);
+  }
+  if (!target && vis.x < 0.02) anchor = null;
+
+  let x = edge.l.x, y = edge.t.x, w = edge.r.x - edge.l.x, h = edge.b.x - edge.t.x;
+  if (goal) {
+    const len = horiz ? w : h, base = horiz ? goal.r - goal.l : goal.b - goal.t;
+    const thin = 1 - Math.min(0.24, Math.max(0, len / Math.max(1, base) - 1) * 0.3);
+    if (horiz) { const nh = h * thin; y += (h - nh) / 2; h = nh; } else { const nw = w * thin; x += (w - nw) / 2; w = nw; }
+  }
+  const shown = clamp01(vis.x);
+  lens.style.width = `${Math.max(0, w)}px`;
+  lens.style.height = `${Math.max(0, h)}px`;
+  lens.style.transform = `translate(${x}px, ${y}px) scale(${(0.7 + 0.3 * shown) * squeeze.x})`;
+  lens.style.opacity = String(shown);
+  if (ptr && w > 0 && h > 0) {
+    lens.style.setProperty("--hx", `${clamp01((ptr.x - d.left - x) / w) * 100}%`);
+    lens.style.setProperty("--hy", `${clamp01((ptr.y - d.top - y) / h) * 100}%`);
+  }
+  lens.style.setProperty("--glow", String(clamp01((1 - squeeze.x) / 0.12)));
+
+  const settled = near(vis, wantVis, 0.004) && near(squeeze, pressedEl ? 0.86 : 1, 0.002)
+    && (!goal || (near(edge.l, goal.l, 0.2) && near(edge.r, goal.r, 0.2) && near(edge.t, goal.t, 0.2) && near(edge.b, goal.b, 0.2)));
+  if (!settled) lensRaf = requestAnimationFrame(lensFrame);
+}
+
+dock.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  const t = lensTargetAt(e.clientX, e.clientY);
+  ptr = { x: e.clientX, y: e.clientY };
+  if (t) { pressedEl = t; t.classList.add("is-pressed"); }
+  else if (dock.dataset.form !== "bar") dock.classList.add("pressing");
+  kickLens();
+});
+const releasePress = () => {
+  pressedEl?.classList.remove("is-pressed");
+  pressedEl = null;
+  dock.classList.remove("pressing");
+  kickLens();
+};
+window.addEventListener("pointerup", releasePress);
+window.addEventListener("pointercancel", releasePress);
 
 // ───────── drag: grab the glass itself (any non-button area, or the dot) and put the Dock anywhere ─────────
 // The window follows the OS cursor (one IPC per frame; Rust reads the real cursor position) instead
@@ -491,6 +662,9 @@ function applySettings(s: AppSettings) {
   applyTheme(s.theme);
   document.documentElement.toggleAttribute("data-reduce-motion", s.reduce_motion);
   document.documentElement.style.setProperty("--material", String(s.material_strength));
+  const accent = validAccent(s.accent);
+  document.documentElement.style.setProperty("--tint", accent ?? "transparent");
+  if (accent) document.documentElement.dataset.accent = "on"; else delete document.documentElement.dataset.accent;
   document.documentElement.style.setProperty("--scale", String(Math.min(1.6, Math.max(0.7, s.dock_scale ?? 1))));
 }
 
@@ -499,11 +673,17 @@ async function boot() {
   // The CSS keys off `[data-vibrancy="1"]`; toggleAttribute() would set an empty value and never match.
   if (host.vibrancy) document.documentElement.setAttribute("data-vibrancy", "1"); else document.documentElement.removeAttribute("data-vibrancy");
   document.documentElement.dataset.os = host.os;
+  if (api.isTauri && host.os === "macos") document.documentElement.dataset.morph = "1";
+  // glyph colours follow the glass's backdrop-adaptive appearance (see data-glass in dock.css)
+  const setGlass = (scheme: string | null) => { if (scheme) document.documentElement.dataset.glass = scheme; };
+  setGlass(await api.invoke<string | null>("glass_scheme"));
+  void api.on<string>("dock:glass", setGlass);
   applySettings(await api.invoke<AppSettings>("get_settings"));
   seats = await api.invoke<SeatView[]>("get_seats");
   state = await api.invoke<DockState>("get_state");
   lastSize = { w: 0, h: 0 };
   await render();
+  booting = false;
   api.on<DockState>("dock:state", (s) => { state = s; render(); });
   api.on<SeatView[]>("seats:changed", (s) => { seats = s; iconCache.clear(); render(); });
   api.on<AppSettings>("settings:changed", (s) => { applySettings(s); render(); });

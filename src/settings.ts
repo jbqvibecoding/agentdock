@@ -1,4 +1,4 @@
-import { api, applyTheme, type AppSettings, type DriverInfo, type HostInfo, type MemoryStatus, type Seat, type SeatView } from "./api";
+import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type DriverInfo, type HostInfo, type MemoryStatus, type Seat, type SeatView } from "./api";
 import { iconFor } from "./brand";
 
 type PageId = "seats" | "hotkeys" | "appearance" | "mic" | "memory" | "about";
@@ -37,6 +37,47 @@ function applySettingsLocally() {
   applyTheme(settings.theme);
   document.documentElement.toggleAttribute("data-reduce-motion", settings.reduce_motion);
   document.documentElement.style.setProperty("--material", String(settings.material_strength ?? 0.5));
+  const accent = validAccent(settings.accent);
+  if (accent) document.documentElement.style.setProperty("--accent", accent); else document.documentElement.style.removeProperty("--accent");
+}
+
+/** 主题色: preset swatches plus a custom picker; the Dock repaints live as you choose. */
+function accentPicker(): HTMLDivElement {
+  const wrap = el("div", "swatches");
+  const presets = new Set(ACCENTS.map(([c]) => c));
+  const custom = el("label", "swatch custom") as HTMLLabelElement;
+  custom.title = "自定义颜色";
+  const input = el("input") as HTMLInputElement;
+  input.type = "color";
+  input.value = validAccent(settings.accent) ?? "#0a84ff";
+  const paint = () => {
+    const cur = validAccent(settings.accent);
+    wrap.querySelectorAll<HTMLElement>(".swatch[data-c]").forEach((b) => b.classList.toggle("is-on", (b.dataset.c || null) === cur));
+    const isCustom = !!cur && !presets.has(cur.toLowerCase());
+    custom.classList.toggle("is-on", isCustom);
+    if (isCustom) custom.style.setProperty("--c", cur!);
+  };
+  for (const [c, name] of ACCENTS) {
+    const b = el("button", `swatch${c ? "" : " none"}`);
+    b.type = "button";
+    b.title = name;
+    b.setAttribute("aria-label", `主题色：${name}`);
+    b.dataset.c = c ?? "";
+    if (c) b.style.setProperty("--c", c);
+    b.addEventListener("click", () => { void saveSettings({ accent: c }); paint(); });
+    wrap.append(b);
+  }
+  let pending: number | undefined;
+  input.addEventListener("input", () => {
+    settings = { ...settings, accent: input.value };
+    paint();
+    window.clearTimeout(pending);
+    pending = window.setTimeout(() => void saveSettings({ accent: input.value }), 90);
+  });
+  custom.append(input);
+  wrap.append(custom);
+  paint();
+  return wrap;
 }
 
 function toggle(checked: boolean, on: (v: boolean) => void): HTMLButtonElement {
@@ -244,6 +285,7 @@ function renderAppearance() {
   matStrength.addEventListener("change", () => saveSettings({ material_strength: Number(matStrength.value) }));
   const gTheme = group("外观",
     row("主题", "跟随系统时会随 macOS / Windows 的深浅色实时切换", seg<AppSettings["theme"]>([["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]], settings.theme, (v) => saveSettings({ theme: v }))),
+    row("主题色", "给 Dock 的玻璃与图标染色", accentPicker()),
     row("材质", host.material ? (host.material === "NSGlassEffectView" ? "macOS 26 Liquid Glass（NSGlassEffectView）" : host.material === "NSVisualEffectView" ? "macOS 系统玻璃（NSVisualEffectView · HUD）" : `Windows ${host.material}`) : "当前平台无系统材质，使用模糊回退", matStrength),
   );
   const snap = el("select") as HTMLSelectElement;
@@ -360,6 +402,10 @@ async function boot() {
   // The CSS keys off `[data-vibrancy="1"]`; toggleAttribute() would set an empty value and never match.
   if (host.vibrancy) document.documentElement.setAttribute("data-vibrancy", "1"); else document.documentElement.removeAttribute("data-vibrancy");
   document.documentElement.dataset.os = host.os;
+  // keep the slab concentric with the real window corner (26pt on macOS 26 with the unified toolbar)
+  const setRadius = (r: number) => { if (r > 0) document.documentElement.style.setProperty("--win-r", `${r}px`); };
+  setRadius(host.window_radius ?? 0);
+  void api.on<number>("settings:radius", setRadius);
   $("#ver").textContent = host.version;
   settings = await api.invoke<AppSettings>("get_settings"); applySettingsLocally();
   [seats, drivers] = await Promise.all([api.invoke<SeatView[]>("get_seats"), api.invoke<DriverInfo[]>("list_drivers")]);

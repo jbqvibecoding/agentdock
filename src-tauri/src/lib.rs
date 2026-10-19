@@ -420,9 +420,10 @@ fn undo_switch(app: AppHandle) {
 }
 
 /// The dock window resizes itself to the exact glass shape so the rest of the screen stays
-/// click-through; it stays anchored to the configured snap edge.
+/// click-through; it stays anchored to the configured snap edge. With `animate` on macOS the
+/// window frame springs to the new shape and the native glass follows it (dot ↔ pill morph).
 #[tauri::command]
-fn resize_dock(app: AppHandle, width: f64, height: f64) -> CmdResult<()> {
+fn resize_dock(app: AppHandle, width: f64, height: f64, animate: Option<bool>) -> CmdResult<()> {
     let win = app.get_webview_window("dock").ok_or("no dock window")?;
     let (snap, anchor) = {
         let st = app.state::<AppState>();
@@ -432,12 +433,19 @@ fn resize_dock(app: AppHandle, width: f64, height: f64) -> CmdResult<()> {
     };
     #[cfg(target_os = "macos")]
     {
+        if animate.unwrap_or(false) {
+            let (x, y) = dock_origin(snap, anchor, width, height, monitor_rect(&win).map_err(err)?);
+            return morph::animate_to(&win, [x, y, width, height]).map_err(err);
+        }
+        morph::cancel();
         // AppKit setters only take effect on the main thread; commands run on the async runtime.
         // Always half of the shorter side so scaled-up pills (e.g. 1.5x → 84pt tall, radius 42pt)
         // stay true semicircles at both ends and never flatten into a box.
         let radius = width.min(height) / 2.0;
         let _ = app.run_on_main_thread(move || liquid_glass::set_corner_radius(radius));
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = animate;
     position_dock(&win, width, height, snap, anchor).map_err(err)
 }
 
@@ -457,6 +465,8 @@ fn ui_log(level: String, msg: String) {
 #[tauri::command]
 fn drag_dock(app: AppHandle, offset_x: f64, offset_y: f64) -> CmdResult<()> {
     let win = app.get_webview_window("dock").ok_or("no dock window")?;
+    #[cfg(target_os = "macos")]
+    morph::cancel();
     let sc = win.scale_factor().map_err(err)?;
     let cursor = app.cursor_position().map_err(err)?;
     let (x, y) = (cursor.x / sc - offset_x, cursor.y / sc - offset_y);
@@ -491,30 +501,44 @@ fn cursor_over_dock(app: AppHandle) -> bool {
 /// multi-display setup the raw numbers disagree by the scale ratio. Both logical values share the
 /// same top-left-of-main-display origin, so this is exact on every screen.
 fn cursor_in_dock(app: &AppHandle) -> bool {
-    let Some(win) = app.get_webview_window("dock") else { return false };
-    let (Ok(c), Ok(p), Ok(s), Ok(ws)) =
-        (app.cursor_position(), win.outer_position(), win.outer_size(), win.scale_factor())
-    else { return false };
+    cursor_local(app).is_some_and(|(_, _, inside)| inside)
+}
+
+/// The OS cursor relative to the dock window's top-left (logical px = CSS px), and whether it is inside.
+fn cursor_local(app: &AppHandle) -> Option<(f64, f64, bool)> {
+    let win = app.get_webview_window("dock")?;
+    let (c, p, s, ws) = (app.cursor_position().ok()?, win.outer_position().ok()?, win.outer_size().ok()?, win.scale_factor().ok()?);
     let cs = app.primary_monitor().ok().flatten().map(|m| m.scale_factor()).unwrap_or(ws);
     let (cx, cy) = (c.x / cs, c.y / cs);
     let (x, y) = (p.x as f64 / ws, p.y as f64 / ws);
     let (w, h) = (s.width as f64 / ws, s.height as f64 / ws);
-    cx >= x && cy >= y && cx < x + w && cy < y + h
+    Some((cx - x, cy - y, cx >= x && cy >= y && cx < x + w && cy < y + h))
 }
 
 /// WKWebView only receives mouse-moved/entered/exited while its window is key, and the Dock is
 /// never key by design (`focus: false`): parked next to another app it gets no `:hover`, no
-/// pointerenter/leave — so hover-to-expand and the pinned-collapsed preview never fire. Poll the
-/// OS cursor at 10 Hz and tell the dock when it enters or leaves the window rect.
+/// pointerenter/leave. Poll the OS cursor and tell the dock when it enters or leaves the window
+/// rect; while it is inside, stream the local position at ~60 Hz so the liquid lens can follow it.
 fn spawn_hover_watcher(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut over = false;
+        let mut last = (f64::NAN, f64::NAN);
         loop {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            let now = cursor_in_dock(&app);
-            if now != over {
-                over = now;
+            tokio::time::sleep(Duration::from_millis(if over { 16 } else { 80 })).await;
+            let Some((x, y, inside)) = cursor_local(&app) else { continue };
+            if inside != over {
+                over = inside;
                 let _ = app.emit("dock:hover", over);
+                // AppKit may rebuild the glass layers behind our back (appearance, key state);
+                // re-apply the tuning whenever the user is about to look at / touch the Dock.
+                #[cfg(target_os = "macos")]
+                if over {
+                    let _ = app.run_on_main_thread(liquid_glass::tune_all);
+                }
+            }
+            if over && ((x - last.0).abs() > 0.25 || (y - last.1).abs() > 0.25) {
+                last = (x, y);
+                let _ = app.emit_to("dock", "dock:pointer", (x, y));
             }
         }
     });
@@ -544,18 +568,19 @@ fn remember_dock_position(app: AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
-fn position_dock<R: Runtime>(win: &WebviewWindow<R>, width: f64, height: f64, snap: settings::Snap, anchor: Option<settings::DockAnchor>) -> tauri::Result<()> {
-    let monitor = win.current_monitor()?.or(win.primary_monitor()?);
-    let rect = match monitor {
+/// The dock's monitor as (x, y, w, h) in logical px.
+fn monitor_rect<R: Runtime>(win: &WebviewWindow<R>) -> tauri::Result<(f64, f64, f64, f64)> {
+    Ok(match win.current_monitor()?.or(win.primary_monitor()?) {
         Some(m) => {
-            let s = m.size();
-            let p = m.position();
-            let sc = m.scale_factor();
+            let (s, p, sc) = (m.size(), m.position(), m.scale_factor());
             (p.x as f64 / sc, p.y as f64 / sc, s.width as f64 / sc, s.height as f64 / sc)
         }
         None => (0.0, 0.0, 1440.0, 900.0),
-    };
-    let (x, y) = dock_origin(snap, anchor, width, height, rect);
+    })
+}
+
+fn position_dock<R: Runtime>(win: &WebviewWindow<R>, width: f64, height: f64, snap: settings::Snap, anchor: Option<settings::DockAnchor>) -> tauri::Result<()> {
+    let (x, y) = dock_origin(snap, anchor, width, height, monitor_rect(win)?);
     win.set_size(tauri::LogicalSize::new(width, height))?;
     win.set_position(tauri::LogicalPosition::new(x, y))?;
     // AppKit caches the shadow of a transparent window; after a pill↔dot resize the stale
@@ -966,7 +991,11 @@ fn persist_settings(app: &AppHandle, mut settings: AppSettings) -> CmdResult<()>
     #[cfg(target_os = "macos")]
     {
         let strength = settings.material_strength as f64;
-        let _ = app.run_on_main_thread(move || liquid_glass::set_material_strength(strength));
+        let tint = settings.accent.as_deref().and_then(settings::parse_hex_color);
+        let _ = app.run_on_main_thread(move || {
+            liquid_glass::set_material_strength(strength);
+            liquid_glass::set_tint(tint);
+        });
     }
     // Re-registering from inside a shortcut callback (⌥O / ⌥P toggles) deadlocks the global-shortcut
     // plugin on the main thread, so only touch the registrations when the bindings really changed.
@@ -985,19 +1014,11 @@ fn persist_settings(app: &AppHandle, mut settings: AppSettings) -> CmdResult<()>
 }
 
 fn reposition_dock<R: Runtime>(win: &WebviewWindow<R>, snap: settings::Snap, anchor: Option<settings::DockAnchor>) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    morph::cancel();
     let sc = win.scale_factor()?;
     let size = win.inner_size()?;
-    let monitor = win.current_monitor()?.or(win.primary_monitor()?);
-    let rect = match monitor {
-        Some(m) => {
-            let s = m.size();
-            let p = m.position();
-            let msc = m.scale_factor();
-            (p.x as f64 / msc, p.y as f64 / msc, s.width as f64 / msc, s.height as f64 / msc)
-        }
-        None => (0.0, 0.0, 1440.0, 900.0),
-    };
-    let (x, y) = dock_origin(snap, anchor, size.width as f64 / sc, size.height as f64 / sc, rect);
+    let (x, y) = dock_origin(snap, anchor, size.width as f64 / sc, size.height as f64 / sc, monitor_rect(win)?);
     win.set_position(tauri::LogicalPosition::new(x, y))
 }
 
@@ -1016,6 +1037,10 @@ fn open_settings(app: AppHandle) -> CmdResult<()> {
         let w2 = win.clone();
         let _ = win.run_on_main_thread(move || {
             let _ = liquid_glass::clear_webview_backdrop(&w2);
+            // The CSS slab must follow the real window corner (26pt with the unified toolbar).
+            let radius = liquid_glass::window_corner_radius(&w2);
+            liquid_glass::set_settings_corner_radius(radius);
+            let _ = w2.emit_to("settings", "settings:radius", radius);
             liquid_glass::tune_all();
         });
     }
@@ -1027,6 +1052,33 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Whether the dock glass currently wants light ("dark") or dark ("light") glyphs. Sync commands run
+/// on the main thread, where AppKit may be queried; later changes arrive as `dock:glass` events.
+#[tauri::command]
+fn glass_scheme() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    return liquid_glass::glass_scheme().map(String::from);
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+/// Follow the glass's backdrop-adaptive appearance and tell the dock when it flips.
+#[cfg(target_os = "macos")]
+fn spawn_glass_scheme_watcher(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Some(scheme) = liquid_glass::glass_scheme_changed() {
+                    tracing::info!("dock glass content scheme → {scheme}");
+                    let _ = handle.emit_to("dock", "dock:glass", scheme);
+                }
+            });
+        }
+    });
+}
+
 #[tauri::command]
 fn host_info() -> serde_json::Value {
     serde_json::json!({
@@ -1034,11 +1086,152 @@ fn host_info() -> serde_json::Value {
         "vibrancy": cfg!(any(target_os = "macos", target_os = "windows")),
         "material": MATERIAL.lock().unwrap().clone(),
         "version": env!("CARGO_PKG_VERSION"),
+        "window_radius": *SETTINGS_RADIUS.lock().unwrap(),
     })
 }
 
 /// Which system material actually got applied to the dock window (reported in 设置 › 外观).
 static MATERIAL: Mutex<String> = Mutex::new(String::new());
+/// Corner radius of the native settings window, so the CSS slab stays concentric with it.
+static SETTINGS_RADIUS: Mutex<f64> = Mutex::new(0.0);
+
+/// One semi-implicit Euler step of a slightly under-damped spring (≈3 % overshoot) over a window
+/// frame `[x, y, w, h]`. Returns whether any component is still moving.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn spring_step(cur: &mut [f64; 4], vel: &mut [f64; 4], target: &[f64; 4], dt: f64) -> bool {
+    const K: f64 = 520.0;
+    const ZETA: f64 = 0.74;
+    let c = 2.0 * ZETA * K.sqrt();
+    let mut moving = false;
+    for i in 0..4 {
+        vel[i] += (-K * (cur[i] - target[i]) - c * vel[i]) * dt;
+        cur[i] += vel[i] * dt;
+        moving |= (cur[i] - target[i]).abs() > 0.25 || vel[i].abs() > 4.0;
+    }
+    moving
+}
+
+#[cfg(test)]
+mod spring_tests {
+    use super::spring_step;
+
+    #[test]
+    fn dock_morph_settles_quickly_with_a_small_overshoot() {
+        let (mut cur, mut vel, target) = ([500.0, 300.0, 36.0, 36.0], [0.0; 4], [314.0, 290.0, 408.0, 56.0]);
+        let (dt, mut t, mut peak) = (1.0 / 240.0, 0.0, 0.0f64);
+        while spring_step(&mut cur, &mut vel, &target, dt) {
+            peak = peak.max(cur[2]);
+            t += dt;
+            assert!(t < 1.0, "spring never settled");
+        }
+        assert!(t < 0.6, "settles in {t:.2}s");
+        assert!((cur[2] - 408.0).abs() < 0.5 && (cur[0] - 314.0).abs() < 0.5);
+        assert!(peak > 408.0 && peak < 408.0 + 0.06 * 372.0, "overshoot {peak:.1} should be a small bounce");
+    }
+}
+
+/// Spring-driven morph of the dock window frame. The NSGlassEffectView autoresizes with the window,
+/// so animating the frame animates the glass itself: the dot swells into the pill like a droplet.
+/// A new target mid-flight keeps the current position and velocity, so quick toggles stay fluid.
+#[cfg(target_os = "macos")]
+mod morph {
+    use super::{liquid_glass, spring_step};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    use tauri::{Runtime, WebviewWindow};
+
+    struct State {
+        cur: [f64; 4],
+        vel: [f64; 4],
+        target: [f64; 4],
+        running: bool,
+        gen: u64,
+    }
+    static STATE: Mutex<State> = Mutex::new(State { cur: [0.0; 4], vel: [0.0; 4], target: [0.0; 4], running: false, gen: 0 });
+
+    /// Stop any running morph (drags and direct resizes own the frame from here on).
+    pub fn cancel() {
+        let mut s = STATE.lock().unwrap();
+        s.running = false;
+        s.gen += 1;
+    }
+
+    pub fn animate_to<R: Runtime>(win: &WebviewWindow<R>, target: [f64; 4]) -> tauri::Result<()> {
+        let gen = {
+            let mut s = STATE.lock().unwrap();
+            s.target = target;
+            if s.running {
+                return Ok(());
+            }
+            let (sc, p, z) = (win.scale_factor()?, win.outer_position()?, win.outer_size()?);
+            s.cur = [p.x as f64 / sc, p.y as f64 / sc, z.width as f64 / sc, z.height as f64 / sc];
+            s.vel = [0.0; 4];
+            s.running = true;
+            s.gen += 1;
+            s.gen
+        };
+        let win = win.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut last = Instant::now();
+            let mut frame_no = 0u32;
+            loop {
+                tokio::time::sleep(Duration::from_millis(8)).await;
+                let now = Instant::now();
+                let dt = now.duration_since(last).as_secs_f64().min(1.0 / 30.0);
+                last = now;
+                let (frame, done) = {
+                    let mut guard = STATE.lock().unwrap();
+                    let s = &mut *guard;
+                    if s.gen != gen || !s.running {
+                        return;
+                    }
+                    let steps = (dt * 240.0).ceil().max(1.0) as usize;
+                    let mut moving = false;
+                    for _ in 0..steps {
+                        moving = spring_step(&mut s.cur, &mut s.vel, &s.target, dt / steps as f64);
+                    }
+                    if !moving {
+                        s.cur = s.target;
+                        s.vel = [0.0; 4];
+                        s.running = false;
+                    }
+                    (s.cur, !moving)
+                };
+                frame_no += 1;
+                apply(&win, frame, done || frame_no % 4 == 0);
+                if done {
+                    break;
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Set the frame in one AppKit call (size and origin together, so the centre never jitters).
+    fn apply<R: Runtime>(win: &WebviewWindow<R>, f: [f64; 4], refresh_shadow: bool) {
+        let Ok(p) = win.ns_window() else { return };
+        let p = p as usize;
+        let _ = win.run_on_main_thread(move || unsafe {
+            use objc2::runtime::AnyObject;
+            use objc2::{class, msg_send};
+            use objc2_foundation::{NSPoint, NSRect, NSSize};
+            let window = &*(p as *mut objc2_app_kit::NSWindow);
+            let screens: *mut AnyObject = msg_send![class!(NSScreen), screens];
+            let main: *mut AnyObject = msg_send![screens, firstObject];
+            if main.is_null() {
+                return;
+            }
+            // Logical coordinates are top-left based on the main display; AppKit is bottom-left.
+            let screen: NSRect = msg_send![main, frame];
+            let rect = NSRect::new(NSPoint::new(f[0], screen.size.height - f[1] - f[3]), NSSize::new(f[2], f[3]));
+            window.setFrame_display(rect, true);
+            liquid_glass::set_corner_radius(f[2].min(f[3]) / 2.0);
+            if refresh_shadow {
+                window.invalidateShadow();
+            }
+        });
+    }
+}
 
 // ───────────────────────── hotkeys ─────────────────────────
 
@@ -1149,8 +1342,13 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
         }
         if let Some(w) = settings_win {
             let _ = liquid_glass::clear_webview_backdrop(w);
-            if !liquid_glass::apply(w, 16.0, false, strength).unwrap_or(false) {
-                if let Err(e) = apply_vibrancy(w, NSVisualEffectMaterial::Sidebar, Some(NSVisualEffectState::Active), Some(16.0)) {
+            // A unified toolbar gives the window the macOS 26 large corner (26pt); 26 − 8pt inset =
+            // the 18pt content sheet, so the window, the glass and the sheet are all concentric.
+            liquid_glass::adopt_unified_toolbar(w);
+            let radius = liquid_glass::window_corner_radius(w);
+            *SETTINGS_RADIUS.lock().unwrap() = radius;
+            if !liquid_glass::apply(w, radius, false, strength).unwrap_or(false) {
+                if let Err(e) = apply_vibrancy(w, NSVisualEffectMaterial::Sidebar, Some(NSVisualEffectState::Active), Some(radius)) {
                     tracing::warn!("settings vibrancy: {e}");
                 }
             }
@@ -1191,6 +1389,66 @@ mod liquid_glass {
     static DOCK_GLASS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
     static SETTINGS_GLASS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
     static STRENGTH: std::sync::Mutex<f64> = std::sync::Mutex::new(0.5);
+    /// Empty view installed as the dock glass's `contentView`. The glass adapts its content's
+    /// appearance to what is behind it (DarkAqua over dark wallpaper/windows, Aqua over light), the
+    /// same signal native controls use to flip their glyphs; the webview mirrors it.
+    static DOCK_PROBE: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+    static LAST_SCHEME: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
+
+    fn probe_is_dark() -> Option<bool> {
+        let p = *DOCK_PROBE.lock().unwrap();
+        if p == 0 {
+            return None;
+        }
+        unsafe {
+            let appearance: *mut AnyObject = msg_send![&*(p as *const AnyObject), effectiveAppearance];
+            if appearance.is_null() {
+                return None;
+            }
+            let name: *mut AnyObject = msg_send![appearance, name];
+            (!name.is_null()).then(|| (&*(name as *const NSString)).to_string().contains("Dark"))
+        }
+    }
+
+    /// The glass content scheme right now ("dark" = light glyphs needed).
+    pub fn glass_scheme() -> Option<&'static str> {
+        let dark = probe_is_dark()?;
+        *LAST_SCHEME.lock().unwrap() = if dark { 2 } else { 1 };
+        Some(if dark { "dark" } else { "light" })
+    }
+
+    /// `Some(scheme)` only when it differs from the last one reported.
+    pub fn glass_scheme_changed() -> Option<&'static str> {
+        let dark = probe_is_dark()?;
+        let code = if dark { 2 } else { 1 };
+        let mut last = LAST_SCHEME.lock().unwrap();
+        if *last == code {
+            return None;
+        }
+        *last = code;
+        Some(if dark { "dark" } else { "light" })
+    }
+
+    /// Theme colour → native tinted glass on the dock (`None` clears it).
+    pub fn set_tint(rgb: Option<(f64, f64, f64)>) {
+        let ptr = *DOCK_GLASS.lock().unwrap();
+        if ptr == 0 {
+            return;
+        }
+        unsafe {
+            let glass = &*(ptr as *const AnyObject);
+            match rgb {
+                Some((r, g, b)) => {
+                    let color = NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 0.34);
+                    let _: () = msg_send![glass, setTintColor: &*color];
+                }
+                None => {
+                    let _: () = msg_send![glass, setTintColor: std::ptr::null::<AnyObject>()];
+                }
+            }
+        }
+        tune_all();
+    }
 
     /// Keep the native glass shape congruent with the CSS pill: at 36×36 (dot form) a 28pt radius
     /// renders as a rounded square peeking out from behind the circle, so clamp to half the side.
@@ -1213,6 +1471,50 @@ mod liquid_glass {
         tune_all();
     }
 
+    pub fn set_settings_corner_radius(radius: f64) {
+        *super::SETTINGS_RADIUS.lock().unwrap() = radius;
+        let ptr = *SETTINGS_GLASS.lock().unwrap();
+        if ptr != 0 {
+            unsafe {
+                let _: () = msg_send![&*(ptr as *const AnyObject), setCornerRadius: radius];
+            }
+        }
+    }
+
+    /// Give the settings window an empty unified toolbar. On macOS 26 that switches the window to
+    /// the large toolbar corner radius; the toolbar itself draws nothing.
+    pub fn adopt_unified_toolbar<R: Runtime>(win: &WebviewWindow<R>) {
+        let (Ok(p), Some(cls)) = (win.ns_window(), AnyClass::get(c"NSToolbar")) else { return };
+        unsafe {
+            let window = &*(p as *mut NSWindow);
+            let alloc: Allocated<AnyObject> = msg_send![cls, alloc];
+            let ident = NSString::from_str("ai.we1jia.agentdock.settings");
+            let toolbar: Retained<AnyObject> = msg_send![alloc, initWithIdentifier: &*ident];
+            let _: () = msg_send![window, setToolbar: &*toolbar];
+            if window.respondsToSelector(objc2::sel!(setToolbarStyle:)) {
+                let _: () = msg_send![window, setToolbarStyle: 3isize]; // NSWindowToolbarStyleUnified
+            }
+            if window.respondsToSelector(objc2::sel!(setTitlebarSeparatorStyle:)) {
+                let _: () = msg_send![window, setTitlebarSeparatorStyle: 1isize]; // none
+            }
+        }
+    }
+
+    /// The window's real corner radius (private `_cornerRadius`; 16pt is the pre-toolbar default).
+    pub fn window_corner_radius<R: Runtime>(win: &WebviewWindow<R>) -> f64 {
+        let Ok(p) = win.ns_window() else { return 16.0 };
+        unsafe {
+            let window = &*(p as *mut NSWindow);
+            if window.respondsToSelector(objc2::sel!(_cornerRadius)) {
+                let r: f64 = msg_send![window, _cornerRadius];
+                if r > 0.0 {
+                    return r;
+                }
+            }
+        }
+        16.0
+    }
+
     pub fn tune_all() {
         let s = *STRENGTH.lock().unwrap();
         let dock_ptr = *DOCK_GLASS.lock().unwrap();
@@ -1233,18 +1535,21 @@ mod liquid_glass {
         }
         let glass_view = &*(ptr as *const NSView);
         let _: () = msg_send![glass_view, layoutSubtreeIfNeeded];
+        let size = glass_view.frame().size;
+        let side = size.width.min(size.height);
         for sub in glass_view.subviews().iter() {
             let layer: *mut AnyObject = msg_send![&*sub, layer];
-            tune_layer(layer, strength, is_dock);
+            tune_layer(layer, strength, is_dock, side);
         }
     }
 
     /// Tune the internal `SDFLayer` tree of `NSGlassEffectView`:
-    /// - Enable `CASDFGlassDisplacementEffect` lens refraction height according to `material_strength`.
-    /// - Force `CASDFKeyFillHighlightEffect` specular rim highlight on (macOS zeroes its opacity on
-    ///   non-key utility windows like the Dock).
+    /// - `CASDFGlassDisplacementEffect`: edge refraction band, scaled to the shape so a 36pt dot is
+    ///   not refracted edge-to-edge (that read as several overlapping rims).
+    /// - `CASDFKeyFillHighlightEffect`: one crisp specular rim close to the system default thickness
+    ///   (macOS zeroes its opacity on non-key utility windows like the Dock).
     /// - Reduce the white platter backing opacity so the wallpaper refracts clearly through the glass.
-    unsafe fn tune_layer(layer: *mut AnyObject, strength: f64, is_dock: bool) {
+    unsafe fn tune_layer(layer: *mut AnyObject, strength: f64, is_dock: bool, side: f64) {
         if layer.is_null() {
             return;
         }
@@ -1259,7 +1564,8 @@ mod liquid_glass {
                     if !ecls.is_null() {
                         let ename = (*ecls).name().to_string_lossy();
                         if ename == "CASDFGlassDisplacementEffect" {
-                            let h: f64 = if is_dock { 10.0 + strength * 16.0 } else { 8.0 + strength * 10.0 };
+                            // System default is 11.2pt; never more than ~a quarter of the short side.
+                            let h: f64 = (0.55 + 0.6 * strength) * 11.2f64.min(side * 0.24);
                             let has_h: bool = msg_send![eff, respondsToSelector: objc2::sel!(setHeight:)];
                             if has_h {
                                 let _: () = msg_send![eff, setHeight: h];
@@ -1269,29 +1575,29 @@ mod liquid_glass {
                                 let _: () = msg_send![eff, setCurvature: 1.0f64];
                             }
                         } else if ename == "CASDFKeyFillHighlightEffect" {
-                            let op: f32 = (0.75 + strength * 0.25) as f32;
+                            let op: f32 = (0.85 + strength * 0.15) as f32;
                             let _: () = msg_send![layer, setOpacity: op];
                             let has_kh: bool = msg_send![eff, respondsToSelector: objc2::sel!(setKeyHeight:)];
                             if has_kh {
-                                let _: () = msg_send![eff, setKeyHeight: 1.5 + strength * 1.6];
+                                let _: () = msg_send![eff, setKeyHeight: 1.0 + strength * 0.4];
                             }
                             let has_fh: bool = msg_send![eff, respondsToSelector: objc2::sel!(setFillHeight:)];
                             if has_fh {
-                                let _: () = msg_send![eff, setFillHeight: 1.2 + strength * 1.2];
+                                let _: () = msg_send![eff, setFillHeight: 1.0 + strength * 0.3];
                             }
                             let has_c: bool = msg_send![eff, respondsToSelector: objc2::sel!(setCurvature:)];
                             if has_c {
-                                let _: () = msg_send![eff, setCurvature: 0.9f64];
+                                let _: () = msg_send![eff, setCurvature: 0.8f64];
                             }
                             let has_kc: bool = msg_send![eff, respondsToSelector: objc2::sel!(setKeyColor:)];
                             if has_kc {
-                                let key_ns = NSColor::colorWithWhite_alpha(1.0, 0.72 + strength * 0.28);
+                                let key_ns = NSColor::colorWithWhite_alpha(1.0, 0.55 + strength * 0.35);
                                 let key_cg: *mut AnyObject = msg_send![&*key_ns, CGColor];
                                 let _: () = msg_send![eff, setKeyColor: key_cg];
                             }
                             let has_fc: bool = msg_send![eff, respondsToSelector: objc2::sel!(setFillColor:)];
                             if has_fc {
-                                let fill_ns = NSColor::colorWithWhite_alpha(1.0, 0.42 + strength * 0.28);
+                                let fill_ns = NSColor::colorWithWhite_alpha(1.0, 0.25 + strength * 0.25);
                                 let fill_cg: *mut AnyObject = msg_send![&*fill_ns, CGColor];
                                 let _: () = msg_send![eff, setFillColor: fill_cg];
                             }
@@ -1312,7 +1618,7 @@ mod liquid_glass {
             let count: usize = msg_send![sublayers, count];
             for i in 0..count {
                 let sub: *mut AnyObject = msg_send![sublayers, objectAtIndex: i];
-                tune_layer(sub, strength, is_dock);
+                tune_layer(sub, strength, is_dock, side);
             }
         }
     }
@@ -1427,6 +1733,16 @@ mod liquid_glass {
             }
             let _: () = msg_send![&*glass, setCornerRadius: corner_radius];
             let _: () = msg_send![&*glass, setTintColor: std::ptr::null::<AnyObject>()];
+            if is_dock {
+                if let Some(vcls) = AnyClass::get(c"NSView") {
+                    let valloc: Allocated<AnyObject> = msg_send![vcls, alloc];
+                    let probe: Retained<AnyObject> = msg_send![valloc, initWithFrame: bounds];
+                    let probe_view: &NSView = &*(Retained::as_ptr(&probe) as *const NSView);
+                    probe_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
+                    let _: () = msg_send![&*glass, setContentView: &*probe];
+                    *DOCK_PROBE.lock().unwrap() = Retained::into_raw(probe) as usize;
+                }
+            }
             content.addSubview_positioned_relativeTo(glass_view, NSWindowOrderingMode::Below, None);
             let ptr = Retained::into_raw(glass) as usize;
             if is_dock {
@@ -1573,6 +1889,12 @@ pub fn run() {
             let settings_win = app.get_webview_window("settings");
             let init_strength = app.state::<AppState>().settings.lock().unwrap().material_strength as f64;
             apply_glass(&dock, settings_win.as_ref(), init_strength);
+            #[cfg(target_os = "macos")]
+            {
+                let accent = app.state::<AppState>().settings.lock().unwrap().accent.clone();
+                liquid_glass::set_tint(accent.as_deref().and_then(settings::parse_hex_color));
+                spawn_glass_scheme_watcher(app.handle().clone());
+            }
             apply_theme(app.handle(), app.state::<AppState>().settings.lock().unwrap().theme);
             {
                 let (snap, anchor) = {
@@ -1643,7 +1965,7 @@ pub fn run() {
             get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat,
             driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,
-            get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info
+            get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info, glass_scheme
         ])
         .run(tauri::generate_context!())
         .expect("error while running AgentDock");

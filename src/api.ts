@@ -42,12 +42,12 @@ export interface MemoryStatus {
 }
 export interface AppSettings {
   default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; auto_collapse_secs: number; collapse_mode: CollapseMode; show_names: "hover" | "always" | "never";
-  reduce_motion: boolean; material_strength: number; dock_scale?: number; hotkeys: Hotkeys; mute_mode: "system" | "seat";
+  reduce_motion: boolean; material_strength: number; dock_scale?: number; accent?: string | null; hotkeys: Hotkeys; mute_mode: "system" | "seat";
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
   memory: MemorySettings;
 }
 export interface DriverInfo { id: string; display_name: string; version: number; verified: boolean; kind: "web" | "app" }
-export interface HostInfo { os: string; vibrancy: boolean; material?: string; version: string }
+export interface HostInfo { os: string; vibrancy: boolean; material?: string; version: string; window_radius?: number }
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -64,7 +64,7 @@ const mock = (() => {
     { id: "muse", name: "Muse", service: "Meta Muse", driver: { kind: "web", url: "https://muse.ai/", driver: "muse-voice" }, icon: { kind: "builtin", key: "muse" }, enabled: false, status: "pending", account: null, probe: null, driver_verified: false, silent: true },
   ];
   let settings: AppSettings = {
-    default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5, dock_scale: 1,
+    default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5, dock_scale: 1, accent: null,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
     mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false,
     memory: { enabled: false, user_id: "", inject_context: true, top_k: 5 },
@@ -136,6 +136,7 @@ const mock = (() => {
     open_settings: () => window.open("/settings.html", "_blank"),
     quit: () => undefined,
     host_info: () => ({ os: "browser", vibrancy: false, version: "0.1.0-dev" }),
+    glass_scheme: () => null,
     memory_status: () => ({
       active: false, enabled: !!settings.memory?.enabled, key_present: false,
       base_url: "https://api.evermind.ai", user_id: settings.memory?.user_id || "",
@@ -172,6 +173,13 @@ export const api = {
 };
 
 export const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+/** Theme-colour presets (设置 › 外观 › 主题色). `null` = untinted system glass. */
+export const ACCENTS: [string | null, string][] = [
+  [null, "无"], ["#0a84ff", "蓝"], ["#5e5ce6", "靛"], ["#bf5af2", "紫"], ["#ff375f", "粉"],
+  ["#ff9f0a", "橙"], ["#30d158", "绿"], ["#64d2ff", "青"], ["#8e8e93", "石墨"],
+];
+export const validAccent = (c: string | null | undefined): string | null => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : null);
 
 export function applyTheme(theme: Theme) {
   const root = document.documentElement;

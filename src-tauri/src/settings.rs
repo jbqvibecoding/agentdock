@@ -114,6 +114,9 @@ pub struct AppSettings {
     /// Proportional scale factor for the entire Dock pill (0.70–1.60, default 1.0).
     #[serde(default = "default_dock_scale")]
     pub dock_scale: f32,
+    /// Theme colour as `#rrggbb`: tints the native glass, the glyphs and the lens. `None` = untinted.
+    #[serde(default)]
+    pub accent: Option<String>,
     pub hotkeys: Hotkeys,
     pub mute_mode: MuteMode,
     pub pause_media_in_call: bool,
@@ -205,6 +208,7 @@ impl Default for AppSettings {
             reduce_motion: false,
             material_strength: 0.5,
             dock_scale: default_dock_scale(),
+            accent: None,
             hotkeys: Hotkeys {
                 toggle: "Alt+Space".into(),
                 mute: "Alt+M".into(),
@@ -254,9 +258,28 @@ pub fn settings_path(config_dir: &Path) -> PathBuf {
     config_dir.join("settings.json")
 }
 
+/// `#rrggbb` (or `rrggbb`) → sRGB components in 0..=1. Anything else is rejected.
+pub fn parse_hex_color(s: &str) -> Option<(f64, f64, f64)> {
+    let h = s.trim().trim_start_matches('#');
+    if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let c = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok().map(|v| v as f64 / 255.0);
+    Some((c(0)?, c(2)?, c(4)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accent_hex_parses_and_rejects_garbage() {
+        assert_eq!(parse_hex_color("#ff8000"), Some((1.0, 128.0 / 255.0, 0.0)));
+        assert_eq!(parse_hex_color("0A84FF"), Some((10.0 / 255.0, 132.0 / 255.0, 1.0)));
+        assert_eq!(parse_hex_color("#fff"), None);
+        assert_eq!(parse_hex_color("#zzzzzz"), None);
+        assert_eq!(AppSettings::default().accent, None);
+    }
 
     #[test]
     fn defaults_match_design() {

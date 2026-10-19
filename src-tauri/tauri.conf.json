@@ -28,6 +28,7 @@
         "visibleOnAllWorkspaces": true,
         "acceptFirstMouse": true,
         "focus": false,
+        "focusable": false,
         "center": false,
         "x": 0,
         "y": 0
