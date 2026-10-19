@@ -3,24 +3,24 @@
 :root {
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --fg: #1d1d1f; --fg-2: #6e6e73; --fg-3: #9a9aa0;
-  --blur: 24px;
-  --slab: rgba(255,255,255,.46); --slab-top: rgba(255,255,255,.58);
-  --pane: rgba(255,255,255,.34);
-  --lens: rgba(255,255,255,.60); --lens-2: rgba(255,255,255,.72); --lens-hover: rgba(255,255,255,.92);
-  --rim: rgba(255,255,255,.95); --rim-top: rgba(255,255,255,1); --spec: rgba(255,255,255,.5);
+  --blur: 36px;
+  --slab: rgba(242,245,252,.58); --slab-top: rgba(255,255,255,.72);
+  --pane: rgba(248,250,255,.76);
+  --lens: rgba(255,255,255,.78); --lens-2: rgba(255,255,255,.84); --lens-hover: rgba(255,255,255,.96);
+  --rim: rgba(255,255,255,.92); --rim-top: rgba(255,255,255,1); --spec: rgba(255,255,255,.65);
   --line: rgba(0,0,0,.06); --ctl-line: rgba(0,0,0,.08);
   --shadow: 0 24px 60px rgba(40,60,120,.22), 0 4px 12px rgba(40,60,120,.08);
   --accent: #0a84ff; --green: #34c759; --amber: #ff9f0a; --red: #ff453a;
-  --sel: rgba(255,255,255,.78); --track: rgba(0,0,0,.06);
+  --sel: rgba(255,255,255,.82); --track: rgba(0,0,0,.06);
   --bg-solid: #f5f5f7; --radius: 12px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --fg: rgba(255,255,255,.94); --fg-2: rgba(255,255,255,.62); --fg-3: rgba(255,255,255,.40);
-    --slab: rgba(255,255,255,.10); --slab-top: rgba(255,255,255,.16); --pane: rgba(255,255,255,.06);
+    --slab: rgba(26,28,34,.62); --slab-top: rgba(38,40,48,.72); --pane: rgba(22,24,30,.78);
     --lens: rgba(255,255,255,.10); --lens-2: rgba(255,255,255,.16); --lens-hover: rgba(255,255,255,.26);
-    --rim: rgba(255,255,255,.30); --rim-top: rgba(255,255,255,.55); --spec: rgba(255,255,255,.22);
+    --rim: rgba(255,255,255,.24); --rim-top: rgba(255,255,255,.45); --spec: rgba(255,255,255,.16);
     --line: rgba(255,255,255,.10); --ctl-line: rgba(255,255,255,.18);
     --shadow: 0 30px 70px rgba(0,0,0,.45), 0 6px 16px rgba(0,0,0,.2);
     --sel: rgba(255,255,255,.20); --track: rgba(255,255,255,.12); --bg-solid: #1c1c1e;
@@ -29,14 +29,35 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --fg: rgba(255,255,255,.94); --fg-2: rgba(255,255,255,.62); --fg-3: rgba(255,255,255,.40);
-  --slab: rgba(255,255,255,.10); --slab-top: rgba(255,255,255,.16); --pane: rgba(255,255,255,.06);
+  --slab: rgba(26,28,34,.62); --slab-top: rgba(38,40,48,.72); --pane: rgba(22,24,30,.78);
   --lens: rgba(255,255,255,.10); --lens-2: rgba(255,255,255,.16); --lens-hover: rgba(255,255,255,.26);
-  --rim: rgba(255,255,255,.30); --rim-top: rgba(255,255,255,.55); --spec: rgba(255,255,255,.22);
+  --rim: rgba(255,255,255,.24); --rim-top: rgba(255,255,255,.45); --spec: rgba(255,255,255,.16);
   --line: rgba(255,255,255,.10); --ctl-line: rgba(255,255,255,.18);
   --shadow: 0 30px 70px rgba(0,0,0,.45), 0 6px 16px rgba(0,0,0,.2);
   --sel: rgba(255,255,255,.20); --track: rgba(255,255,255,.12); --bg-solid: #1c1c1e;
 }
-html[data-vibrancy="1"] .win { backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-vibrancy="1"] .win {
+  backdrop-filter: blur(36px) saturate(160%); -webkit-backdrop-filter: blur(36px) saturate(160%);
+  background: linear-gradient(180deg, rgba(255,255,255,calc(.42 + var(--material, .5) * .28)), rgba(242,245,252,calc(.34 + var(--material, .5) * .26)));
+}
+html[data-vibrancy="1"] .main {
+  background: rgba(248,250,255,calc(.72 + var(--material, .5) * .18));
+  backdrop-filter: blur(40px) saturate(150%); -webkit-backdrop-filter: blur(40px) saturate(150%);
+}
+html[data-vibrancy="1"][data-theme="dark"] .win {
+  background: linear-gradient(180deg, rgba(32,34,42,calc(.52 + var(--material, .5) * .24)), rgba(22,24,30,calc(.46 + var(--material, .5) * .24)));
+}
+html[data-vibrancy="1"][data-theme="dark"] .main {
+  background: rgba(20,22,28,calc(.72 + var(--material, .5) * .18));
+}
+@media (prefers-color-scheme: dark) {
+  html[data-vibrancy="1"]:not([data-theme="light"]) .win {
+    background: linear-gradient(180deg, rgba(32,34,42,calc(.52 + var(--material, .5) * .24)), rgba(22,24,30,calc(.46 + var(--material, .5) * .24)));
+  }
+  html[data-vibrancy="1"]:not([data-theme="light"]) .main {
+    background: rgba(20,22,28,calc(.72 + var(--material, .5) * .18));
+  }
+}
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font-family: var(--font); color: var(--fg); -webkit-font-smoothing: antialiased; }
@@ -70,10 +91,10 @@ button { cursor: pointer; }
 /* content pane: a lighter inset sheet */
 .main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; margin: 8px 8px 8px 0; border-radius: 18px; background: var(--pane); box-shadow: inset 0 0 0 1px var(--rim); position: relative; }
 .main::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(70% 30% at 50% 0%, var(--spec), transparent 70%); }
-.main__head { padding: 30px 28px 10px; }
+.main__head { padding: 30px 28px 12px; position: relative; z-index: 2; }
 .main__head h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
 .main__head p { margin: 5px 0 0; font-size: 13px; color: var(--fg-2); min-height: 1em; }
-.page { padding: 8px 24px 24px; overflow: auto; flex: 1; }
+.page { padding: 8px 24px 24px; overflow: auto; flex: 1; -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 10px); mask-image: linear-gradient(180deg, transparent 0, #000 10px); }
 
 .group { background: var(--lens); border-radius: 16px; box-shadow: inset 0 0 0 1px var(--rim); overflow: hidden; margin-bottom: 16px; }
 .group__title { font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--fg-2); padding: 14px 18px 2px; }

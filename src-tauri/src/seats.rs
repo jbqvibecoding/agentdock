@@ -89,7 +89,7 @@ impl SeatsConfig {
                     "grok-bot",
                     "Grok Bot",
                     "Grok Bot",
-                    DriverKind::App { bundle_id: "com.cursor.grokbot".into(), driver: "grok-bot".into() },
+                    DriverKind::App { bundle_id: "com.anysphere.sand".into(), driver: "grok-bot".into() },
                     true,
                     SeatStatus::Unknown,
                 ),
@@ -122,13 +122,25 @@ impl SeatsConfig {
     }
 
     pub fn load(path: &Path) -> Self {
-        match std::fs::read_to_string(path) {
+        let mut cfg = match std::fs::read_to_string(path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
                 tracing::warn!("seats.json unreadable ({e}); using defaults");
                 Self::defaults()
             }),
             Err(_) => Self::defaults(),
+        };
+        // Migrate legacy placeholder bundle ID (`com.cursor.grokbot`) to Grok Bot's real macOS bundle ID (`com.anysphere.sand`).
+        for s in &mut cfg.seats {
+            if let DriverKind::App { bundle_id, driver } = &mut s.driver {
+                if driver == "grok-bot" && bundle_id == "com.cursor.grokbot" {
+                    *bundle_id = "com.anysphere.sand".into();
+                    if s.status == SeatStatus::Unavailable {
+                        s.status = SeatStatus::Unknown;
+                    }
+                }
+            }
         }
+        cfg
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {

@@ -60,14 +60,36 @@ end tell"#,
 #[derive(Debug, Default)]
 pub struct AppDriver;
 
+#[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+}
+
 impl AppDriver {
+    pub fn resolve_bundle_id(bundle_id: &str) -> &str {
+        if bundle_id == "com.cursor.grokbot" {
+            "com.anysphere.sand"
+        } else {
+            bundle_id
+        }
+    }
+
     pub fn is_installed(bundle_id: &str) -> bool {
         #[cfg(target_os = "macos")]
         {
+            let bid = Self::resolve_bundle_id(bundle_id);
             let out = std::process::Command::new("osascript")
-                .args(["-e", &format!("id of application id \"{bundle_id}\"")])
+                .args(["-e", &format!("id of application id \"{bid}\"")])
                 .output();
-            return out.map(|o| o.status.success()).unwrap_or(false);
+            if out.map(|o| o.status.success()).unwrap_or(false) {
+                return true;
+            }
+            if bid == "com.anysphere.sand" {
+                return std::path::Path::new("/Applications/Grok Bot.app").exists();
+            }
+            return false;
         }
         #[allow(unreachable_code)]
         {
@@ -76,8 +98,40 @@ impl AppDriver {
         }
     }
 
+    pub fn is_ax_trusted() -> bool {
+        #[cfg(target_os = "macos")]
+        unsafe {
+            return AXIsProcessTrusted();
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
+    /// Trigger the native macOS Accessibility permission prompt so the current binary is added to
+    /// System Settings › Privacy & Security › Accessibility automatically.
+    pub fn prompt_ax_trust() -> bool {
+        #[cfg(target_os = "macos")]
+        unsafe {
+            use objc2_foundation::{NSNumber, NSString};
+            let key = NSString::from_str("AXTrustedCheckOptionPrompt");
+            let val = NSNumber::new_bool(true);
+            let dict: *mut objc2::runtime::AnyObject = objc2::msg_send![
+                objc2::class!(NSDictionary),
+                dictionaryWithObject: &*val,
+                forKey: &*key
+            ];
+            return AXIsProcessTrustedWithOptions(dict as *const std::ffi::c_void);
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
     pub fn run_steps(spec: &DriverSpec, steps: &[Step]) -> Result<(), DriverError> {
-        let bundle = spec.bundle_id.as_deref().ok_or(DriverError::Unsupported)?;
+        let raw_bundle = spec.bundle_id.as_deref().ok_or(DriverError::Unsupported)?;
+        let bundle = Self::resolve_bundle_id(raw_bundle);
+        if !Self::is_ax_trusted() {
+            return Err(DriverError::NeedsAuth);
+        }
         for step in steps {
             match step {
                 Step::Click { selectors } => {
@@ -130,7 +184,29 @@ impl AppDriver {
     }
 
     pub fn probe(spec: &DriverSpec) -> Result<ProbeResult, DriverError> {
-        let bundle = spec.bundle_id.as_deref().ok_or(DriverError::Unsupported)?;
+        let raw_bundle = spec.bundle_id.as_deref().ok_or(DriverError::Unsupported)?;
+        let bundle = Self::resolve_bundle_id(raw_bundle);
+        if !Self::is_installed(bundle) {
+            return Err(DriverError::Unsupported);
+        }
+        if !Self::is_ax_trusted() {
+            return Err(DriverError::NeedsAuth);
+        }
+        let running = run_osascript(&format!(
+            "tell application \"System Events\" to (exists (first application process whose bundle identifier is \"{bundle}\"))"
+        ))
+        .map(|r| r == "true")
+        .unwrap_or(false);
+        if !running {
+            return Ok(ProbeResult {
+                in_call: false,
+                muted: false,
+                needs_human: false,
+                logged_in: true,
+                account: None,
+                url: None,
+            });
+        }
         let any = |sels: &[String]| -> bool {
             sels.iter().filter_map(|s| parse_selector(s)).any(|sel| {
                 run_osascript(&applescript_find(bundle, &sel, "set ok to true")).map(|r| r == "ok").unwrap_or(false)
@@ -140,7 +216,7 @@ impl AppDriver {
             in_call: any(&spec.probe.in_call),
             muted: any(&spec.probe.muted),
             needs_human: any(&spec.probe.needs_human),
-            logged_in: any(&spec.probe.logged_in),
+            logged_in: true,
             account: None,
             url: None,
         })
@@ -148,7 +224,8 @@ impl AppDriver {
 
     /// Bring the app forward (needed for AX on some clients), remembering the previous front app.
     pub fn activate(bundle_id: &str) -> Result<(), DriverError> {
-        run_osascript(&format!("tell application id \"{bundle_id}\" to activate")).map(|_| ())
+        let bid = Self::resolve_bundle_id(bundle_id);
+        run_osascript(&format!("tell application id \"{bid}\" to activate")).map(|_| ())
     }
 }
 

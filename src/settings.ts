@@ -35,6 +35,7 @@ async function saveSettings(patch: Partial<AppSettings>) {
 function applySettingsLocally() {
   applyTheme(settings.theme);
   document.documentElement.toggleAttribute("data-reduce-motion", settings.reduce_motion);
+  document.documentElement.style.setProperty("--material", String(settings.material_strength ?? 0.5));
 }
 
 function toggle(checked: boolean, on: (v: boolean) => void): HTMLButtonElement {
@@ -238,6 +239,7 @@ function renderAppearance() {
     el("p", "note", "不通话时 Dock 的样子。「常驻宠物」会显示最近一位 agent 的头像（可用 GIF），通话时动起来——和 ChatGPT 桌面端的宠物同类，但这里的宠物是你的 agent。"));
 
   const matStrength = el("input") as HTMLInputElement; matStrength.type = "range"; matStrength.min = "0"; matStrength.max = "1"; matStrength.step = "0.05"; matStrength.value = String(settings.material_strength);
+  matStrength.addEventListener("input", () => saveSettings({ material_strength: Number(matStrength.value) }));
   matStrength.addEventListener("change", () => saveSettings({ material_strength: Number(matStrength.value) }));
   const gTheme = group("外观",
     row("主题", "跟随系统时会随 macOS / Windows 的深浅色实时切换", seg<AppSettings["theme"]>([["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]], settings.theme, (v) => saveSettings({ theme: v }))),
@@ -246,11 +248,25 @@ function renderAppearance() {
   const snap = el("select") as HTMLSelectElement;
   for (const [v, l] of [["free", "自由（拖到哪就停在哪）"], ["top_center", "顶部居中"], ["bottom_center", "底部居中"], ["top_left", "左上"], ["top_right", "右上"], ["bottom_left", "左下"], ["bottom_right", "右下"]] as [AppSettings["snap"], string][]) snap.append(new Option(l, v, false, v === settings.snap));
   snap.addEventListener("change", () => { const v = snap.value as AppSettings["snap"]; saveSettings(v === "free" ? { snap: v } : { snap: v, dock_anchor: null }); });
+  const curScale = Math.min(1.6, Math.max(0.7, settings.dock_scale ?? 1));
+  const scaleLabel = el("span", "chip", `${Math.round(curScale * 100)}%`);
+  const scaleRange = el("input") as HTMLInputElement; scaleRange.type = "range"; scaleRange.min = "0.7"; scaleRange.max = "1.6"; scaleRange.step = "0.05"; scaleRange.value = String(curScale);
+  const scaleReset = el("button", "btn sm", "100%"); scaleReset.type = "button";
+  const onScale = (v: number) => {
+    const clamped = Math.round(Math.min(1.6, Math.max(0.7, v)) * 20) / 20;
+    scaleRange.value = String(clamped);
+    scaleLabel.textContent = `${Math.round(clamped * 100)}%`;
+    saveSettings({ dock_scale: clamped });
+  };
+  scaleRange.addEventListener("input", () => onScale(Number(scaleRange.value)));
+  scaleRange.addEventListener("change", () => onScale(Number(scaleRange.value)));
+  scaleReset.addEventListener("click", () => onScale(1));
   const gLayout = group("布局",
+    row("大小", "等比例缩放整条胶囊、按钮与图标（70%–160%，不变形）；也可直接拖动胶囊右/下边缘或在胶囊上滚轮缩放", [scaleLabel, scaleRange, scaleReset]),
     row("方向", `横向像 Spotlight，竖向像侧边 Dock；快捷键 ${settings.hotkeys.orientation.split("+").map(pretty).join("")} 或右键胶囊可随时切换`, seg<AppSettings["orientation"]>([["horizontal", "横向"], ["vertical", "竖向"]], settings.orientation ?? "horizontal", (v) => saveSettings({ orientation: v }))),
     row("位置", "直接拖动 Dock 的玻璃部分或末端把手即可放到任意位置（自动记忆）；或选一个屏幕边缘吸附", snap),
-    row("收起方式", "自动：空闲一段时间折回；固定展开：只有 ⌥Space / 电源钮才收起；固定收起：鼠标停上去只是预览，移开立即收回", seg<AppSettings["collapse_mode"]>([["auto", "自动"], ["pinned_expanded", "固定展开"], ["pinned_collapsed", "固定收起"]], settings.collapse_mode ?? "auto", (v) => saveSettings({ collapse_mode: v }))),
-    row("自动收起", "空闲且鼠标不在上面时，展开的胶囊自动折回小圆点 / 宠物；鼠标停在圆点上 0.3 秒自动展开；通话中不收起", (() => { const sel = el("select") as HTMLSelectElement; for (const [v, l] of [[0, "从不"], [3, "3 秒"], [8, "8 秒"], [15, "15 秒"], [30, "30 秒"]] as [number, string][]) sel.append(new Option(l, String(v), false, v === settings.auto_collapse_secs)); sel.addEventListener("change", () => saveSettings({ auto_collapse_secs: Number(sel.value) })); return sel; })()),
+    row("收起方式", "自动：空闲一段时间折回；固定展开：只有 ⌥Space / 电源钮才收起；固定收起：点开后鼠标移开立即收回", seg<AppSettings["collapse_mode"]>([["auto", "自动"], ["pinned_expanded", "固定展开"], ["pinned_collapsed", "固定收起"]], settings.collapse_mode ?? "auto", (v) => saveSettings({ collapse_mode: v }))),
+    row("自动收起", "空闲且鼠标不在上面时，展开的胶囊自动折回小圆点 / 宠物；点击圆点或按 ⌥Space 展开；通话中不收起", (() => { const sel = el("select") as HTMLSelectElement; for (const [v, l] of [[0, "从不"], [3, "3 秒"], [8, "8 秒"], [15, "15 秒"], [30, "30 秒"]] as [number, string][]) sel.append(new Option(l, String(v), false, v === settings.auto_collapse_secs)); sel.addEventListener("change", () => saveSettings({ auto_collapse_secs: Number(sel.value) })); return sel; })()),
     row("显示名字", "", seg<AppSettings["show_names"]>([["hover", "仅悬停"], ["always", "总是"], ["never", "从不"]], settings.show_names, (v) => saveSettings({ show_names: v }))),
     row("减弱动画", "跟随系统「减弱动态效果」时形变退化为淡入淡出", toggle(settings.reduce_motion, (v) => saveSettings({ reduce_motion: v }))),
   );

@@ -4,7 +4,7 @@
   "version": 1,
   "verified": false,
   "url": null,
-  "bundle_id": "com.cursor.grokbot",
+  "bundle_id": "com.anysphere.sand",
   "user_agent": null,
   "call": [
     { "op": "clear", "selectors": ["AXTextArea", "AXTextField"] },

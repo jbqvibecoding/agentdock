@@ -45,33 +45,40 @@ function currentSeatId(): string | null {
 // ───────── layout: the window is resized to exactly the glass shape ─────────
 const H = 56;
 const BTN = 44, PAD = 6;
+let liveScale: number | null = null;
+const currentScale = () => Math.min(1.6, Math.max(0.7, liveScale ?? settings?.dock_scale ?? 1));
 
 const vertical = () => dock.dataset.orient === "vertical";
 
 /** Length of the bar along its main axis, measured from the real flex content so text fits. */
-function measureBar(): number {
+function measureBar(s = currentScale()): number {
   const axis = vertical() ? "height" : "width";
   bar.style[axis] = "max-content";
-  const len = Math.ceil(vertical() ? bar.scrollHeight : bar.scrollWidth) + PAD * 2;
+  const pad = Math.round(PAD * s);
+  const btn = Math.round(BTN * s);
+  const len = Math.ceil(vertical() ? bar.scrollHeight : bar.scrollWidth) + pad * 2;
   bar.style[axis] = "";
-  return Math.max(len, BTN + PAD * 2);
+  return Math.max(len, btn + pad * 2);
 }
 
 let lastSize = { w: 0, h: 0 };
 let pendingShrink: number | undefined;
 async function fit(form: "dot" | "pet" | "bar") {
+  const s = currentScale();
+  const hBar = Math.round(H * s);
   let w: number, h: number;
-  if (form === "dot") { w = 36; h = 36; }
-  else if (form === "pet") { w = 92; h = 40; }
-  else if (vertical()) { w = H; h = measureBar(); }
-  else { w = measureBar(); h = H; }
+  if (form === "dot") { w = Math.round(36 * s); h = Math.round(36 * s); }
+  else if (form === "pet") { w = Math.round(92 * s); h = Math.round(40 * s); }
+  else if (vertical()) { w = hBar; h = measureBar(s); }
+  else { w = measureBar(s); h = hBar; }
   dock.style.width = `${w}px`;
   dock.style.height = `${h}px`;
   if (w === lastSize.w && h === lastSize.h) return;   // hover re-layouts must not spam resize_dock
   const grow = w > lastSize.w || h > lastSize.h;
   window.clearTimeout(pendingShrink);
-  const resize = () => api.invoke("resize_dock", { width: Math.max(w, 36), height: Math.max(h, 36) });
-  if (grow) await resize();
+  const minSide = Math.round(36 * 0.7);
+  const resize = () => api.invoke("resize_dock", { width: Math.max(w, minSide), height: Math.max(h, minSide) });
+  if (api.isTauri || grow || liveScale !== null) await resize();
   else pendingShrink = window.setTimeout(resize, settings?.reduce_motion ? 140 : 480);
   lastSize = { w, h };
 }
@@ -284,7 +291,9 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 function stopWave() { cancelAnimationFrame(raf); raf = 0; }
 
 // ───────── wiring ─────────
-collapsed.addEventListener("click", () => api.invoke("set_expanded", { expanded: true }));
+collapsed.addEventListener("click", () => {
+  if (Date.now() - lastDragEnd > 300) void api.invoke("set_expanded", { expanded: true });
+});
 collapsed.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") api.invoke("set_expanded", { expanded: true }); });
 dock.addEventListener("mouseleave", () => { if (hoverSeat) { hoverSeat = null; renderStatusText(); } });
 window.addEventListener("blur", () => { if (hoverSeat) { hoverSeat = null; renderStatusText(); } });
@@ -337,18 +346,14 @@ async function checkIdle() {
   if (over) { touchIdle(); return; }
   void api.invoke("set_expanded", { expanded: false });
 }
-let hoverExpandTimer: number | undefined;
 function pointerEntered() {
   if (hovering) return;
   hovering = true;
   window.clearTimeout(idleTimer);
-  // resting on the dot for a moment opens it, so the hotkey is never required
-  if (!state.expanded) hoverExpandTimer = window.setTimeout(() => { if (hovering && !state.expanded && !dragging) void api.invoke("set_expanded", { expanded: true }); }, 300);
 }
 function pointerLeft() {
   if (!hovering) return;
   hovering = false;
-  window.clearTimeout(hoverExpandTimer);
   touchIdle();
 }
 dock.addEventListener("pointerenter", pointerEntered);
@@ -366,17 +371,60 @@ window.addEventListener("error", (e) => uiLog("error", `${e.message} @${e.filena
 window.addEventListener("unhandledrejection", (e) => uiLog("error", `unhandled: ${String((e as PromiseRejectionEvent).reason)}`));
 let grab: { x: number; y: number } | null = null;   // pointer-down point, in window px
 let dragging = false;
+let resizeGrab: { sx: number; sy: number; startScale: number; signX: number; signY: number } | null = null;
+let resizing = false;
 let lastDragEnd = 0;                                // lets the grip tell a tap from the end of a drag
 let dragRaf = 0;
 function followCursor() {
   dragRaf = 0;
   if (grab && dragging) void api.invoke("drag_dock", { offsetX: grab.x, offsetY: grab.y });
 }
+function detectResizeEdge(e: PointerEvent): "ew" | "ns" | null {
+  const r = dock.getBoundingClientRect();
+  if (r.width < 10 || r.height < 10) return null;
+  const nearRight = r.right - e.clientX <= 7;
+  const nearBottom = r.bottom - e.clientY <= 7;
+  if (nearRight) return "ew";
+  if (nearBottom) return "ns";
+  return null;
+}
 dock.addEventListener("pointerdown", (e) => {
   if (e.button !== 0 || (e.target as HTMLElement).closest("button, canvas")) return;
+  const edge = !(e.target as HTMLElement).closest(".grip") ? detectResizeEdge(e) : null;
+  if (edge || e.altKey || e.metaKey) {
+    const r = dock.getBoundingClientRect();
+    const signX = e.clientX >= r.left + r.width / 2 ? 1 : -1;
+    const signY = e.clientY >= r.top + r.height / 2 ? 1 : -1;
+    resizeGrab = { sx: e.screenX, sy: e.screenY, startScale: currentScale(), signX, signY };
+    return;
+  }
   grab = { x: e.clientX, y: e.clientY };
 });
 window.addEventListener("pointermove", (e) => {
+  if (!grab && !resizeGrab) {
+    const edge = detectResizeEdge(e);
+    if (edge) dock.dataset.resizeEdge = edge; else delete dock.dataset.resizeEdge;
+    return;
+  }
+  if (resizeGrab) {
+    const dx = (e.screenX - resizeGrab.sx) * resizeGrab.signX;
+    const dy = (e.screenY - resizeGrab.sy) * resizeGrab.signY;
+    if (!resizing) {
+      if (Math.hypot(dx, dy) < 3) return;
+      resizing = true;
+      dock.setPointerCapture(e.pointerId);
+      dock.classList.add("resizing");
+    }
+    const delta = (dx + dy) / 220;
+    const next = Math.round(Math.min(1.6, Math.max(0.7, resizeGrab.startScale + delta)) * 40) / 40;
+    if (next !== liveScale) {
+      liveScale = next;
+      document.documentElement.style.setProperty("--scale", String(next));
+      const form = (dock.dataset.form as "dot" | "pet" | "bar") || "bar";
+      void fit(form);
+    }
+    return;
+  }
   if (!grab) return;
   if (!dragging) {
     if (Math.hypot(e.clientX - grab.x, e.clientY - grab.y) < 4) return;
@@ -388,6 +436,24 @@ window.addEventListener("pointermove", (e) => {
 });
 const endDrag = () => {
   grab = null;
+  if (resizeGrab) {
+    const finalScale = liveScale;
+    resizeGrab = null;
+    if (resizing) {
+      resizing = false;
+      lastDragEnd = Date.now();
+      dock.classList.remove("resizing");
+      if (finalScale !== null && settings) {
+        settings = { ...settings, dock_scale: finalScale };
+        liveScale = null;
+        void api.invoke("save_settings", { settings });
+      } else {
+        liveScale = null;
+      }
+      touchIdle();
+    }
+    return;
+  }
   if (!dragging) return;
   dragging = false;
   lastDragEnd = Date.now();
@@ -400,6 +466,24 @@ const endDrag = () => {
 window.addEventListener("pointerup", endDrag);
 window.addEventListener("pointercancel", endDrag);
 
+// Wheel / trackpad pinch over the pill: proportional zoom in [0.70, 1.60].
+let wheelSaveTimer: number | undefined;
+dock.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  if (!settings) return;
+  const dir = e.deltaY < 0 ? 1 : e.deltaY > 0 ? -1 : 0;
+  if (!dir) return;
+  const step = e.ctrlKey ? 0.03 : 0.05;
+  const next = Math.round(Math.min(1.6, Math.max(0.7, currentScale() + dir * step)) * 20) / 20;
+  if (next === currentScale()) return;
+  settings = { ...settings, dock_scale: next };
+  document.documentElement.style.setProperty("--scale", String(next));
+  const form = (dock.dataset.form as "dot" | "pet" | "bar") || "bar";
+  void fit(form);
+  window.clearTimeout(wheelSaveTimer);
+  wheelSaveTimer = window.setTimeout(() => { if (settings) void api.invoke("save_settings", { settings }); }, 220);
+}, { passive: false });
+
 function applySettings(s: AppSettings) {
   settings = s;
   dock.dataset.orient = s.orientation ?? "horizontal";
@@ -407,6 +491,7 @@ function applySettings(s: AppSettings) {
   applyTheme(s.theme);
   document.documentElement.toggleAttribute("data-reduce-motion", s.reduce_motion);
   document.documentElement.style.setProperty("--material", String(s.material_strength));
+  document.documentElement.style.setProperty("--scale", String(Math.min(1.6, Math.max(0.7, s.dock_scale ?? 1))));
 }
 
 async function boot() {
@@ -417,7 +502,7 @@ async function boot() {
   applySettings(await api.invoke<AppSettings>("get_settings"));
   seats = await api.invoke<SeatView[]>("get_seats");
   state = await api.invoke<DockState>("get_state");
-  lastSize = { w: 640, h: 140 };
+  lastSize = { w: 0, h: 0 };
   await render();
   api.on<DockState>("dock:state", (s) => { state = s; render(); });
   api.on<SeatView[]>("seats:changed", (s) => { seats = s; iconCache.clear(); render(); });

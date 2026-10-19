@@ -111,6 +111,9 @@ pub struct AppSettings {
     pub reduce_motion: bool,
     /// 0.0–1.0, how strong the glass tint is on top of the system material.
     pub material_strength: f32,
+    /// Proportional scale factor for the entire Dock pill (0.70–1.60, default 1.0).
+    #[serde(default = "default_dock_scale")]
+    pub dock_scale: f32,
     pub hotkeys: Hotkeys,
     pub mute_mode: MuteMode,
     pub pause_media_in_call: bool,
@@ -120,6 +123,9 @@ pub struct AppSettings {
 
 fn default_auto_collapse() -> u32 {
     8
+}
+fn default_dock_scale() -> f32 {
+    1.0
 }
 fn default_orientation_key() -> String {
     "Alt+O".into()
@@ -160,6 +166,7 @@ impl Default for AppSettings {
             show_names: ShowNames::Hover,
             reduce_motion: false,
             material_strength: 0.5,
+            dock_scale: default_dock_scale(),
             hotkeys: Hotkeys {
                 toggle: "Alt+Space".into(),
                 mute: "Alt+M".into(),

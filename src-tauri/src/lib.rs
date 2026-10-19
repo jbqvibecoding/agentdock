@@ -31,6 +31,8 @@ pub struct AppState {
     pub hotkey_map: Mutex<Vec<(Shortcut, HotkeyAction)>>,
     /// Seats whose login window is currently shown; auto-hidden once a probe says logged in.
     pub logging_in: Mutex<std::collections::HashSet<String>>,
+    /// Authoritative logical size of the dock pill so drags never inherit an OS-resized frame.
+    pub dock_size: Mutex<(f64, f64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -308,13 +310,16 @@ fn resize_dock(app: AppHandle, width: f64, height: f64) -> CmdResult<()> {
     let win = app.get_webview_window("dock").ok_or("no dock window")?;
     let (snap, anchor) = {
         let st = app.state::<AppState>();
+        *st.dock_size.lock().unwrap() = (width, height);
         let s = st.settings.lock().unwrap();
         (s.snap, s.dock_anchor)
     };
     #[cfg(target_os = "macos")]
     {
         // AppKit setters only take effect on the main thread; commands run on the async runtime.
-        let radius = (width.min(height) / 2.0).min(28.0);
+        // Always half of the shorter side so scaled-up pills (e.g. 1.5x → 84pt tall, radius 42pt)
+        // stay true semicircles at both ends and never flatten into a box.
+        let radius = width.min(height) / 2.0;
         let _ = app.run_on_main_thread(move || liquid_glass::set_corner_radius(radius));
     }
     position_dock(&win, width, height, snap, anchor).map_err(err)
@@ -343,12 +348,17 @@ fn drag_dock(app: AppHandle, offset_x: f64, offset_y: f64) -> CmdResult<()> {
     // that re-applies the *stored* anchor, yanking the window back mid-drag — whichever call landed
     // last won, so some drags silently ended where they started. Track the live centre in memory
     // (not on disk) so any concurrent `position_dock` resolves to the point under the cursor.
-    let size = win.outer_size().map_err(err)?;
-    {
+    let (w, h) = {
         let st = app.state::<AppState>();
+        let (w, h) = *st.dock_size.lock().unwrap();
         let mut s = st.settings.lock().unwrap();
         s.snap = settings::Snap::Free;
-        s.dock_anchor = Some(settings::DockAnchor { x: x + size.width as f64 / sc / 2.0, y: y + size.height as f64 / sc / 2.0 });
+        s.dock_anchor = Some(settings::DockAnchor { x: x + w / 2.0, y: y + h / 2.0 });
+        (w, h)
+    };
+    let size = win.outer_size().map_err(err)?;
+    if ((size.width as f64 / sc) - w).abs() > 1.0 || ((size.height as f64 / sc) - h).abs() > 1.0 {
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
     }
     win.set_position(tauri::LogicalPosition::new(x, y)).map_err(err)
 }
@@ -551,6 +561,12 @@ fn connect_account(app: AppHandle, seat_id: String) -> CmdResult<()> {
                 set_seat_status(&app, &seat_id, SeatStatus::Unavailable);
                 return Err("该应用尚未安装".into());
             }
+            if AppDriver::prompt_ax_trust() {
+                let _ = AppDriver::activate(bundle_id);
+                set_seat_status(&app, &seat_id, SeatStatus::Connected);
+                return Ok(());
+            }
+            set_seat_status(&app, &seat_id, SeatStatus::NeedsAuth);
             #[cfg(target_os = "macos")]
             {
                 use tauri_plugin_opener::OpenerExt;
@@ -747,10 +763,15 @@ fn dock_menu(app: AppHandle) -> CmdResult<()> {
         _ => format!("收起时显示宠物形象    {}", tip(&hk.form)),
     };
     let toggle_label = format!("{}    {}", if expanded { "收起" } else { "展开" }, tip(&hk.toggle));
+    let cur_pct = (app.state::<AppState>().settings.lock().unwrap().dock_scale.clamp(0.7, 1.6) * 100.0).round() as i32;
     let items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
         Box::new(MenuItem::with_id(&app, "dock-toggle", toggle_label, true, None::<&str>).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "dock-orientation", orient_label, true, None::<&str>).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "dock-form", form_label, true, None::<&str>).map_err(err)?),
+        Box::new(PredefinedMenuItem::separator(&app).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-zoom-in", "放大 Dock (+10%)", cur_pct < 160, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-zoom-out", "缩小 Dock (-10%)", cur_pct > 70, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-zoom-reset", format!("重置大小 (当前 {cur_pct}%)"), cur_pct != 100, None::<&str>).map_err(err)?),
         Box::new(PredefinedMenuItem::separator(&app).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "settings", "设置…", true, None::<&str>).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "quit", "退出 AgentDock", true, None::<&str>).map_err(err)?),
@@ -760,12 +781,24 @@ fn dock_menu(app: AppHandle) -> CmdResult<()> {
     menu.popup(win.as_ref().window()).map_err(err)
 }
 
+fn step_dock_scale(app: &AppHandle, delta: Option<f32>) {
+    let mut s = app.state::<AppState>().settings.lock().unwrap().clone();
+    s.dock_scale = match delta {
+        Some(d) => ((s.dock_scale + d).clamp(0.7, 1.6) * 20.0).round() / 20.0,
+        None => 1.0,
+    };
+    let _ = persist_settings(app, s);
+}
+
 /// Window-menu (pill context menu) events; the tray has its own handler.
 fn on_app_menu(app: &AppHandle, id: &str) {
     match id {
         "dock-toggle" => dispatch(app, Event::ToggleExpanded),
         "dock-orientation" => { let _ = toggle_orientation(app.clone()); }
         "dock-form" => { let _ = toggle_collapsed_form(app.clone()); }
+        "dock-zoom-in" => step_dock_scale(app, Some(0.1)),
+        "dock-zoom-out" => step_dock_scale(app, Some(-0.1)),
+        "dock-zoom-reset" => step_dock_scale(app, None),
         "settings" => { let _ = open_settings(app.clone()); }
         "quit" => app.exit(0),
         _ => {}
@@ -783,6 +816,11 @@ fn persist_settings(app: &AppHandle, settings: AppSettings) -> CmdResult<()> {
     settings.save(&settings::settings_path(&st.config_dir)).map_err(err)?;
     let _ = app.emit("settings:changed", &settings);
     apply_theme(app, settings.theme);
+    #[cfg(target_os = "macos")]
+    {
+        let strength = settings.material_strength as f64;
+        let _ = app.run_on_main_thread(move || liquid_glass::set_material_strength(strength));
+    }
     // Re-registering from inside a shortcut callback (⌥O / ⌥P toggles) deadlocks the global-shortcut
     // plugin on the main thread, so only touch the registrations when the bindings really changed.
     if hotkeys_changed {
@@ -825,7 +863,16 @@ fn hotkey_conflicts(st: tauri::State<AppState>, settings: AppSettings) -> Vec<St
 #[tauri::command]
 fn open_settings(app: AppHandle) -> CmdResult<()> {
     let win = app.get_webview_window("settings").ok_or("no settings window")?;
-    win.show().and_then(|_| win.set_focus()).map_err(err)
+    win.show().and_then(|_| win.set_focus()).map_err(err)?;
+    #[cfg(target_os = "macos")]
+    {
+        let w2 = win.clone();
+        let _ = win.run_on_main_thread(move || {
+            let _ = liquid_glass::clear_webview_backdrop(&w2);
+            liquid_glass::tune_all();
+        });
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -910,23 +957,26 @@ fn apply_theme(app: &AppHandle, theme: settings::Theme) {
     // light, near-black in dark) and paints it as a plain square under the pill; clear it again once
     // the appearance change has propagated.
     #[cfg(target_os = "macos")]
-    if let Some(dock) = app.get_webview_window("dock") {
-        for delay_ms in [0u64, 250, 800] {
-            let dock = dock.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                let d2 = dock.clone();
-                let _ = dock.run_on_main_thread(move || {
-                    if let Err(e) = liquid_glass::clear_webview_backdrop(&d2) {
-                        tracing::warn!("dock webview backdrop (theme): {e}");
-                    }
+    for label in ["dock", "settings"] {
+        if let Some(win) = app.get_webview_window(label) {
+            for delay_ms in [0u64, 250, 800] {
+                let win = win.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    let w2 = win.clone();
+                    let _ = win.run_on_main_thread(move || {
+                        if let Err(e) = liquid_glass::clear_webview_backdrop(&w2) {
+                            tracing::warn!("{label} webview backdrop (theme): {e}");
+                        }
+                        liquid_glass::tune_all();
+                    });
                 });
-            });
+            }
         }
     }
 }
 
-fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&WebviewWindow<R>>) {
+fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&WebviewWindow<R>>, strength: f64) {
     #[cfg(target_os = "macos")]
     {
         use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
@@ -934,7 +984,7 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
             tracing::warn!("dock webview backdrop: {e}");
         }
         // macOS 26+: the real thing — NSGlassEffectView (Liquid Glass). Older systems: vibrancy.
-        let glass_ok = liquid_glass::apply(dock, 28.0).unwrap_or_else(|e| {
+        let glass_ok = liquid_glass::apply(dock, 28.0, true, strength).unwrap_or_else(|e| {
             tracing::info!("NSGlassEffectView unavailable ({e}); falling back to NSVisualEffectView");
             false
         });
@@ -951,13 +1001,17 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
             }
         }
         if let Some(w) = settings_win {
-            if let Err(e) = apply_vibrancy(w, NSVisualEffectMaterial::Sidebar, None, Some(12.0)) {
-                tracing::warn!("settings vibrancy: {e}");
+            let _ = liquid_glass::clear_webview_backdrop(w);
+            if !liquid_glass::apply(w, 16.0, false, strength).unwrap_or(false) {
+                if let Err(e) = apply_vibrancy(w, NSVisualEffectMaterial::Sidebar, Some(NSVisualEffectState::Active), Some(16.0)) {
+                    tracing::warn!("settings vibrancy: {e}");
+                }
             }
         }
     }
     #[cfg(target_os = "windows")]
     {
+        let _ = strength;
         use window_vibrancy::{apply_acrylic, apply_mica};
         if apply_acrylic(dock, Some((18, 18, 18, 125))).is_ok() {
             *MATERIAL.lock().unwrap() = "Acrylic".into();
@@ -970,7 +1024,7 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = (dock, settings_win);
+        let _ = (dock, settings_win, strength);
     }
 }
 
@@ -980,28 +1034,138 @@ fn apply_glass<R: Runtime>(dock: &WebviewWindow<R>, settings_win: Option<&Webvie
 #[cfg(target_os = "macos")]
 mod liquid_glass {
     use objc2::rc::{Allocated, Retained};
-    use objc2::runtime::AnyObject;
+    use objc2::runtime::{AnyClass, AnyObject};
     use objc2::{msg_send, ClassType};
-    use objc2_foundation::NSObjectProtocol;
+    use objc2_foundation::{NSObjectProtocol, NSString};
     use objc2_app_kit::{NSAutoresizingMaskOptions, NSColor, NSView, NSWindow, NSWindowOrderingMode};
     use tauri::{Runtime, WebviewWindow};
 
-    /// The glass view we inserted under the dock webview (0 = none / fallback path).
-    static GLASS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+    /// The glass views inserted under the dock and settings webviews (0 = none / fallback path).
+    static DOCK_GLASS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+    static SETTINGS_GLASS: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+    static STRENGTH: std::sync::Mutex<f64> = std::sync::Mutex::new(0.5);
 
     /// Keep the native glass shape congruent with the CSS pill: at 36×36 (dot form) a 28pt radius
     /// renders as a rounded square peeking out from behind the circle, so clamp to half the side.
     pub fn set_corner_radius(radius: f64) {
-        let ptr = *GLASS.lock().unwrap();
+        let ptr = *DOCK_GLASS.lock().unwrap();
         if ptr == 0 {
             return;
         }
+        let strength = *STRENGTH.lock().unwrap();
         unsafe {
             let glass = &*(ptr as *const AnyObject);
             let _: () = msg_send![glass, setCornerRadius: radius];
-            let layer: *mut AnyObject = msg_send![glass, layer];
-            if !layer.is_null() {
-                let _: () = msg_send![layer, setCornerRadius: radius];
+            tune_glass_ptr(ptr, strength, true);
+        }
+    }
+
+    pub fn set_material_strength(strength: f64) {
+        let s = strength.clamp(0.0, 1.0);
+        *STRENGTH.lock().unwrap() = s;
+        tune_all();
+    }
+
+    pub fn tune_all() {
+        let s = *STRENGTH.lock().unwrap();
+        let dock_ptr = *DOCK_GLASS.lock().unwrap();
+        let settings_ptr = *SETTINGS_GLASS.lock().unwrap();
+        unsafe {
+            if dock_ptr != 0 {
+                tune_glass_ptr(dock_ptr, s, true);
+            }
+            if settings_ptr != 0 {
+                tune_glass_ptr(settings_ptr, s, false);
+            }
+        }
+    }
+
+    unsafe fn tune_glass_ptr(ptr: usize, strength: f64, is_dock: bool) {
+        if ptr == 0 {
+            return;
+        }
+        let glass_view = &*(ptr as *const NSView);
+        let _: () = msg_send![glass_view, layoutSubtreeIfNeeded];
+        for sub in glass_view.subviews().iter() {
+            let layer: *mut AnyObject = msg_send![&*sub, layer];
+            tune_layer(layer, strength, is_dock);
+        }
+    }
+
+    /// Tune the internal `SDFLayer` tree of `NSGlassEffectView`:
+    /// - Enable `CASDFGlassDisplacementEffect` lens refraction height according to `material_strength`.
+    /// - Force `CASDFKeyFillHighlightEffect` specular rim highlight on (macOS zeroes its opacity on
+    ///   non-key utility windows like the Dock).
+    /// - Reduce the white platter backing opacity so the wallpaper refracts clearly through the glass.
+    unsafe fn tune_layer(layer: *mut AnyObject, strength: f64, is_dock: bool) {
+        if layer.is_null() {
+            return;
+        }
+        let cls: *const AnyClass = msg_send![layer, class];
+        if !cls.is_null() {
+            let cname = (*cls).name().to_string_lossy();
+            if cname == "CASDFLayer" {
+                let eff_key = NSString::from_str("effect");
+                let eff: *mut AnyObject = msg_send![layer, valueForKey: &*eff_key];
+                if !eff.is_null() {
+                    let ecls: *const AnyClass = msg_send![eff, class];
+                    if !ecls.is_null() {
+                        let ename = (*ecls).name().to_string_lossy();
+                        if ename == "CASDFGlassDisplacementEffect" {
+                            let h: f64 = if is_dock { 10.0 + strength * 16.0 } else { 8.0 + strength * 10.0 };
+                            let has_h: bool = msg_send![eff, respondsToSelector: objc2::sel!(setHeight:)];
+                            if has_h {
+                                let _: () = msg_send![eff, setHeight: h];
+                            }
+                            let has_c: bool = msg_send![eff, respondsToSelector: objc2::sel!(setCurvature:)];
+                            if has_c {
+                                let _: () = msg_send![eff, setCurvature: 1.0f64];
+                            }
+                        } else if ename == "CASDFKeyFillHighlightEffect" {
+                            let op: f32 = (0.75 + strength * 0.25) as f32;
+                            let _: () = msg_send![layer, setOpacity: op];
+                            let has_kh: bool = msg_send![eff, respondsToSelector: objc2::sel!(setKeyHeight:)];
+                            if has_kh {
+                                let _: () = msg_send![eff, setKeyHeight: 1.5 + strength * 1.6];
+                            }
+                            let has_fh: bool = msg_send![eff, respondsToSelector: objc2::sel!(setFillHeight:)];
+                            if has_fh {
+                                let _: () = msg_send![eff, setFillHeight: 1.2 + strength * 1.2];
+                            }
+                            let has_c: bool = msg_send![eff, respondsToSelector: objc2::sel!(setCurvature:)];
+                            if has_c {
+                                let _: () = msg_send![eff, setCurvature: 0.9f64];
+                            }
+                            let has_kc: bool = msg_send![eff, respondsToSelector: objc2::sel!(setKeyColor:)];
+                            if has_kc {
+                                let key_ns = NSColor::colorWithWhite_alpha(1.0, 0.72 + strength * 0.28);
+                                let key_cg: *mut AnyObject = msg_send![&*key_ns, CGColor];
+                                let _: () = msg_send![eff, setKeyColor: key_cg];
+                            }
+                            let has_fc: bool = msg_send![eff, respondsToSelector: objc2::sel!(setFillColor:)];
+                            if has_fc {
+                                let fill_ns = NSColor::colorWithWhite_alpha(1.0, 0.42 + strength * 0.28);
+                                let fill_cg: *mut AnyObject = msg_send![&*fill_ns, CGColor];
+                                let _: () = msg_send![eff, setFillColor: fill_cg];
+                            }
+                        }
+                    }
+                }
+            } else if cname == "CALayer" {
+                let bg: *mut AnyObject = msg_send![layer, backgroundColor];
+                let filters: *mut AnyObject = msg_send![layer, filters];
+                if !bg.is_null() && !filters.is_null() {
+                    let base = if is_dock { 0.08 + strength * 0.42 } else { 0.55 + strength * 0.35 };
+                    let _: () = msg_send![layer, setOpacity: base as f32];
+                }
+            }
+        }
+        let sublayers: *mut AnyObject = msg_send![layer, sublayers];
+        if !sublayers.is_null() {
+            let count: usize = msg_send![sublayers, count];
+            for i in 0..count {
+                let sub: *mut AnyObject = msg_send![sublayers, objectAtIndex: i];
+                tune_layer(sub, strength, is_dock);
             }
         }
     }
@@ -1083,47 +1247,56 @@ mod liquid_glass {
         }
     }
 
-    pub fn apply<R: Runtime>(win: &WebviewWindow<R>, corner_radius: f64) -> Result<bool, String> {
+    pub fn apply<R: Runtime>(win: &WebviewWindow<R>, corner_radius: f64, is_dock: bool, strength: f64) -> Result<bool, String> {
         let Some(cls) = objc2::runtime::AnyClass::get(c"NSGlassEffectView") else { return Ok(false) };
         let ns_window = win.ns_window().map_err(|e| e.to_string())? as *mut NSWindow;
         if ns_window.is_null() {
             return Err("no NSWindow".into());
         }
+        let s = strength.clamp(0.0, 1.0);
+        *STRENGTH.lock().unwrap() = s;
         // SAFETY: Tauri hands us a live NSWindow pointer; we only call documented AppKit API on the
         // main thread (Tauri's setup hook runs there).
         unsafe {
             let window: &NSWindow = &*ns_window;
+            if is_dock {
+                window.setStyleMask(window.styleMask() & !objc2_app_kit::NSWindowStyleMask::Resizable);
+            }
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
+            window.setHasShadow(true);
             let Some(content) = window.contentView() else { return Err("no contentView".into()) };
             let bounds = content.bounds();
             let alloc: Allocated<AnyObject> = msg_send![cls, alloc];
             let glass: Retained<AnyObject> = msg_send![alloc, initWithFrame: bounds];
             let glass_view: &NSView = &*(Retained::as_ptr(&glass) as *const NSView);
             glass_view.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable);
-            let _: () = msg_send![&*glass, setCornerRadius: corner_radius];
-            // `cornerRadius` only shapes the glass material. After the window's appearance is
-            // overridden at runtime (settings › theme) the view's own tint pass fills its whole
-            // rectangular bounds, which showed as a faint box around the pill/dot in light mode.
-            // Clip the backing layer to the same rounded rect so nothing can paint outside it.
-            glass_view.setWantsLayer(true);
-            let layer: *mut AnyObject = msg_send![glass_view, layer];
-            if !layer.is_null() {
-                let _: () = msg_send![layer, setMasksToBounds: true];
-                let _: () = msg_send![layer, setCornerRadius: corner_radius];
+            // Variant 19 activates the full Liquid Glass pipeline: `glassBackground` + `displacementMap`
+            // (`CASDFGlassDisplacementEffect` optical edge lensing) + `glassForeground` + `CASDFKeyFillHighlightEffect`.
+            if glass_view.respondsToSelector(objc2::sel!(set_variant:)) {
+                let _: () = msg_send![&*glass, set_variant: 19isize];
+            } else if glass_view.respondsToSelector(objc2::sel!(setStyle:)) {
+                let _: () = msg_send![&*glass, setStyle: 1isize];
             }
-            *GLASS.lock().unwrap() = Retained::as_ptr(&glass) as usize;
+            let _: () = msg_send![&*glass, setCornerRadius: corner_radius];
             let _: () = msg_send![&*glass, setTintColor: std::ptr::null::<AnyObject>()];
             content.addSubview_positioned_relativeTo(glass_view, NSWindowOrderingMode::Below, None);
+            let ptr = Retained::into_raw(glass) as usize;
+            if is_dock {
+                *DOCK_GLASS.lock().unwrap() = ptr;
+            } else {
+                *SETTINGS_GLASS.lock().unwrap() = ptr;
+            }
             // Keep the webview itself transparent so the glass shows through.
             for sub in content.subviews().iter() {
                 if !std::ptr::eq(&*sub as *const NSView, glass_view) {
-                    let _: () = msg_send![&*sub, setValue: &*NSColor::clearColor(), forKey: &*objc2_foundation::NSString::from_str("backgroundColor")];
+                    let _: () = msg_send![&*sub, setValue: &*NSColor::clearColor(), forKey: &*NSString::from_str("backgroundColor")];
                     if sub.respondsToSelector(objc2::sel!(setDrawsBackground:)) {
                         let _: () = msg_send![&*sub, setDrawsBackground: false];
                     }
                 }
             }
+            tune_glass_ptr(ptr, s, is_dock);
         }
         let _ = NSView::class();
         Ok(true)
@@ -1170,12 +1343,15 @@ pub fn run() {
     tauri::Builder::default()
         .on_page_load(|webview, payload| {
             #[cfg(target_os = "macos")]
-            if webview.label() == "dock" && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                if let Some(w) = webview.window().get_webview_window("dock") {
+            if (webview.label() == "dock" || webview.label() == "settings") && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                if let Some(w) = webview.window().get_webview_window(webview.label()) {
                     if let Err(e) = liquid_glass::clear_webview_backdrop(&w) {
-                        tracing::warn!("dock webview backdrop (post-load): {e}");
+                        tracing::warn!("{} webview backdrop (post-load): {e}", webview.label());
                     }
-                    liquid_glass::dump_tree(&w, "page-load");
+                    liquid_glass::tune_all();
+                    if webview.label() == "dock" {
+                        liquid_glass::dump_tree(&w, "page-load");
+                    }
                 }
             }
             #[cfg(not(target_os = "macos"))]
@@ -1190,11 +1366,35 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("agentdock"));
             std::fs::create_dir_all(&config_dir).ok();
-            let seats = SeatsConfig::load(&seats::seats_path(&config_dir));
+            let mut seats = SeatsConfig::load(&seats::seats_path(&config_dir));
+            for s in &mut seats.seats {
+                if let DriverKind::App { bundle_id, .. } = &s.driver {
+                    if !AppDriver::is_installed(bundle_id) {
+                        s.status = SeatStatus::Unavailable;
+                    } else if AppDriver::is_ax_trusted() {
+                        s.status = SeatStatus::Connected;
+                    } else {
+                        s.status = SeatStatus::NeedsAuth;
+                    }
+                }
+            }
+            let _ = seats.save(&seats::seats_path(&config_dir));
             let settings = AppSettings::load(&settings::settings_path(&config_dir));
             let registry = Registry::bundled().with_overrides(&config_dir.join("drivers"));
             let mut machine = Machine::new();
             machine.state.expanded = !matches!(settings.default_form, settings::DefaultForm::Dot | settings::DefaultForm::Pet);
+            let scale = settings.dock_scale.clamp(0.7, 1.6) as f64;
+            let base_size = if !machine.state.expanded {
+                match settings.default_form {
+                    settings::DefaultForm::Pet => (92.0, 40.0),
+                    _ => (36.0, 36.0),
+                }
+            } else if settings.orientation == settings::Orientation::Vertical {
+                (56.0, 408.0)
+            } else {
+                (408.0, 56.0)
+            };
+            let init_size = ((base_size.0 * scale).round(), (base_size.1 * scale).round());
             app.manage(AppState {
                 machine: Mutex::new(machine),
                 seats: Mutex::new(seats),
@@ -1205,11 +1405,13 @@ pub fn run() {
                 probes: Mutex::new(HashMap::new()),
                 hotkey_map: Mutex::new(Vec::new()),
                 logging_in: Mutex::new(Default::default()),
+                dock_size: Mutex::new(init_size),
             });
 
             let dock = app.get_webview_window("dock").expect("dock window");
             let settings_win = app.get_webview_window("settings");
-            apply_glass(&dock, settings_win.as_ref());
+            let init_strength = app.state::<AppState>().settings.lock().unwrap().material_strength as f64;
+            apply_glass(&dock, settings_win.as_ref(), init_strength);
             apply_theme(app.handle(), app.state::<AppState>().settings.lock().unwrap().theme);
             {
                 let (snap, anchor) = {
@@ -1217,7 +1419,9 @@ pub fn run() {
                     let s = st.settings.lock().unwrap();
                     (s.snap, s.dock_anchor)
                 };
-                let _ = position_dock(&dock, 640.0, 140.0, snap, anchor);
+                #[cfg(target_os = "macos")]
+                liquid_glass::set_corner_radius(init_size.0.min(init_size.1) / 2.0);
+                let _ = position_dock(&dock, init_size.0, init_size.1, snap, anchor);
             }
             if let Some(w) = &settings_win {
                 let app2 = app.handle().clone();
