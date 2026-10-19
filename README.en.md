@@ -9,9 +9,9 @@
 Treat ChatGPT dot, Grok Bot, Copilot, Devin and Muse as contacts:<br/>
 one click to call, one click to mute, one click to hang up or hand the call to the next agent. Not a chat window. Not a model router.
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-23%20unit%20%C2%B7%2027%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-43%20unit%20%C2%B7%2031%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[中文](README.md) · [Features](#features) · [Install](#install) · [Shortcuts](#shortcuts) · [Architecture](#architecture) · [Connecting seats](#connecting-seats) · [Privacy](#privacy--limits) · [Roadmap](#roadmap)
+[中文](README.md) · [Features](#features) · [Install](#install) · [Shortcuts](#shortcuts) · [Architecture](#architecture) · [Connecting seats](#connecting-seats) · [Memory](#long-term-memory-everos) · [Privacy](#privacy--limits) · [Roadmap](#roadmap)
 
 <br/>
 
@@ -197,11 +197,13 @@ Tauri 2
 └─ Rust core
    ├─ state.rs     Idle → Calling → InCall → Switching(3s undo) | NeedsHuman
    ├─ seats.rs     seat model + seats.json
-   ├─ settings.rs  appearance / position / orientation / collapse policy / shortcuts → settings.json
+   ├─ settings.rs  appearance / position / orientation / collapse policy / shortcuts / memory → settings.json
    ├─ hotkeys.rs   global shortcuts + conflict detection
    ├─ mic.rs       system-level mute
+   ├─ everos.rs    EverOS HTTP client (add / search / flush)
+   ├─ memory.rs    read/write memory on the call lifecycle (pure, unit-tested)
    ├─ drivers/     drivers-as-data (JSON) · web.rs hidden webview · app.rs Accessibility
-   └─ lib.rs       commands · tray · native material · cursor hover poll · probe loop
+   └─ lib.rs       commands · tray · native material · cursor hover poll · probe loop · memory scheduling
           │
           ├─ NSGlassEffectView / NSVisualEffectView / Mica   (system material)
           ├─ hidden WKWebView / WebView2                      (one data directory per seat)
@@ -219,14 +221,16 @@ Tauri 2
 src-tauri/src
 ├── state.rs        pure state machine (incl. undoable switch)
 ├── seats.rs        seat model + persistence
-├── settings.rs     appearance / position / orientation / collapse policy / shortcuts / mic
+├── settings.rs     appearance / position / orientation / collapse policy / shortcuts / mic / memory
 ├── hotkeys.rs      global shortcut binding + conflict detection
 ├── mic.rs          system-level mute (macOS / Windows / Linux)
+├── everos.rs       EverOS v2 HTTP client (the key comes only from the environment)
+├── memory.rs       search when a call starts; write on connect, captions, and hangup
 ├── drivers/        mod.rs registry · web.rs hidden webview · app.rs desktop app (Accessibility)
-└── lib.rs          Tauri commands, tray, system material, hover poll, probe loop
+└── lib.rs          Tauri commands, tray, system material, hover poll, probe loop, memory scheduling
 src-tauri/drivers/*.json   chatgpt-dot · grok-bot · copilot-voice · muse-voice · devin-voice
 src/dock.ts + dock.css     the pill
-src/settings.ts + .css     settings window (Seats / Shortcuts / Appearance / Microphone / About)
+src/settings.ts + .css     settings window (Seats / Shortcuts / Appearance / Microphone / Memory / About)
 src/brand.ts               built-in brand marks; public/brand/<key>.svg overrides
 tests/                     e2e_mock.py (browser E2E) · e2e_xvfb.sh (Linux real-binary smoke)
 docs/ref/                  visual reference images + reproduction spec (SPEC.md)
@@ -258,12 +262,60 @@ Selectors in the driver JSON are written from each site's public `aria-label`s a
 3. Edit `src-tauri/drivers/<id>.json`, or drop a higher-`version` copy into
    `~/Library/Application Support/ai.we1jia.agentdock/drivers/` (no rebuild), then **Test call** again.
 
+## Long-term memory (EverOS)
+
+AgentDock does not run a model — each seat is an external voice product. Memory is therefore attached to the **call lifecycle**, not to a local generation step:
+
+| When | EverOS | What happens |
+|---|---|---|
+| Call starts (including a committed switch) | `POST /api/v2/memory/search` | `hybrid`, `top_k` 5 by default, profile included. Matching episode narratives are pasted into a **web seat's** composer under the marker `[AgentDock memory]`. Nothing is auto-sent |
+| Probe reports in-call | `POST /api/v2/memory/add` | One line: voice call started with this seat |
+| About every 2s during the call | same | New caption bubbles that carry a role (`data-message-author-role` and similar). Text with no role is dropped |
+| Hangup, remote hangup, or a committed switch | `add`, then `POST /flush` about 2s later | Duration, or a note that the call never connected. `no_extraction` means the buffer had nothing pending yet — not a failure |
+
+One EverOS session per call (`ad-<seat>-<unix ms>`). The user is `user_id`; the seat speaks as `seat-<seat id>`. `app_id` defaults to `agentdock`, so this key's other apps stay in their own scope. Writes are asynchronous (Cloud returns `202 queued`); extraction runs inside EverOS.
+
+Requests time out after 6s (connect 3s). A failed search, write, or injection is logged and **the call still goes through**. With no key, with the setting off, or with `EVEROS_ENABLED=0`, the client sends nothing.
+
+The core is Rust, so this calls the HTTP API directly instead of the Python SDK `everos-cloud` (a thin wrapper over the same v2 routes — a desktop app should not grow a Python runtime for that).
+
+**Turn it on**
+
+1. Create a key in the [EverOS Console](https://everos.evermind.ai/api-keys).
+2. Put it in the environment of **the process that launches AgentDock** (a `.app` opened from Finder does not see a terminal `export`):
+
+```bash
+export EVEROS_API_KEY="your key"          # required; never written to the repo or settings.json
+# export EVEROS_BASE_URL="http://127.0.0.1:8000"   # self-hosted EverOS OSS, optional
+# export EVEROS_USER_ID="user_001"         # optional; otherwise the first enable mints ad-<uuid> into settings.json
+# export EVEROS_APP_ID="agentdock"         # optional
+# export EVEROS_PROJECT_ID="default"       # optional
+# export EVEROS_ENABLED=1                  # optional: enable without the settings toggle; =0 forces off
+npm run tauri dev
+```
+
+For a Finder-launched app on macOS: `launchctl setenv EVEROS_API_KEY "your key"`, then open the app again. Self-hosted OSS does not check the token by default, but AgentDock still treats a missing `EVEROS_API_KEY` as "memory off", so set any non-empty value.
+
+3. **Settings › Memory › Enable long-term memory**. A key alone, with the toggle off, uploads nothing.
+4. Call a web seat from the Dock (the settings **Test call** button only checks selectors; it does not write memory). A few seconds later the call shows up in the [EverOS Console](https://everos.evermind.ai); the next call pastes what was extracted into the composer.
+
+Composer and caption selectors can live in the driver JSON (a higher `version` in the user drivers directory hot-updates):
+
+```json
+"memory": {
+  "composer": ["#prompt-textarea"],
+  "transcript": ["[data-message-author-role]"]
+}
+```
+
+Empty lists use the generic selectors. Desktop-app seats (Grok Bot) have no composer to fill; call start and end are still recorded.
+
 ## Testing
 
 ```bash
-cd src-tauri && cargo test                             # 23 unit tests: state machine / seats / settings compat / placement / hotkeys / drivers
+cd src-tauri && cargo test                             # 43 unit tests: state machine / seats / settings compat / placement / hotkeys / drivers / EverOS
 npm run build                                          # type-check + bundle
-npx vite --port 1420 & python3 tests/e2e_mock.py       # 27 browser E2E checks: state→DOM, orientation, drag, grip, auto-collapse, collapse modes, settings
+npx vite --port 1420 & python3 tests/e2e_mock.py       # 31 browser E2E checks: state→DOM, orientation, drag, grip, auto-collapse, collapse modes, settings (incl. memory toggle)
 bash tests/e2e_xvfb.sh                                 # Linux real-binary smoke (Xvfb)
 DOCS_RS=1 cargo check --target aarch64-apple-darwin    # cross-check the macOS objc2 code from Linux
 python3 .shots/shoot.py                                # regenerate the mock screenshots in docs/screenshots
@@ -274,7 +326,7 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 ## Privacy & limits
 
 - **No credentials.** Login happens on the real site page, by you; cookies stay inside each seat's isolated webview data directory.
-- **No uploads.** No server, no telemetry.
+- **No uploads by default.** No telemetry. Only after Memory is enabled *and* the process has `EVEROS_API_KEY` are call events and on-screen captions sent to EverOS (Cloud, or your own `EVEROS_BASE_URL`).
 - **UI automation has limits.** None of the vendors expose a "call my agent" API, so everything goes through their UIs; redesigns require updating the driver JSON.
 - **Still to verify on your device:** `getUserMedia` permission inside a hidden webview and WebRTC throttling while invisible. If a site blocks embedded login, the fallback is driving your local Chrome via CDP.
 - **System mute** is skipped (UI state only) on machines without an audio input device.
@@ -286,7 +338,7 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 - [x] Drag anywhere · horizontal / vertical · ⇅/⇄ grip
 - [x] Auto-collapse · three collapse modes · hover to expand
 - [x] Recordable global shortcuts · native context menu
-- [x] Settings: drag-sort seats · custom icons / GIF · shortcuts · appearance · microphone
+- [x] Settings: drag-sort seats · custom icons / GIF · shortcuts · appearance · microphone · EverOS memory
 - [ ] Pin selectors on real devices and flip `verified: true`
 - [ ] Windows build + Mica verification
 - [ ] Incoming-activity hint during a call (pill breathes when another seat has something to say)

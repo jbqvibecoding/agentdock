@@ -1,12 +1,13 @@
-import { api, applyTheme, type AppSettings, type DriverInfo, type HostInfo, type Seat, type SeatView } from "./api";
+import { api, applyTheme, type AppSettings, type DriverInfo, type HostInfo, type MemoryStatus, type Seat, type SeatView } from "./api";
 import { iconFor } from "./brand";
 
-type PageId = "seats" | "hotkeys" | "appearance" | "mic" | "about";
+type PageId = "seats" | "hotkeys" | "appearance" | "mic" | "memory" | "about";
 const TITLES: Record<PageId, [string, string]> = {
   seats: ["席位", "拖动排序 · 顺序即 ⌥1…⌥9 · 登录只做一次，之后由 AgentDock 在后台代码控制"],
   hotkeys: ["快捷键", "点击一个按键组合开始录制；与系统或其他 App 冲突时会标红"],
   appearance: ["外观", "玻璃由系统渲染；这里只决定形态、深浅色与动效"],
   mic: ["麦克风", "闭麦默认走系统级，对所有席位一致、零延迟"],
+  memory: ["记忆", "通过 EverOS 记住每次通话。未开启、或没有 API key 时，不会上传任何内容"],
   about: ["关于", "驱动即数据，可热更新"],
 };
 
@@ -288,11 +289,35 @@ async function renderMic() {
   } catch { (level.firstElementChild as HTMLElement).style.width = "0%"; level.title = "没有拿到麦克风权限或设备"; }
 }
 
+// ───────────── 记忆 ─────────────
+async function renderMemory() {
+  const mem = settings.memory ?? { enabled: false, user_id: "", inject_context: true, top_k: 5 };
+  let status: MemoryStatus = {
+    active: false, enabled: mem.enabled, key_present: false, base_url: "https://api.evermind.ai",
+    user_id: mem.user_id, app_id: "agentdock", project_id: "default",
+    reason: "未设置 EVEROS_API_KEY", inject_context: mem.inject_context, top_k: mem.top_k,
+  };
+  try { status = await api.invoke<MemoryStatus>("memory_status"); } catch { /* mock-less hosts */ }
+  const chip = el("span", "chip", status.active ? "生效中" : "未生效");
+  const g = group("EverOS",
+    row("启用长期记忆", "开启后，呼叫前检索与你有关的记忆；通话接通、页面上能看到的对白、以及挂断，会写入 EverOS。密钥只读环境变量 EVEROS_API_KEY，不会写进设置文件。", toggle(mem.enabled, (v) => { void saveSettings({ memory: { ...mem, enabled: v } }).then(() => { if (page === "memory") void renderMemory(); }); })),
+    row("呼叫前写入对方输入框", "把检索到的记忆放进网页席位的输入框，供对方 agent 在同一会话里看到。不会自动发送，避免误开一条文字对话。", toggle(mem.inject_context, (v) => saveSettings({ memory: { ...settings.memory, inject_context: v } }))),
+  );
+  const g2 = group("当前状态",
+    row("状态", esc(status.reason), chip),
+    row("密钥", status.key_present ? "已检测到 EVEROS_API_KEY" : "未检测到 EVEROS_API_KEY", el("span", "chip", status.key_present ? "有" : "无")),
+    row("服务", esc(status.base_url), el("span", "chip", esc(status.app_id))),
+    row("用户", status.user_id ? esc(status.user_id) : "开启并检测到密钥后自动生成", el("span", "chip", "user_id")),
+  );
+  const note = el("p", "note", "自建 EverOS 用 EVEROS_BASE_URL（默认 https://api.evermind.ai）。从访达启动的 .app 读不到终端里的 export：开发时用 npm run tauri dev，或用 launchctl setenv 配进图形会话。设置里的「测试呼叫」只验证选择器，不写入记忆。慢请求或失败只会记一条日志，呼叫本身继续。");
+  pageEl.replaceChildren(g, g2, note);
+}
+
 // ───────────── 关于 ─────────────
 function renderAbout() {
   const g = group("AgentDock",
     row(`版本 ${esc(host.version)}`, `运行于 ${esc(host.os)} · 系统材质 ${host.material ? esc(host.material) : "不可用（使用模糊回退）"}`, el("span", "chip", "Tauri 2 · Rust")),
-    row("隐私", "不录音、不读聊天内容、不保存密码；只触碰按钮、读通话状态和系统麦克风开关；席位数据目录加密。", el("span", "chip", "本地")),
+    row("隐私", "不录音、不保存密码。长期记忆默认关闭；在「记忆」里开启并配置 EVEROS_API_KEY 后，通话事件和页面上可见的对白会发给 EverOS。", el("span", "chip", "本地")),
   );
   const d = el("div", "group"); d.append(el("div", "group__title", "驱动"));
   for (const dr of drivers) {
@@ -310,7 +335,7 @@ async function show(p: PageId) {
   document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === p));
   const [t, s] = TITLES[p]; $("#title").textContent = t;
   $("#subtitle").textContent = s.replace("⌥", pretty("Alt")).replace("⌥", pretty("Alt"));
-  if (p === "seats") await renderSeats(); else if (p === "hotkeys") await renderHotkeys(); else if (p === "appearance") renderAppearance(); else if (p === "mic") await renderMic(); else renderAbout();
+  if (p === "seats") await renderSeats(); else if (p === "hotkeys") await renderHotkeys(); else if (p === "appearance") renderAppearance(); else if (p === "mic") await renderMic(); else if (p === "memory") await renderMemory(); else renderAbout();
 }
 document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.addEventListener("click", () => show(b.dataset.page as PageId)));
 

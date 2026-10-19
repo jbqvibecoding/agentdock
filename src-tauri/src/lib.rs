@@ -1,7 +1,9 @@
 //! AgentDock core: wires the pure state machine, seats, drivers, mic and hotkeys into Tauri.
 
 pub mod drivers;
+pub mod everos;
 pub mod hotkeys;
+pub mod memory;
 pub mod mic;
 pub mod seats;
 pub mod settings;
@@ -31,6 +33,10 @@ pub struct AppState {
     pub hotkey_map: Mutex<Vec<(Shortcut, HotkeyAction)>>,
     /// Seats whose login window is currently shown; auto-hidden once a probe says logged in.
     pub logging_in: Mutex<std::collections::HashSet<String>>,
+    /// Open EverOS sessions, keyed by seat. Pure bookkeeping; HTTP happens off this lock.
+    pub memory: Mutex<memory::CallBook>,
+    /// `EVEROS_API_KEY` + settings. Rebuilt when settings are saved. Missing key → inactive.
+    pub everos: Mutex<everos::Client>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -90,10 +96,120 @@ fn seat_views(st: &AppState) -> Vec<SeatView> {
 
 fn dispatch<R: Runtime>(app: &AppHandle<R>, ev: Event) {
     let st = app.state::<AppState>();
+    let before = st.machine.lock().unwrap().state.phase.clone();
     let effects = st.machine.lock().unwrap().handle(ev);
+    let after = st.machine.lock().unwrap().state.phase.clone();
     emit_state(app, &st);
+    memory_on_phase(app, &before, &after);
     for fx in effects {
         apply_effect(app, fx);
+    }
+}
+
+/// Search before the driver places the call, and write turns when the phase says the call
+/// connected or ended. EverOS failures are logged inside the spawned tasks; they never change
+/// the effects the state machine already produced.
+fn memory_on_phase<R: Runtime>(app: &AppHandle<R>, before: &Phase, after: &Phase) {
+    let st = app.state::<AppState>();
+    let client = st.everos.lock().unwrap().clone();
+    if !client.is_active() {
+        return;
+    }
+    let user_id = client.user_id().to_string();
+    let actions = {
+        let mut book = st.memory.lock().unwrap();
+        memory::on_phase(
+            &mut book,
+            before,
+            after,
+            |id| {
+                st.seats.lock().unwrap().get(id).map(|s| memory::SeatMeta {
+                    name: s.name.clone(),
+                    service: s.service.clone(),
+                })
+            },
+            memory::now_ms(),
+            &user_id,
+        )
+    };
+    for action in actions {
+        match action {
+            memory::Action::Recall(recall) => {
+                let app = app.clone();
+                let client = client.clone();
+                tauri::async_runtime::spawn(async move { recall_and_inject(app, client, recall).await });
+            }
+            memory::Action::Write(batch) => {
+                let client = client.clone();
+                tauri::async_runtime::spawn(async move { write_batch(client, batch).await });
+            }
+        }
+    }
+}
+
+async fn recall_and_inject<R: Runtime>(app: AppHandle<R>, client: everos::Client, recall: memory::Recall) {
+    let top_k = client.status().top_k;
+    let query = recall.query.clone();
+    let client_for_call = client.clone();
+    let brief = match tokio::task::spawn_blocking(move || client_for_call.recall(&query, top_k)).await {
+        Ok(Ok(text)) => text,
+        Ok(Err(e)) => {
+            tracing::warn!("everos search failed (call continues): {e}");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("everos search task failed (call continues): {e}");
+            return;
+        }
+    };
+    tracing::info!("everos recall for {}: {} chars", recall.seat_id, brief.chars().count());
+    if brief.is_empty() || !client.status().inject_context {
+        return;
+    }
+    let selectors = {
+        let st = app.state::<AppState>();
+        let driver_id = {
+            let seats = st.seats.lock().unwrap();
+            match seats.get(&recall.seat_id).map(|s| &s.driver) {
+                Some(DriverKind::Web { driver, .. }) => driver.clone(),
+                _ => return,
+            }
+        };
+        st.registry.get(&driver_id).map(|spec| spec.memory.composer.clone()).unwrap_or_default()
+    };
+    for _ in 0..30 {
+        if let Some(win) = app.get_webview_window(&web::window_label(&recall.seat_id)) {
+            if let Err(e) = win.eval(&drivers::inject_memory_script(&brief, &selectors)) {
+                tracing::warn!("everos inject failed (call continues): {e}");
+            }
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    tracing::info!("everos recall for {} had no webview to inject into", recall.seat_id);
+}
+
+async fn write_batch(client: everos::Client, batch: memory::Persist) {
+    if !batch.messages.is_empty() {
+        let client_for_add = client.clone();
+        let session_id = batch.session_id.clone();
+        let messages = batch.messages.clone();
+        match tokio::task::spawn_blocking(move || client_for_add.add(&session_id, &messages)).await {
+            Ok(Ok(status)) => tracing::info!("everos add {} ({} msgs): {status}", batch.session_id, batch.messages.len()),
+            Ok(Err(e)) => tracing::warn!("everos add failed (call continues): {e}"),
+            Err(e) => tracing::warn!("everos add task failed (call continues): {e}"),
+        }
+    }
+    if batch.flush {
+        // A flush issued in the same instant as a queued add sees an empty buffer (`no_extraction`).
+        // Give the write a moment to land; a miss is still not a failed call.
+        tokio::time::sleep(memory::FLUSH_DELAY).await;
+        let session_id = batch.session_id.clone();
+        match tokio::task::spawn_blocking(move || client.flush(&session_id)).await {
+            Ok(Ok(status)) => tracing::info!("everos flush {}: {status}", batch.session_id),
+            Ok(Err(e)) => tracing::warn!("everos flush failed (call continues): {e}"),
+            Err(e) => tracing::warn!("everos flush task failed (call continues): {e}"),
+        }
     }
 }
 
@@ -623,6 +739,33 @@ fn driver_error(window: tauri::Window, message: String) {
     tracing::warn!("driver error in {}: {message}", window.label());
 }
 
+/// Caption lines scraped from a seat page. Ignored unless that page's window reports them and
+/// memory is on for an open call on this seat.
+#[tauri::command]
+fn memory_report(app: AppHandle, window: tauri::Window, seat_id: String, lines: Vec<memory::TranscriptLine>) {
+    if window.label() != web::window_label(&seat_id) {
+        tracing::warn!("memory report from unexpected window {}", window.label());
+        return;
+    }
+    let st = app.state::<AppState>();
+    let client = st.everos.lock().unwrap().clone();
+    if !client.is_active() {
+        return;
+    }
+    let batch = {
+        let mut book = st.memory.lock().unwrap();
+        book.on_lines(&seat_id, &lines, memory::now_ms())
+    };
+    if let Some(batch) = batch {
+        tauri::async_runtime::spawn(async move { write_batch(client, batch).await });
+    }
+}
+
+#[tauri::command]
+fn memory_status(st: tauri::State<AppState>) -> everos::Status {
+    st.everos.lock().unwrap().status().clone()
+}
+
 // ───────────────────────── commands: icons ─────────────────────────
 
 fn icons_dir(st: &AppState) -> PathBuf {
@@ -772,7 +915,10 @@ fn on_app_menu(app: &AppHandle, id: &str) {
     }
 }
 
-fn persist_settings(app: &AppHandle, settings: AppSettings) -> CmdResult<()> {
+fn persist_settings(app: &AppHandle, mut settings: AppSettings) -> CmdResult<()> {
+    let env = everos::MemoryEnv::from_env();
+    let _ = everos::assign_user_id(&mut settings.memory, &env);
+    let client = everos::Client::resolve(&settings.memory, &env);
     let st = app.state::<AppState>();
     let (hotkeys_changed, placement_changed) = {
         let mut cur = st.settings.lock().unwrap();
@@ -780,6 +926,7 @@ fn persist_settings(app: &AppHandle, settings: AppSettings) -> CmdResult<()> {
         *cur = settings.clone();
         out
     };
+    *st.everos.lock().unwrap() = client;
     settings.save(&settings::settings_path(&st.config_dir)).map_err(err)?;
     let _ = app.emit("settings:changed", &settings);
     apply_theme(app, settings.theme);
@@ -1191,7 +1338,19 @@ pub fn run() {
             let config_dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("agentdock"));
             std::fs::create_dir_all(&config_dir).ok();
             let seats = SeatsConfig::load(&seats::seats_path(&config_dir));
-            let settings = AppSettings::load(&settings::settings_path(&config_dir));
+            let mut settings = AppSettings::load(&settings::settings_path(&config_dir));
+            let env = everos::MemoryEnv::from_env();
+            if everos::assign_user_id(&mut settings.memory, &env) {
+                if let Err(e) = settings.save(&settings::settings_path(&config_dir)) {
+                    tracing::warn!("saving generated everos user id failed: {e}");
+                }
+            }
+            let everos_client = everos::Client::resolve(&settings.memory, &env);
+            if everos_client.is_active() {
+                tracing::info!("everos memory on ({}) user {}", everos_client.status().base_url, everos_client.status().user_id);
+            } else {
+                tracing::info!("everos memory off: {}", everos_client.status().reason);
+            }
             let registry = Registry::bundled().with_overrides(&config_dir.join("drivers"));
             let mut machine = Machine::new();
             machine.state.expanded = !matches!(settings.default_form, settings::DefaultForm::Dot | settings::DefaultForm::Pet);
@@ -1205,6 +1364,8 @@ pub fn run() {
                 probes: Mutex::new(HashMap::new()),
                 hotkey_map: Mutex::new(Vec::new()),
                 logging_in: Mutex::new(Default::default()),
+                memory: Mutex::new(memory::CallBook::default()),
+                everos: Mutex::new(everos_client),
             });
 
             let dock = app.get_webview_window("dock").expect("dock window");
@@ -1249,6 +1410,7 @@ pub fn run() {
                     let st = handle.state::<AppState>();
                     let active = st.machine.lock().unwrap().current_seat().map(str::to_string);
                     let phase_idle = matches!(st.machine.lock().unwrap().state.phase, Phase::Idle);
+                    let memory_on = st.everos.lock().unwrap().is_active();
                     let seats: Vec<Seat> = st.seats.lock().unwrap().seats.clone();
                     let logging_in: Vec<String> = st.logging_in.lock().unwrap().iter().cloned().collect();
                     for seat in seats.iter().filter(|s| s.enabled || logging_in.contains(&s.id)) {
@@ -1259,6 +1421,15 @@ pub fn run() {
                         if due && (!phase_idle || has_view || is_login || matches!(seat.driver, DriverKind::App { .. })) {
                             let _ = run_driver(&handle, &seat.id, DriverOp::Probe);
                         }
+                        // Visible captions about every 2s while this seat is the live call.
+                        if memory_on && is_active && !phase_idle && n % 4 == 0 {
+                            if let DriverKind::Web { driver, .. } = &seat.driver {
+                                let selectors = st.registry.get(driver).map(|spec| spec.memory.transcript.clone()).unwrap_or_default();
+                                if let Some(win) = handle.get_webview_window(&web::window_label(&seat.id)) {
+                                    let _ = win.eval(&drivers::transcript_script(&selectors, &seat.id));
+                                }
+                            }
+                        }
                     }
                 }
             });
@@ -1267,7 +1438,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat,
-            driver_report, driver_error, set_seat_icon, reset_seat_icon, seat_icon_data,
+            driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,
             get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info
         ])
         .run(tauri::generate_context!())

@@ -9,9 +9,9 @@
 把 ChatGPT dot、Grok Bot、Copilot、Devin、Muse 当成一排可呼叫的联系人：<br/>
 一键呼叫 · 一键闭麦 · 一键挂断或切到下一位。不是聊天窗口，不是模型路由器。
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-23%20unit%20%C2%B7%2027%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-43%20unit%20%C2%B7%2031%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[English](README.en.md) · [功能](#功能) · [安装](#安装) · [快捷键](#快捷键) · [架构](#架构) · [接入席位](#接入席位) · [隐私](#隐私与边界) · [路线图](#路线图)
+[English](README.en.md) · [功能](#功能) · [安装](#安装) · [快捷键](#快捷键) · [架构](#架构) · [接入席位](#接入席位) · [长期记忆](#长期记忆everos) · [隐私](#隐私与边界) · [路线图](#路线图)
 
 <br/>
 
@@ -201,11 +201,13 @@ Tauri 2
 └─ Rust core
    ├─ state.rs     状态机 Idle → Calling → InCall → Switching(3s 可撤销) | NeedsHuman
    ├─ seats.rs     席位模型 + seats.json
-   ├─ settings.rs  外观 / 位置 / 方向 / 收起策略 / 快捷键 → settings.json
+   ├─ settings.rs  外观 / 位置 / 方向 / 收起策略 / 快捷键 / 记忆开关 → settings.json
    ├─ hotkeys.rs   全局快捷键 + 冲突检测
    ├─ mic.rs       系统级闭麦
+   ├─ everos.rs    EverOS HTTP 客户端（add / search / flush）
+   ├─ memory.rs    呼叫生命周期上的记忆读写（纯逻辑，可单测）
    ├─ drivers/     驱动即数据（JSON）· web.rs 隐藏 webview · app.rs Accessibility
-   └─ lib.rs       命令 · 托盘 · 原生材质 · 光标 hover 轮询 · 探测循环
+   └─ lib.rs       命令 · 托盘 · 原生材质 · 光标 hover 轮询 · 探测循环 · 记忆调度
           │
           ├─ NSGlassEffectView / NSVisualEffectView / Mica   （系统材质）
           ├─ 隐藏 WKWebView / WebView2                        （每席位独立数据目录）
@@ -223,14 +225,16 @@ Tauri 2
 src-tauri/src
 ├── state.rs        纯状态机（含撤销切换）
 ├── seats.rs        席位模型与持久化
-├── settings.rs     外观 / 位置 / 方向 / 收起策略 / 快捷键 / 麦克风
+├── settings.rs     外观 / 位置 / 方向 / 收起策略 / 快捷键 / 麦克风 / 记忆开关
 ├── hotkeys.rs      全局快捷键绑定与冲突检测
 ├── mic.rs          系统级闭麦（macOS / Windows / Linux）
+├── everos.rs       EverOS v2 HTTP 客户端（密钥只来自环境变量）
+├── memory.rs       呼叫开始时检索、接通 / 对白 / 挂断时写入
 ├── drivers/        mod.rs 注册表 · web.rs 隐藏 webview · app.rs 桌面 App (Accessibility)
-└── lib.rs          Tauri 命令、托盘、系统材质、hover 轮询、探测循环
+└── lib.rs          Tauri 命令、托盘、系统材质、hover 轮询、探测循环、记忆调度
 src-tauri/drivers/*.json   chatgpt-dot · grok-bot · copilot-voice · muse-voice · devin-voice
 src/dock.ts + dock.css     Dock 条
-src/settings.ts + .css     设置窗（席位 / 快捷键 / 外观 / 麦克风 / 关于）
+src/settings.ts + .css     设置窗（席位 / 快捷键 / 外观 / 麦克风 / 记忆 / 关于）
 src/brand.ts               内置品牌标识；public/brand/<key>.svg 可覆盖
 tests/                     e2e_mock.py（浏览器 E2E）· e2e_xvfb.sh（Linux 真实二进制冒烟）
 docs/ref/                  视觉参考图与还原规格（SPEC.md）
@@ -262,12 +266,60 @@ docs/ref/                  视觉参考图与还原规格（SPEC.md）
 3. 改 `src-tauri/drivers/<id>.json`，或放一份更高 `version` 的到
    `~/Library/Application Support/ai.we1jia.agentdock/drivers/`（无需重新编译），再点「测试呼叫」。
 
+## 长期记忆（EverOS）
+
+AgentDock 本身不跑模型，席位是外面的语音产品。记忆因此挂在**呼叫生命周期**上，而不是挂在某一次本地生成之前：
+
+| 时机 | EverOS | 做什么 |
+|---|---|---|
+| 开始呼叫（含切换生效） | `POST /api/v2/memory/search` | `hybrid`、`top_k` 默认 5，带上用户画像。命中的 episode 叙事会写进**网页席位**的输入框（标记 `[AgentDock memory]`），不自动发送 |
+| 探测到已接通 | `POST /api/v2/memory/add` | 记一条「开始与某席位语音通话」 |
+| 通话中约每 2 秒 | 同上 | 从页面上带角色的气泡（`data-message-author-role` 等）抓取新的对白；认不出角色的界面文字会丢掉 |
+| 挂断、对方挂断、或切换生效 | `add`，约 2 秒后再 `POST /flush` | 记下时长或「没有接通」。`flush` 返回 `no_extraction` 只表示缓冲区里还没有可提取的内容，不是失败 |
+
+每次呼叫一个 session（`ad-<席位>-<unix ms>`）。用户是 `user_id`，席位发言人是 `seat-<席位 id>`。`app_id` 默认 `agentdock`，避免和同一把 key 下的其他应用串记忆。写入默认异步（Cloud 返回 `202 queued`），提取在 EverOS 后台进行。
+
+请求超时 6 秒（连接 3 秒）。搜索、写入、注入失败只打日志，**呼叫照常进行**。没有 key、设置里关掉、或 `EVEROS_ENABLED=0` 时客户端不发任何请求。
+
+核心是 Rust，所以直接调 HTTP，不调用 Python SDK `everos-cloud`（那是同一套 v2 路由的薄封装，桌面应用不必再带一个 Python 运行时）。
+
+**启用**
+
+1. 在 [EverOS Console](https://everos.evermind.ai/api-keys) 创建 key。
+2. 让**启动 AgentDock 的那个进程**看得到环境变量（从访达打开的 `.app` 读不到你在终端里的 `export`）：
+
+```bash
+export EVEROS_API_KEY="你的 key"          # 必填，不会写入仓库或 settings.json
+# export EVEROS_BASE_URL="http://127.0.0.1:8000"   # 自建 EverOS OSS，可选
+# export EVEROS_USER_ID="user_001"         # 可选；不设则首次开启时生成 ad-<uuid> 并写入 settings.json
+# export EVEROS_APP_ID="agentdock"         # 可选
+# export EVEROS_PROJECT_ID="default"       # 可选
+# export EVEROS_ENABLED=1                  # 可选：不打开设置开关也启用；=0 强制关闭
+npm run tauri dev
+```
+
+图形会话里要长期生效（macOS）：`launchctl setenv EVEROS_API_KEY "你的 key"`，然后从访达重新打开。自建服务默认不校验 token，但仍需设一个非空的 `EVEROS_API_KEY`，否则 AgentDock 视为未配置。
+
+3. **设置 › 记忆 › 启用长期记忆**。仅有 key、开关关闭时不会上传。
+4. 从 Dock 呼叫一位网页席位（设置里的「测试呼叫」只验证选择器，不写记忆）。几秒后到 [EverOS Console](https://everos.evermind.ai) 能看到这条通话；下一通呼叫前，输入框里会出现上次提炼出的记忆。
+
+网页席位的输入框和字幕选择器可以写进驱动 JSON（更高 `version` 放进用户目录即热更新）：
+
+```json
+"memory": {
+  "composer": ["#prompt-textarea"],
+  "transcript": ["[data-message-author-role]"]
+}
+```
+
+留空则用通用选择器。桌面 App 席位（Grok Bot）没有可注入的输入框，仍然会记录通话起止。
+
 ## 测试
 
 ```bash
-cd src-tauri && cargo test                             # 23 个单元测试：状态机 / 席位 / 设置兼容 / 放置 / 快捷键 / 驱动
+cd src-tauri && cargo test                             # 43 个单元测试：状态机 / 席位 / 设置兼容 / 放置 / 快捷键 / 驱动 / EverOS
 npm run build                                          # 前端类型检查 + 打包
-npx vite --port 1420 & python3 tests/e2e_mock.py       # 27 项浏览器 E2E：状态机→DOM、横竖、拖拽、把手、自动收起、三档收起、设置页
+npx vite --port 1420 & python3 tests/e2e_mock.py       # 31 项浏览器 E2E：状态机→DOM、横竖、拖拽、把手、自动收起、三档收起、设置页（含记忆开关）
 bash tests/e2e_xvfb.sh                                 # Linux 真实二进制冒烟（Xvfb）
 DOCS_RS=1 cargo check --target aarch64-apple-darwin    # 在 Linux 上交叉检查 macOS objc2 代码
 python3 .shots/shoot.py                                # 重新生成 docs/screenshots 下的 mock 截图
@@ -278,7 +330,7 @@ python3 .shots/shoot.py                                # 重新生成 docs/scree
 ## 隐私与边界
 
 - **不接触密码。** 登录发生在真实站点页面，由你完成；cookie 留在各席位独立的 webview 数据目录里。
-- **不上传任何数据。** 没有服务端，没有遥测。
+- **默认不上传。** 没有遥测。只有在「记忆」里开启并且进程里有 `EVEROS_API_KEY` 时，通话事件和页面上可见的对白才会发到 EverOS（Cloud 或你自己的 `EVEROS_BASE_URL`）。
 - **界面自动化的天然边界。** 四家都没有公开「呼叫我的 agent」接口，全部走界面自动化；界面改版需要更新驱动 JSON。
 - **待实测项。** 隐藏 webview 的 `getUserMedia` 授权与不可见时的 WebRTC 节流需在你登录后的真机上验证；若某站拦截内嵌登录，退化为控制本机 Chrome（CDP）。
 - **系统级闭麦**在没有音频输入设备的机器上会跳过（只切换 UI 状态）。
@@ -290,7 +342,7 @@ python3 .shots/shoot.py                                # 重新生成 docs/scree
 - [x] 任意位置拖拽 · 横向 / 竖向 · ⇅/⇄ 把手
 - [x] 自动收起 · 三档收起方式 · hover 展开
 - [x] 全局快捷键（可录制）· 原生右键菜单
-- [x] 设置窗：席位拖拽排序 · 自定义图标 / GIF · 快捷键 · 外观 · 麦克风
+- [x] 设置窗：席位拖拽排序 · 自定义图标 / GIF · 快捷键 · 外观 · 麦克风 · EverOS 记忆
 - [ ] 各站选择器真机钉定并标记 `verified: true`
 - [ ] Windows 实机编译与 Mica 验证
 - [ ] 通话中来电提示（另一席位有消息时胶囊轻微呼吸）
