@@ -119,6 +119,44 @@ pub struct AppSettings {
     pub pause_media_in_call: bool,
     pub input_device: Option<String>,
     pub confirm_switch: bool,
+    /// EverOS long-term memory. Off until the user opts in; still a no-op without `EVEROS_API_KEY`.
+    #[serde(default)]
+    pub memory: MemorySettings,
+}
+
+/// Opt-in EverOS memory. The API key is never stored here — only `EVEROS_API_KEY`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemorySettings {
+    /// Nothing is sent until this is true (or `EVEROS_ENABLED=1`) and a key is present.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Stable EverOS `user_id`. Empty until the first time memory is actually turned on.
+    #[serde(default)]
+    pub user_id: String,
+    /// Paste recalled episodes into a web seat's composer when a call starts.
+    #[serde(default = "default_inject_context")]
+    pub inject_context: bool,
+    /// `search` top_k. `1..=100` is honored; anything else falls back to 5 at request time.
+    #[serde(default = "default_top_k")]
+    pub top_k: u32,
+}
+
+fn default_inject_context() -> bool {
+    true
+}
+fn default_top_k() -> u32 {
+    5
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        MemorySettings {
+            enabled: false,
+            user_id: String::new(),
+            inject_context: true,
+            top_k: 5,
+        }
+    }
 }
 
 fn default_auto_collapse() -> u32 {
@@ -180,6 +218,7 @@ impl Default for AppSettings {
             pause_media_in_call: true,
             input_device: None,
             confirm_switch: false,
+            memory: MemorySettings::default(),
         }
     }
 }
@@ -197,12 +236,17 @@ impl AppSettings {
             std::fs::create_dir_all(parent)?;
         }
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self).expect("settings serialize"))?;
+        std::fs::write(
+            &tmp,
+            serde_json::to_vec_pretty(self).expect("settings serialize"),
+        )?;
         std::fs::rename(tmp, path)
     }
 
     pub fn seat_hotkey(&self, index_1_based: usize) -> Option<String> {
-        (1..=9).contains(&index_1_based).then(|| format!("{}+{}", self.hotkeys.seat_modifier, index_1_based))
+        (1..=9)
+            .contains(&index_1_based)
+            .then(|| format!("{}+{}", self.hotkeys.seat_modifier, index_1_based))
     }
 }
 
@@ -244,8 +288,12 @@ mod tests {
         let hk = o.get_mut("hotkeys").unwrap().as_object_mut().unwrap();
         hk.remove("orientation");
         hk.remove("form");
+        v.as_object_mut().unwrap().remove("memory");
         let s: AppSettings = serde_json::from_value(v).unwrap();
         assert_eq!(s, AppSettings::default());
+        assert!(!s.memory.enabled);
+        assert!(s.memory.inject_context);
+        assert_eq!(s.memory.top_k, 5);
     }
 
     #[test]

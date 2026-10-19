@@ -27,6 +27,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
+# Blocking HTTP on purpose: the call path spawns it off the UI thread, and ureq 2.9 keeps the
+# rustls/ring stack building on the repo's Rust 1.80+ floor (newer reqwest pulls Rust 1.85 crates).
+ureq = { version = "=2.9.7", default-features = false, features = ["json", "tls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

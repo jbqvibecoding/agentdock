@@ -12,16 +12,29 @@ use std::collections::HashMap;
 #[serde(rename_all = "snake_case", tag = "op")]
 pub enum Step {
     /// Click the first visible element matching the selector (tries each selector in order).
-    Click { selectors: Vec<String> },
+    Click {
+        selectors: Vec<String>,
+    },
     /// Wait for a selector to appear (ms budget).
-    WaitFor { selectors: Vec<String>, timeout_ms: u64 },
-    Sleep { ms: u64 },
+    WaitFor {
+        selectors: Vec<String>,
+        timeout_ms: u64,
+    },
+    Sleep {
+        ms: u64,
+    },
     /// Navigate the hidden webview.
-    Goto { url: String },
+    Goto {
+        url: String,
+    },
     /// Press a key on the focused element (web) or the app (native).
-    Key { key: String },
+    Key {
+        key: String,
+    },
     /// Clear a text field so an empty-composer-only button appears.
-    Clear { selectors: Vec<String> },
+    Clear {
+        selectors: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +75,19 @@ pub struct DriverSpec {
     #[serde(default)]
     pub unmute: Vec<Step>,
     pub probe: ProbeSpec,
+    /// Optional selectors for EverOS context injection and caption scraping.
+    /// Empty lists fall back to generic composer / `[data-message-author-role]` selectors.
+    #[serde(default)]
+    pub memory: MemorySelectors,
+}
+
+/// Where a web seat keeps its composer and its visible transcript. Both lists are tried in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct MemorySelectors {
+    #[serde(default)]
+    pub composer: Vec<String>,
+    #[serde(default)]
+    pub transcript: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,9 +115,18 @@ pub enum DriverError {
 /// Bundled driver specs, compiled in so the app works offline; can be overridden by files in
 /// `<config>/drivers/*.json` (hot update without shipping a new binary).
 pub const BUNDLED: &[(&str, &str)] = &[
-    ("chatgpt-dot", include_str!("../../drivers/chatgpt-dot.json")),
-    ("copilot-voice", include_str!("../../drivers/copilot-voice.json")),
-    ("devin-voice", include_str!("../../drivers/devin-voice.json")),
+    (
+        "chatgpt-dot",
+        include_str!("../../drivers/chatgpt-dot.json"),
+    ),
+    (
+        "copilot-voice",
+        include_str!("../../drivers/copilot-voice.json"),
+    ),
+    (
+        "devin-voice",
+        include_str!("../../drivers/devin-voice.json"),
+    ),
     ("muse-voice", include_str!("../../drivers/muse-voice.json")),
     ("grok-bot", include_str!("../../drivers/grok-bot.json")),
 ];
@@ -105,7 +140,8 @@ impl Registry {
     pub fn bundled() -> Self {
         let mut r = Registry::default();
         for (id, text) in BUNDLED {
-            let spec: DriverSpec = serde_json::from_str(text).unwrap_or_else(|e| panic!("bundled driver {id} invalid: {e}"));
+            let spec: DriverSpec = serde_json::from_str(text)
+                .unwrap_or_else(|e| panic!("bundled driver {id} invalid: {e}"));
             debug_assert_eq!(&spec.id, id);
             r.specs.insert(spec.id.clone(), spec);
         }
@@ -120,9 +156,16 @@ impl Registry {
                 if path.extension().and_then(|e| e.to_str()) != Some("json") {
                     continue;
                 }
-                match std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<DriverSpec>(&t).ok()) {
+                match std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<DriverSpec>(&t).ok())
+                {
                     Some(spec) => {
-                        let newer = self.specs.get(&spec.id).map(|cur| spec.version > cur.version).unwrap_or(true);
+                        let newer = self
+                            .specs
+                            .get(&spec.id)
+                            .map(|cur| spec.version > cur.version)
+                            .unwrap_or(true);
                         if newer {
                             self.specs.insert(spec.id.clone(), spec);
                         }
@@ -135,7 +178,9 @@ impl Registry {
     }
 
     pub fn get(&self, id: &str) -> Result<&DriverSpec, DriverError> {
-        self.specs.get(id).ok_or_else(|| DriverError::Unknown(id.into()))
+        self.specs
+            .get(id)
+            .ok_or_else(|| DriverError::Unknown(id.into()))
     }
 
     pub fn ids(&self) -> Vec<&str> {
@@ -178,6 +223,114 @@ pub fn probe_script(spec: &ProbeSpec, seat_id: &str) -> String {
     )
 }
 
+const DEFAULT_COMPOSER: &[&str] = &[
+    "#prompt-textarea",
+    "textarea[placeholder]",
+    "textarea",
+    "div[contenteditable='true']",
+    "[contenteditable='true']",
+];
+const DEFAULT_TRANSCRIPT: &[&str] = &[
+    "[data-message-author-role]",
+    "[data-testid='conversation-turn']",
+    "article[data-turn]",
+];
+
+/// Paste a recalled brief into the composer. Does not press Send — a mis-click would start a
+/// separate text turn beside the voice call. Re-running is a no-op once the marker is present.
+pub fn inject_memory_script(text: &str, composer: &[String]) -> String {
+    let text = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
+    let defaults = DEFAULT_COMPOSER
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect::<Vec<_>>();
+    let sels_ref: &[String] = if composer.is_empty() {
+        &defaults
+    } else {
+        composer
+    };
+    let sels = serde_json::to_string(sels_ref).unwrap();
+    format!(
+        r#"(async () => {{
+  const text = {text};
+  const marker = "[AgentDock memory]";
+  if (!text || !text.includes(marker)) return "empty";
+  const sels = {sels};
+  const find = (list) => {{ for (const s of list) {{ try {{
+    const els = Array.from(document.querySelectorAll(s));
+    const el = els.find(e => {{ const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }});
+    if (el) return el; }} catch (_) {{}} }} return null; }};
+  const el = find(sels);
+  if (!el) return "no-composer";
+  const cur = ("value" in el ? el.value : (el.innerText || "")) || "";
+  if (String(cur).includes(marker)) return "already";
+  try {{
+    if ("value" in el) {{
+      const proto = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value");
+      const next = text + (cur ? "\n" + cur : "");
+      if (proto && proto.set) proto.set.call(el, next); else el.value = next;
+      el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    }} else {{
+      el.focus();
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand("insertText", false, text + "\n");
+    }}
+  }} catch (e) {{ return "inject-failed"; }}
+  return "ok";
+}})()"#
+    )
+}
+
+/// Scrape visible user/assistant bubbles and report the ones this page has not reported yet.
+/// Role comes from `data-message-author-role` / `data-role`, then a class or aria hint.
+/// Nodes with no role are skipped so chrome text does not become memory.
+pub fn transcript_script(selectors: &[String], seat_id: &str) -> String {
+    let defaults = DEFAULT_TRANSCRIPT
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect::<Vec<_>>();
+    let sels_ref: &[String] = if selectors.is_empty() {
+        &defaults
+    } else {
+        selectors
+    };
+    let sels = serde_json::to_string(sels_ref).unwrap();
+    let seat = serde_json::to_string(seat_id).unwrap();
+    format!(
+        r#"(async () => {{
+  const sels = {sels};
+  const seen = (window.__agentdockMemorySeen = window.__agentdockMemorySeen || new Set());
+  const nodes = [];
+  for (const s of sels) {{ try {{ document.querySelectorAll(s).forEach(el => nodes.push(el)); }} catch (_) {{}} }}
+  const lines = [];
+  for (const el of nodes) {{
+    let role = (el.getAttribute("data-message-author-role") || el.getAttribute("data-role") || "").toLowerCase();
+    if (role !== "user" && role !== "assistant") {{
+      const blob = ((el.className && String(el.className)) || "") + " " + (el.getAttribute("aria-label") || "");
+      if (/\buser\b/i.test(blob)) role = "user";
+      else if (/assistant|\bagent\b|\bbot\b/i.test(blob)) role = "assistant";
+      else continue;
+    }}
+    const content = (el.innerText || "").trim().slice(0, 4000);
+    if (!content) continue;
+    const key = role + "\n" + content;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push({{ role, content }});
+  }}
+  const fresh = lines.slice(-12);
+  if (!fresh.length) return "empty";
+  window.__TAURI_INTERNALS__?.invoke("memory_report", {{ seatId: {seat}, lines: fresh }});
+  return "ok";
+}})()"#
+    )
+}
+
 /// JS that runs a step list sequentially inside the page.
 pub fn steps_script(steps: &[Step]) -> String {
     let steps_json = serde_json::to_string(steps).unwrap();
@@ -212,12 +365,24 @@ mod tests {
     #[test]
     fn bundled_specs_parse_and_cover_every_default_seat() {
         let r = Registry::bundled();
-        assert_eq!(r.ids(), ["chatgpt-dot", "copilot-voice", "devin-voice", "grok-bot", "muse-voice"]);
+        assert_eq!(
+            r.ids(),
+            [
+                "chatgpt-dot",
+                "copilot-voice",
+                "devin-voice",
+                "grok-bot",
+                "muse-voice"
+            ]
+        );
         for id in r.ids() {
             let s = r.get(id).unwrap();
             assert!(!s.call.is_empty(), "{id} has a call sequence");
             assert!(!s.hangup.is_empty(), "{id} has a hangup sequence");
-            assert!(!s.probe.in_call.is_empty(), "{id} can detect an active call");
+            assert!(
+                !s.probe.in_call.is_empty(),
+                "{id} can detect an active call"
+            );
         }
     }
 
@@ -227,13 +392,24 @@ mod tests {
         let mut spec = Registry::bundled().get("copilot-voice").unwrap().clone();
         spec.version += 1;
         spec.display_name = "Copilot (hotfix)".into();
-        std::fs::write(dir.path().join("copilot.json"), serde_json::to_string(&spec).unwrap()).unwrap();
+        std::fs::write(
+            dir.path().join("copilot.json"),
+            serde_json::to_string(&spec).unwrap(),
+        )
+        .unwrap();
         let mut stale = Registry::bundled().get("chatgpt-dot").unwrap().clone();
         stale.version = 0;
         stale.display_name = "stale".into();
-        std::fs::write(dir.path().join("dot.json"), serde_json::to_string(&stale).unwrap()).unwrap();
+        std::fs::write(
+            dir.path().join("dot.json"),
+            serde_json::to_string(&stale).unwrap(),
+        )
+        .unwrap();
         let r = Registry::bundled().with_overrides(dir.path());
-        assert_eq!(r.get("copilot-voice").unwrap().display_name, "Copilot (hotfix)");
+        assert_eq!(
+            r.get("copilot-voice").unwrap().display_name,
+            "Copilot (hotfix)"
+        );
         assert_ne!(r.get("chatgpt-dot").unwrap().display_name, "stale");
     }
 
@@ -243,8 +419,28 @@ mod tests {
         let spec = reg.get("chatgpt-dot").unwrap();
         let js = probe_script(&spec.probe, "dot\"); alert(1); (\"");
         assert!(js.contains(r#"invoke('driver_report'"#));
-        assert!(js.contains(r#""dot\"); alert(1); (\"""#), "seat id is JSON-escaped");
+        assert!(
+            js.contains(r#""dot\"); alert(1); (\"""#),
+            "seat id is JSON-escaped"
+        );
         let steps = steps_script(&spec.call);
         assert!(steps.contains("\"op\":\"click\""));
+    }
+
+    #[test]
+    fn memory_scripts_json_escape_text_and_seat_ids() {
+        let js = inject_memory_script("[AgentDock memory]\n他说 \"hi\" </script>", &[]);
+        assert!(js.contains(r#""[AgentDock memory]\n他说 \"hi\" </script>""#));
+        assert!(js.contains("insertText"));
+        assert!(
+            !js.contains("</script>\"),"),
+            "the closing tag stays inside a JSON string"
+        );
+        let scrape = transcript_script(&[], "dot\"); alert(1)");
+        assert!(scrape.contains(r#""dot\"); alert(1)""#));
+        assert!(scrape.contains("memory_report"));
+        let custom = transcript_script(&[".msg".into()], "dot");
+        assert!(custom.contains(r#"[".msg"]"#));
+        assert!(!custom.contains("conversation-turn"));
     }
 }

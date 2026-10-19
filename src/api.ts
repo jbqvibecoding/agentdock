@@ -33,10 +33,18 @@ export type Orientation = "horizontal" | "vertical";
 export type CollapseMode = "auto" | "pinned_expanded" | "pinned_collapsed";
 export interface DockAnchor { x: number; y: number }
 export interface Hotkeys { toggle: string; mute: string; hangup: string; orientation: string; form: string; seat_modifier: string; push_to_talk: boolean }
+export interface MemorySettings {
+  enabled: boolean; user_id: string; inject_context: boolean; top_k: number;
+}
+export interface MemoryStatus {
+  active: boolean; enabled: boolean; key_present: boolean; base_url: string; user_id: string;
+  app_id: string; project_id: string; reason: string; inject_context: boolean; top_k: number;
+}
 export interface AppSettings {
   default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; auto_collapse_secs: number; collapse_mode: CollapseMode; show_names: "hover" | "always" | "never";
   reduce_motion: boolean; material_strength: number; dock_scale?: number; hotkeys: Hotkeys; mute_mode: "system" | "seat";
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
+  memory: MemorySettings;
 }
 export interface DriverInfo { id: string; display_name: string; version: number; verified: boolean; kind: "web" | "app" }
 export interface HostInfo { os: string; vibrancy: boolean; material?: string; version: string }
@@ -59,6 +67,7 @@ const mock = (() => {
     default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5, dock_scale: 1,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
     mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false,
+    memory: { enabled: false, user_id: "", inject_context: true, top_k: 5 },
   };
   if (typeof window !== "undefined") (window as any).__mockSettings = settings;
   let started = 0; let timer: number | undefined; let undoTimer: number | undefined;
@@ -127,6 +136,12 @@ const mock = (() => {
     open_settings: () => window.open("/settings.html", "_blank"),
     quit: () => undefined,
     host_info: () => ({ os: "browser", vibrancy: false, version: "0.1.0-dev" }),
+    memory_status: () => ({
+      active: false, enabled: !!settings.memory?.enabled, key_present: false,
+      base_url: "https://api.evermind.ai", user_id: settings.memory?.user_id || "",
+      app_id: "agentdock", project_id: "default", reason: settings.memory?.enabled ? "未设置 EVEROS_API_KEY" : "已在设置中关闭",
+      inject_context: settings.memory?.inject_context !== false, top_k: settings.memory?.top_k || 5,
+    }),
   };
   return {
     invoke: async <T,>(cmd: string, args: any = {}): Promise<T> => cmds[cmd]?.(args) as T,

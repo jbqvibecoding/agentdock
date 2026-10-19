@@ -2,14 +2,25 @@
 Runs against the Vite dev server (http://localhost:1420) in headless Chrome via CDP and asserts the
 state machine → DOM contract: idle → calling → in_call → muted → switching → undo → hangup → collapsed.
 """
-import asyncio, json, subprocess, sys, time, urllib.request, websockets
+import asyncio, json, subprocess, sys, tempfile, time, urllib.request, websockets
 
 PORT = 9444
 URL = "http://localhost:1420/"
 
 async def main() -> int:
-    chrome = subprocess.Popen(["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu", f"--remote-debugging-port={PORT}", "--window-size=900,300", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(2.5)
+    # Current Chrome refuses remote debugging on the default profile.
+    profile = tempfile.mkdtemp(prefix="agentdock-chrome-")
+    chrome = subprocess.Popen(["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", f"--user-data-dir={profile}", f"--remote-debugging-port={PORT}", "--window-size=900,300", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(40):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json", timeout=0.3).close()
+            break
+        except Exception:
+            time.sleep(0.15)
+    else:
+        chrome.terminate()
+        print("chrome did not open a devtools port")
+        return 1
     ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json").read())[0]["webSocketDebuggerUrl"]
     failures = []
     def check(name, cond):
@@ -85,6 +96,14 @@ async def main() -> int:
         check("settings: appearance has 4 form cards", await ev("document.querySelectorAll('.card').length") == 4)
         await ev("document.querySelectorAll('.card')[3].click()"); await asyncio.sleep(0.3)
         check("settings: picking a card saves default_form=pet", await ev("window.__mockSettings && window.__mockSettings.default_form") == "pet" and await ev("document.querySelectorAll('.card')[3].classList.contains('is-on')"))
+        await ev("document.querySelector('[data-page=memory]').click()"); await asyncio.sleep(0.4)
+        check("settings: memory page explains the key and starts off", await ev("document.getElementById('title').textContent") == "记忆" and "EVEROS_API_KEY" in (await ev("document.getElementById('page').innerText") or "") and await ev("document.querySelector('#page [role=switch]').getAttribute('aria-checked')") == "false")
+        await ev("document.querySelector('#page [role=switch]').click()"); await asyncio.sleep(0.3)
+        check("settings: enabling memory saves the opt-in", await ev("window.__mockSettings.memory && window.__mockSettings.memory.enabled") == True)
+        await ev("document.querySelector('[data-page=about]').click()"); await asyncio.sleep(0.4)
+        check("settings: about privacy mentions EverOS", "EVEROS_API_KEY" in (await ev("document.getElementById('page').innerText") or "") and "长期记忆" in (await ev("document.getElementById('page').innerText") or ""))
+        await ev("document.querySelector('[data-page=memory]').click()"); await asyncio.sleep(0.4)
+        check("settings: memory opt-in survives leaving the page", await ev("document.querySelector('#page [role=switch]').getAttribute('aria-checked')") == "true" and await ev("window.__mockSettings.memory.enabled") == True)
         errors = await ev("window.__errors || 0")
         check("no uncaught errors", errors == 0)
     chrome.terminate()
