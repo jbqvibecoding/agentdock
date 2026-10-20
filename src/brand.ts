@@ -67,28 +67,13 @@ export const BRAND: Record<string, { label: string; svg: string; tint: string; p
 
 export const GENERIC_MARK = `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" stroke-width="3" opacity=".6"/><path d="M24 15v12M18 21l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
-const officialCache = new Map<string, string | null>();
-
-/** Returns icon markup, preferring official PNG/SVG assets in public/brand/. */
+/** Returns icon markup, preferring official PNG assets in public/brand/ and falling back to inline SVG. */
 export async function iconFor(key: string): Promise<string> {
-  if (!officialCache.has(key)) {
-    let resolved: string | null = null;
-    try {
-      const resSvg = await fetch(`/brand/${key}.svg`, { cache: "force-cache" });
-      const ctSvg = resSvg.headers.get("content-type") || "";
-      if (resSvg.ok && ctSvg.includes("svg")) {
-        resolved = await resSvg.text();
-      } else if (BRAND[key]?.png) {
-        const resPng = await fetch(BRAND[key].png!, { method: "HEAD", cache: "force-cache" });
-        const ctPng = resPng.headers.get("content-type") || "";
-        if (resPng.ok && ctPng.includes("image")) {
-          resolved = `<img src="${BRAND[key].png}" alt="" draggable="false">`;
-        }
-      }
-    } catch { resolved = null; }
-    officialCache.set(key, resolved);
+  const brand = BRAND[key];
+  if (brand?.png) {
+    return `<img src="${brand.png}" alt="" draggable="false">`;
   }
-  return officialCache.get(key) || BRAND[key]?.svg || GENERIC_MARK;
+  return brand?.svg || GENERIC_MARK;
 }
 
 export const tintFor = (key: string) => BRAND[key]?.tint ?? "#8e8e93";
