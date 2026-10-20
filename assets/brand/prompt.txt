@@ -1,0 +1,16 @@
+Generator: built-in imagegen
+Base: user-preferred v3. This is a separate subtle lighting candidate; v3 remains preserved.
+
+Use case: lighting-weather.
+Asset type: AgentDock application icon, VERY SUBTLE v3 polish.
+Input image 1 is the USER-PREFERRED V3. Preserve its look. The later flat-matte redesign was rejected by the user because it lost the original premium material depth. Do not create a flat tile.
+
+Make a MINIMAL local lighting correction ONLY to the narrow TOP PERIMETER BAND of the background rounded-square tile (roughly the first 10% of tile height below the top edge). Lower the brightest central portion of that top band by about 10 to 15 percent and blend that small change smoothly into the existing graphite gradient. Preserve the original directional metallic softness and dimensional finish. Keep the top edge straight, with equally treated left/right top corners. Avoid an isolated bright stripe hugging the upper silhouette, but maintain a softly lit upper graphite surface. Keep a natural gentle tonal progression, not a solid uniform fill. The result should look almost identical to the original V3, just with a slightly more relaxed top edge.
+
+STRICT INVARIANTS:
+Keep the entire central glass sphere exactly as it is: same diameter, location, smoked glass, broad soft silver reflection, original warm champagne rim, and exactly five ivory voice bars, unchanged.
+Keep the original luminous contact reflection and subtle warm pool below the sphere.
+Keep the entire middle and bottom portions of the tile, texture, colors, optical depth and warm/cool balance unchanged.
+Keep the outer silhouette, original corner radii, canvas size, relative footprint, equal transparent margins, and overall composition unchanged. No restyling or geometric reconstruction. Do not enlarge the orb. Do not remove the existing gradient, do not flatten the tile, do not add an outline or external shadow.
+The outer silver square border stays absent, as in V3.
+Only the narrow uppermost tile lighting is adjusted very gently. One finished icon with genuine transparent background outside the tile, no text or labels.

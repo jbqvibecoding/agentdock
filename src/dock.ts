@@ -428,7 +428,19 @@ const near = (s: Spring, target: number, eps: number) => Math.abs(s.x - target) 
 function lensTargetAt(x: number, y: number): HTMLElement | null {
   if (dock.dataset.form !== "bar" || dragging || resizing) return null;
   const t = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>(".btn, .grip, .avatar, .undo");
-  return t && bar.contains(t) ? t : null;
+  if (t && bar.contains(t)) return t;
+  const d = dock.getBoundingClientRect();
+  if (x < d.left || x > d.right || y < d.top || y > d.bottom) return null;
+  const maxGap = 14 * currentScale();
+  let best: HTMLElement | null = null, bestDist = maxGap;
+  for (const c of bar.querySelectorAll<HTMLElement>(".btn, .grip, .avatar, .undo")) {
+    const r = c.getBoundingClientRect();
+    const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+    const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= bestDist) { bestDist = dist; best = c; }
+  }
+  return best;
 }
 
 /** After a re-render swaps the DOM, re-attach hover state to the control with the same identity. */
@@ -451,7 +463,13 @@ function lensFrame(now: number) {
   const elapsed = Math.min(1 / 30, Math.max(1 / 240, (now - lensLast) / 1000));
   lensLast = now;
   const target = ptr ? lensTargetAt(ptr.x, ptr.y) : null;
-  if (target !== hot) { hot?.classList.remove("is-hot"); target?.classList.add("is-hot"); hot = target; }
+  if (target !== hot) {
+    hot?.classList.remove("is-hot");
+    target?.classList.add("is-hot");
+    hot = target;
+    const nextSeat = target?.dataset.seat ?? null;
+    if (nextSeat !== hoverSeat) { hoverSeat = nextSeat; renderStatusText(); }
+  }
   dock.classList.toggle("hot", !!ptr && dock.dataset.form !== "bar" && !dragging);
   if (anchor && !anchor.isConnected) anchor = null;
   if (target) anchor = target;

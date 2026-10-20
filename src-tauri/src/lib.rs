@@ -515,6 +515,11 @@ fn cursor_local(app: &AppHandle) -> Option<(f64, f64, bool)> {
     Some((cx - x, cy - y, cx >= x && cy >= y && cx < x + w && cy < y + h))
 }
 
+/// True on the first sample after entering the dock, or once the cursor has moved > 0.25 logical px.
+fn pointer_moved(last: Option<(f64, f64)>, x: f64, y: f64) -> bool {
+    last.map_or(true, |(lx, ly)| (x - lx).abs() > 0.25 || (y - ly).abs() > 0.25)
+}
+
 /// WKWebView only receives mouse-moved/entered/exited while its window is key, and the Dock is
 /// never key by design (`focus: false`): parked next to another app it gets no `:hover`, no
 /// pointerenter/leave. Poll the OS cursor and tell the dock when it enters or leaves the window
@@ -522,12 +527,15 @@ fn cursor_local(app: &AppHandle) -> Option<(f64, f64, bool)> {
 fn spawn_hover_watcher(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut over = false;
-        let mut last = (f64::NAN, f64::NAN);
+        let mut last: Option<(f64, f64)> = None;
         loop {
-            tokio::time::sleep(Duration::from_millis(if over { 16 } else { 80 })).await;
+            tokio::time::sleep(Duration::from_millis(if over { 14 } else { 40 })).await;
             let Some((x, y, inside)) = cursor_local(&app) else { continue };
             if inside != over {
                 over = inside;
+                if !over {
+                    last = None;
+                }
                 let _ = app.emit("dock:hover", over);
                 // AppKit may rebuild the glass layers behind our back (appearance, key state);
                 // re-apply the tuning whenever the user is about to look at / touch the Dock.
@@ -536,9 +544,9 @@ fn spawn_hover_watcher(app: AppHandle) {
                     let _ = app.run_on_main_thread(liquid_glass::tune_all);
                 }
             }
-            if over && ((x - last.0).abs() > 0.25 || (y - last.1).abs() > 0.25) {
-                last = (x, y);
-                let _ = app.emit_to("dock", "dock:pointer", (x, y));
+            if over && pointer_moved(last, x, y) {
+                last = Some((x, y));
+                let _ = app.emit("dock:pointer", (x, y));
             }
         }
     });
@@ -622,9 +630,17 @@ fn dock_origin(snap: settings::Snap, anchor: Option<settings::DockAnchor>, width
 
 #[cfg(test)]
 mod placement_tests {
-    use super::dock_origin;
+    use super::{dock_origin, pointer_moved};
     use crate::settings::{DockAnchor, Snap};
     const MON: (f64, f64, f64, f64) = (0.0, 0.0, 1440.0, 900.0);
+
+    #[test]
+    fn pointer_moved_fires_on_first_sample_and_after_threshold() {
+        assert!(pointer_moved(None, 24.0, 28.0));
+        assert!(!pointer_moved(Some((24.0, 28.0)), 24.1, 28.2));
+        assert!(pointer_moved(Some((24.0, 28.0)), 24.4, 28.0));
+        assert!(pointer_moved(Some((24.0, 28.0)), 24.0, 28.5));
+    }
 
     #[test]
     fn free_anchor_centres_and_clamps_to_screen() {
@@ -1040,7 +1056,7 @@ fn open_settings(app: AppHandle) -> CmdResult<()> {
             // The CSS slab must follow the real window corner (26pt with the unified toolbar).
             let radius = liquid_glass::window_corner_radius(&w2);
             liquid_glass::set_settings_corner_radius(radius);
-            let _ = w2.emit_to("settings", "settings:radius", radius);
+            let _ = w2.emit("settings:radius", radius);
             liquid_glass::tune_all();
         });
     }
@@ -1072,7 +1088,7 @@ fn spawn_glass_scheme_watcher(app: AppHandle) {
             let _ = app.run_on_main_thread(move || {
                 if let Some(scheme) = liquid_glass::glass_scheme_changed() {
                     tracing::info!("dock glass content scheme → {scheme}");
-                    let _ = handle.emit_to("dock", "dock:glass", scheme);
+                    let _ = handle.emit("dock:glass", scheme);
                 }
             });
         }
@@ -1805,8 +1821,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "退出 AgentDock", true, Some("CmdOrCtrl+Q"))?;
     let menu = Menu::with_items(app, &[&toggle, &settings, &PredefinedMenuItem::separator(app)?, &quit])?;
     let mut builder = TrayIconBuilder::with_id("main").menu(&menu).tooltip("AgentDock").show_menu_on_left_click(true);
+    // macOS templates use alpha only: the glass app tile would become a solid square.
+    #[cfg(target_os = "macos")]
+    {
+        let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
+        builder = builder.icon(icon).icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone()).icon_as_template(true);
+        builder = builder.icon(icon.clone());
     }
     builder
         .on_menu_event(|app, ev| match ev.id().as_ref() {
