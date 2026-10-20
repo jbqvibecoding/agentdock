@@ -125,11 +125,6 @@ async function seatButton(s: SeatView, small: boolean, active: boolean): Promise
   b.append(mark, el("i", "badge"));
   b.addEventListener("mouseenter", () => { hoverSeat = s.id; renderStatusText(); });
   b.addEventListener("mouseleave", () => { hoverSeat = null; renderStatusText(); });
-  let pressTimer: number | undefined;
-  b.addEventListener("pointerdown", () => { pressTimer = window.setTimeout(() => api.invoke("open_settings"), 550); });
-  b.addEventListener("pointerup", () => window.clearTimeout(pressTimer));
-  b.addEventListener("pointerleave", () => window.clearTimeout(pressTimer));
-  b.addEventListener("contextmenu", (e) => { e.preventDefault(); api.invoke("open_settings"); });
   return b;
 }
 
