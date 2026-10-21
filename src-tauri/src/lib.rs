@@ -1356,12 +1356,13 @@ fn spawn_glass_scheme_watcher(app: AppHandle) {
 }
 
 #[tauri::command]
-fn host_info() -> serde_json::Value {
+fn host_info(app: AppHandle) -> serde_json::Value {
     serde_json::json!({
         "os": std::env::consts::OS,
         "vibrancy": cfg!(any(target_os = "macos", target_os = "windows")),
         "material": MATERIAL.lock().unwrap().clone(),
-        "version": env!("CARGO_PKG_VERSION"),
+        // the app version (tauri.conf.json reads package.json), not the crate's
+        "version": app.package_info().version.to_string(),
         "window_radius": *SETTINGS_RADIUS.lock().unwrap(),
         // what "follow the system" resolves from, on both sides
         "locale": i18n::system_locale(),
