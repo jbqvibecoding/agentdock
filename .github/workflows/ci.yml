@@ -1,0 +1,37 @@
+# 每次推送到 main 和每个 PR：前端类型检查 + 打包，Rust 单元测试（macOS 是首发平台）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      # tauri::generate_context! 编译时要读 dist/，所以先打前端
+      - name: Frontend (tsc + vite)
+        run: npm run build
+
+      - name: Rust unit tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml

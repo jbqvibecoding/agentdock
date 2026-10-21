@@ -9,7 +9,7 @@
 把 ChatGPT dot、Grok Bot 里的每个 Bot、Copilot、Devin、Muse 当成一排可呼叫的联系人：<br/>
 一键呼叫 · 一键闭麦 · 一键挂断或切到下一位。不是聊天窗口，不是模型路由器。
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-56%20unit%20%C2%B7%2031%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-56%20unit%20%C2%B7%2031%20e2e-2ea043)](#测试) [![CI](https://github.com/we1jia/AgentDock/actions/workflows/ci.yml/badge.svg)](https://github.com/we1jia/AgentDock/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/we1jia/AgentDock?label=下载)](https://github.com/we1jia/AgentDock/releases/latest) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [English](README.en.md) · [功能](#功能) · [安装](#安装) · [快捷键](#快捷键) · [架构](#架构) · [接入席位](#接入席位) · [长期记忆](#长期记忆everos) · [隐私](#隐私与边界) · [路线图](#路线图)
 
@@ -154,7 +154,13 @@ AgentDock 做的事情很窄：
 
 ## 安装
 
-### macOS（推荐，首发平台）
+### 直接下载（macOS）
+
+到 [Releases](https://github.com/we1jia/AgentDock/releases/latest) 下载 `AgentDock_<版本>_universal.dmg`（Apple 芯片和 Intel 通用），把 AgentDock 拖进「应用程序」。
+
+安装包没有经过 Apple 公证（ad-hoc 签名），第一次打开会被拦下：到 **系统设置 › 隐私与安全性** 底部点「仍要打开」，或在终端执行一次 `xattr -dr com.apple.quarantine /Applications/AgentDock.app`。
+
+### 从源码构建（macOS，首发平台）
 
 ```bash
 # 工具链（已装可跳过）
@@ -361,6 +367,18 @@ DOCS_RS=1 cargo check --target aarch64-apple-darwin    # 在 Linux 上交叉检�
 python3 .shots/shoot.py                                # 重新生成 docs/screenshots 下的 mock 截图
 ```
 
+**持续集成与发版**（[`.github/workflows`](.github/workflows)）
+
+- `CI`：每次推送到 `main` 和每个 PR，在 macOS 上跑前端构建和 Rust 单元测试。
+- `Release`：推送 `v*` 标签即打包 macOS 通用版 dmg，发布到 GitHub Releases（附自动生成的更新说明）。版本号只在 `package.json` 里改，`tauri.conf.json` 直接读它：
+
+```bash
+npm version patch          # 0.1.0 → 0.1.1，同时提交并打标签 v0.1.1
+git push --follow-tags     # 推送后 Release 流水线开始打包
+```
+
+在 Actions 页面手动运行 `Release` 只打包，安装包作为流水线产物下载，不发 Release。
+
 真机验证记录（macOS 26.6.2 · Apple Silicon）：原生 `NSGlassEffectView` 材质、主题切换无残影、拖拽零漂移、重启位置保留、横竖切换、把手、自动收起与三档收起、⌥O / ⌥P / ⌥Space、原生右键菜单。
 
 ## 隐私与边界
@@ -387,7 +405,8 @@ python3 .shots/shoot.py                                # 重新生成 docs/scree
 - [ ] 各站选择器真机钉定并标记 `verified: true`（Grok Bot 已真机接通）
 - [ ] Windows 实机编译与 Mica 验证
 - [ ] 通话中来电提示（另一席位有消息时胶囊轻微呼吸）
-- [ ] 签名与公证的 .dmg 发布
+- [x] GitHub Actions：CI + 打标签自动发布 macOS 通用版 dmg
+- [ ] Apple 开发者证书签名与公证（免去首次「仍要打开」）
 
 ## 致谢
 

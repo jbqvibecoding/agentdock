@@ -9,7 +9,7 @@
 Treat ChatGPT dot, every Bot in Grok Bot, Copilot, Devin and Muse as contacts:<br/>
 one click to call, one click to mute, one click to hang up or hand the call to the next agent. Not a chat window. Not a model router.
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-56%20unit%20%C2%B7%2031%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-56%20unit%20%C2%B7%2031%20e2e-2ea043)](#testing) [![CI](https://github.com/we1jia/AgentDock/actions/workflows/ci.yml/badge.svg)](https://github.com/we1jia/AgentDock/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/we1jia/AgentDock?label=download)](https://github.com/we1jia/AgentDock/releases/latest) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) · [Features](#features) · [Install](#install) · [Shortcuts](#shortcuts) · [Architecture](#architecture) · [Connecting seats](#connecting-seats) · [Memory](#long-term-memory-everos) · [Privacy](#privacy--limits) · [Roadmap](#roadmap)
 
@@ -154,7 +154,13 @@ AgentDock deliberately does one narrow thing:
 
 ## Install
 
-### macOS (primary platform)
+### Download (macOS)
+
+Grab `AgentDock_<version>_universal.dmg` (Apple silicon and Intel) from [Releases](https://github.com/we1jia/AgentDock/releases/latest) and drag AgentDock into Applications.
+
+The build is not notarized by Apple (ad-hoc signature), so macOS blocks the first launch: click *Open Anyway* at the bottom of **System Settings › Privacy & Security**, or run `xattr -dr com.apple.quarantine /Applications/AgentDock.app` once.
+
+### Build from source (macOS, primary platform)
 
 ```bash
 xcode-select --install
@@ -357,6 +363,18 @@ DOCS_RS=1 cargo check --target aarch64-apple-darwin    # cross-check the macOS o
 python3 .shots/shoot.py                                # regenerate the mock screenshots in docs/screenshots
 ```
 
+**CI and releases** ([`.github/workflows`](.github/workflows))
+
+- `CI`: every push to `main` and every PR runs the frontend build and the Rust unit tests on macOS.
+- `Release`: pushing a `v*` tag builds the universal macOS dmg and publishes it on GitHub Releases (with generated release notes). The version lives only in `package.json`; `tauri.conf.json` reads it:
+
+```bash
+npm version patch          # 0.1.0 → 0.1.1, commits and tags v0.1.1
+git push --follow-tags     # the Release workflow starts building
+```
+
+Running `Release` by hand from the Actions tab only builds; the installers come as workflow artifacts, no release is made.
+
 Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectView`, no artifacts on theme change, zero-drift drag, position persists across restarts, orientation toggle, grip, auto-collapse and the three collapse modes, ⌥O / ⌥P / ⌥Space, native context menu.
 
 ## Privacy & limits
@@ -383,7 +401,8 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 - [ ] Pin selectors on real devices and flip `verified: true` (Grok Bot calls already connect)
 - [ ] Windows build + Mica verification
 - [ ] Incoming-activity hint during a call (pill breathes when another seat has something to say)
-- [ ] Signed & notarized .dmg releases
+- [x] GitHub Actions: CI + tag-triggered universal macOS dmg releases
+- [ ] Developer ID signing and notarization (no first-launch *Open Anyway*)
 
 ## Credits
 
