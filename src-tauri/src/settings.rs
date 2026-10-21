@@ -51,6 +51,22 @@ pub enum CollapseMode {
     PinnedCollapsed,
 }
 
+/// Interface language. `System` follows the first preferred language of the OS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Language {
+    #[default]
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "en")]
+    En,
+    #[serde(rename = "zh-TW")]
+    ZhTw,
+    #[serde(rename = "ja")]
+    Ja,
+}
+
 /// Where AgentDock itself shows up on macOS. Clicking the Dock icon opens the settings window;
 /// the menu bar icon holds the same menu. At least one of the two is always there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -139,6 +155,8 @@ pub struct AppSettings {
     pub web_via_chrome: bool,
     #[serde(default)]
     pub app_icon: AppIcon,
+    #[serde(default)]
+    pub language: Language,
     /// EverOS long-term memory. Off until the user opts in; still a no-op without `EVEROS_API_KEY`.
     #[serde(default)]
     pub memory: MemorySettings,
@@ -244,6 +262,7 @@ impl Default for AppSettings {
             confirm_switch: false,
             web_via_chrome: default_web_via_chrome(),
             app_icon: AppIcon::Both,
+            language: Language::System,
             memory: MemorySettings::default(),
         }
     }
@@ -336,6 +355,7 @@ mod tests {
         v.as_object_mut().unwrap().remove("memory");
         v.as_object_mut().unwrap().remove("web_via_chrome");
         v.as_object_mut().unwrap().remove("app_icon");
+        v.as_object_mut().unwrap().remove("language");
         let s: AppSettings = serde_json::from_value(v).unwrap();
         assert_eq!(s, AppSettings::default());
         assert!(!s.memory.enabled);

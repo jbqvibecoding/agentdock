@@ -14,8 +14,8 @@
     "rows": "/value/rows",
     "name": "name",
     "exclude": {
-      "isGroup": "是群聊，群聊不能语音通话",
-      "isHiddenFromSidebar": "在 Grok Bot 侧栏里被隐藏了"
+      "isGroup": "group_chat",
+      "isHiddenFromSidebar": "hidden"
     }
   },
   "call": [

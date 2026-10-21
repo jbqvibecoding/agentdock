@@ -5,6 +5,7 @@
 //! gets its own background tab; the user's own tabs are never touched.
 
 use super::DriverError;
+use crate::i18n;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::{SocketAddr, TcpStream};
@@ -73,7 +74,7 @@ enum Fail {
 impl From<Fail> for DriverError {
     fn from(f: Fail) -> Self {
         match f {
-            Fail::Lost => DriverError::Chrome("和 Chrome 的连接断开了，再试一次会重新连接".into()),
+            Fail::Lost => DriverError::Chrome(i18n::t("chrome.lost")),
             Fail::Cdp(m) => DriverError::Step(m),
             Fail::Driver(e) => e,
         }
@@ -81,7 +82,7 @@ impl From<Fail> for DriverError {
 }
 
 fn no_tab() -> Fail {
-    Fail::Driver(DriverError::Chrome("Chrome 里还没有这个 Agent 的标签页".into()))
+    Fail::Driver(DriverError::Chrome(i18n::t("chrome.no_tab")))
 }
 
 struct Conn {
@@ -91,8 +92,8 @@ struct Conn {
 
 impl Conn {
     fn open() -> Result<Conn, DriverError> {
-        let refused = || DriverError::Chrome("Chrome 没有允许连接：在 Chrome 弹出的「允许远程调试？」里点允许".into());
-        let (port, path) = endpoint().ok_or_else(|| DriverError::Chrome("Chrome 没开远程调试：在 Chrome 打开 chrome://inspect/#remote-debugging 并启用".into()))?;
+        let refused = || DriverError::Chrome(i18n::t("chrome.refused"));
+        let (port, path) = endpoint().ok_or_else(|| DriverError::Chrome(i18n::t("chrome.not_enabled")))?;
         let stream = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_secs(2)).map_err(|_| refused())?;
         let _ = stream.set_read_timeout(Some(APPROVAL_WAIT));
         let (ws, _) = tungstenite::client(format!("ws://127.0.0.1:{port}{path}"), stream).map_err(|_| refused())?;
@@ -145,7 +146,7 @@ impl Inner {
                 return Err(no_tab());
             }
             if self.failed_at.is_some_and(|t| t.elapsed() < RETRY_AFTER) {
-                return Err(Fail::Driver(DriverError::Chrome("Chrome 刚拒绝了连接，稍后再试".into())));
+                return Err(Fail::Driver(DriverError::Chrome(i18n::t("chrome.just_refused"))));
             }
             match Conn::open() {
                 Ok(c) => {

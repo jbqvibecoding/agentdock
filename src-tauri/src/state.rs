@@ -48,6 +48,8 @@ pub enum Effect {
 
 pub const UNDO_WINDOW: Duration = Duration::from_secs(3);
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+/// The Dock shows this reason in the user's language (src/i18n.ts `dock.callTimeout`).
+pub const REASON_CALL_TIMEOUT: &str = "call_timeout";
 
 #[derive(Debug)]
 pub struct Machine {
@@ -163,7 +165,7 @@ impl Machine {
             (Calling { seat }, Event::Tick) => {
                 if let Some(since) = self.calling_since {
                     if now.duration_since(since) >= CALL_TIMEOUT {
-                        self.state.phase = NeedsHuman { seat, reason: "呼叫超时，可能需要你看一眼".into() };
+                        self.state.phase = NeedsHuman { seat, reason: REASON_CALL_TIMEOUT.into() };
                     }
                 }
             }

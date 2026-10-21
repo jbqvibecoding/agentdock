@@ -336,7 +336,8 @@ impl AppDriver {
     pub fn refusal(spec: &DriverSpec, target: &str) -> Option<String> {
         let target = target.trim();
         let why = Self::roster(spec)?.into_iter().find(|e| e.name == target)?.blocked?;
-        Some(format!("「{target}」{why}"))
+        // `why` is a key into the native string table ("group_chat"), or plain text from a user driver
+        Some(crate::i18n::lookup(&format!("roster.{why}")).map_or_else(|| format!("「{target}」{why}"), |s| s.replace("{target}", target)))
     }
 
     /// What the app offers to call, e.g. the Bots in Grok Bot: from its roster when it has one
@@ -773,7 +774,7 @@ mod tests {
         let entries = read_roster(&spec, dir.path()).unwrap();
         let callable: Vec<&str> = entries.iter().filter(|e| e.blocked.is_none()).map(|e| e.name.as_str()).collect();
         assert_eq!(callable, ["Analytics", "可乐"], "group chats and hidden Bots are left out");
-        assert!(entries.iter().find(|e| e.name == "图片创作").unwrap().blocked.as_deref().unwrap().contains("群聊"));
+        assert_eq!(entries.iter().find(|e| e.name == "图片创作").unwrap().blocked.as_deref(), Some("group_chat"));
         assert!(read_roster(&spec, &dir.path().join("missing")).is_none());
     }
 

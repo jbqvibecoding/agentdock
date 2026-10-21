@@ -1,14 +1,15 @@
 import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type ChromeStatus, type DriverInfo, type HostInfo, type MemoryStatus, type Seat, type SeatView } from "./api";
 import { iconFor } from "./brand";
+import { lang, LANGUAGES, resolveLang, setLang, t, translateDom, type LangSetting, type MsgKey } from "./i18n";
 
 type PageId = "seats" | "hotkeys" | "appearance" | "mic" | "memory" | "about";
-const TITLES: Record<PageId, [string, string]> = {
-  seats: ["Agent", "拖动排序，顺序对应 ⌥1–⌥9"],
-  hotkeys: ["快捷键", "点击组合键重新录制，冲突会标红"],
-  appearance: ["外观", "形态、颜色与布局"],
-  mic: ["麦克风", "输入设备与闭麦方式"],
-  memory: ["记忆", "用 EverOS 记住每次通话，关闭时不上传任何内容"],
-  about: ["关于", "版本、隐私与驱动"],
+const TITLES: Record<PageId, [MsgKey, MsgKey]> = {
+  seats: ["nav.seats", "sub.seats"],
+  hotkeys: ["nav.hotkeys", "sub.hotkeys"],
+  appearance: ["nav.appearance", "sub.appearance"],
+  mic: ["nav.mic", "sub.mic"],
+  memory: ["nav.memory", "sub.memory"],
+  about: ["nav.about", "sub.about"],
 };
 
 let settings: AppSettings;
@@ -34,6 +35,7 @@ async function saveSettings(patch: Partial<AppSettings>) {
   await api.invoke("save_settings", { settings });
 }
 function applySettingsLocally() {
+  applyLanguage();
   applyTheme(settings.theme);
   document.documentElement.toggleAttribute("data-reduce-motion", settings.reduce_motion);
   document.documentElement.style.setProperty("--material", String(settings.material_strength ?? 0.5));
@@ -41,12 +43,21 @@ function applySettingsLocally() {
   if (accent) document.documentElement.style.setProperty("--accent", accent); else document.documentElement.style.removeProperty("--accent");
 }
 
+/** Switch the interface language: static markup at once, the current page on the next render. */
+function applyLanguage(): boolean {
+  const next = resolveLang(settings.language, host.locale);
+  if (next === lang() && document.documentElement.lang === next) return false;
+  setLang(next);
+  translateDom();
+  return true;
+}
+
 /** 主题色: preset swatches plus a custom picker; the Dock repaints live as you choose. */
 function accentPicker(): HTMLDivElement {
   const wrap = el("div", "swatches");
   const presets = new Set(ACCENTS.map(([c]) => c));
   const custom = el("label", "swatch custom") as HTMLLabelElement;
-  custom.title = "自定义颜色";
+  custom.title = t("accent.custom");
   const input = el("input") as HTMLInputElement;
   input.type = "color";
   input.value = validAccent(settings.accent) ?? "#0a84ff";
@@ -57,11 +68,11 @@ function accentPicker(): HTMLDivElement {
     custom.classList.toggle("is-on", isCustom);
     if (isCustom) custom.style.setProperty("--c", cur!);
   };
-  for (const [c, name] of ACCENTS) {
+  for (const [c, key] of ACCENTS) {
     const b = el("button", `swatch${c ? "" : " none"}`);
     b.type = "button";
-    b.title = name;
-    b.setAttribute("aria-label", `主题色：${name}`);
+    b.title = t(key);
+    b.setAttribute("aria-label", t("accent.aria", { name: t(key) }));
     b.dataset.c = c ?? "";
     if (c) b.style.setProperty("--c", c);
     b.addEventListener("click", () => { void saveSettings({ accent: c }); paint(); });
@@ -117,46 +128,44 @@ async function avatarFor(s: SeatView, lg = false): Promise<HTMLDivElement> {
 // right now. Everything occasional (test call, rename, icon, session, remove) lives in the ⋯ menu.
 function statusLabel(s: SeatView): string {
   switch (s.status) {
-    case "connected": return "已连接";
-    case "needs_auth": return s.driver.kind === "app" ? "需要授权" : "需要登录";
-    case "pending": return driverOf(s.driver.driver)?.pending ? "待接入" : "语音未开放";
-    case "unavailable": return "未安装";
-    default: return "未连接";
+    case "connected": return t("status.connected");
+    case "needs_auth": return t(s.driver.kind === "app" ? "status.needsAuthApp" : "status.needsAuthWeb");
+    case "pending": return t(driverOf(s.driver.driver)?.pending ? "status.placeholder" : "status.voiceClosed");
+    case "unavailable": return t("status.unavailable");
+    default: return t("status.unknown");
   }
 }
 const driverOf = (id: string) => drivers.find((d) => d.id === id);
 /** What a driver's call targets are called: "Bot" in Grok Bot, "dot" in ChatGPT. */
-const nounOf = (id: string) => driverOf(id)?.target_noun ?? "对象";
+const nounOf = (id: string) => driverOf(id)?.target_noun ?? t("noun.target");
 const iconKey = (driverId: string) => (driverId.startsWith("chatgpt") ? "dot" : driverId.replace(/-(voice|app)$/, ""));
 const seatWhere = (s: SeatView) => s.driver.kind === "web" ? new URL(s.driver.url).host.replace(/^www\./, "")
-  : s.target && s.target !== s.name ? `桌面 App · ${nounOf(s.driver.driver)}「${s.target}」` : "桌面 App";
+  : s.target && s.target !== s.name ? t("where.appTarget", { noun: nounOf(s.driver.driver), target: s.target }) : t("where.app");
 const overlaps = (a: string, b: string) => a.toLowerCase().includes(b.toLowerCase()) || b.toLowerCase().includes(a.toLowerCase());
 
 async function connectSeat(s: SeatView) {
   try {
-    if (s.driver.kind === "web") toast("正在打开…");
+    if (s.driver.kind === "web") toast(t("toast.opening"));
     const via = await api.invoke<string>("connect_account", { seatId: s.id });
-    toast(via === "chrome" ? "已在 Chrome 打开，沿用 Chrome 的登录" : s.driver.kind === "web" ? "登录窗已打开，登录后会自动收起" : "已打开 系统设置 › 辅助功能");
+    toast(t(via === "chrome" ? "toast.openedChrome" : s.driver.kind === "web" ? "toast.loginWindow" : "toast.axOpened"));
   } catch (e) { toast(String(e)); }
 }
 
 /** 登录方式: web Agents use the user's Chrome (its logins) when Chrome's remote debugging is on. */
 async function chromeGroup(): Promise<HTMLDivElement> {
   const on = settings.web_via_chrome ?? true;
-  let sub = "关闭时，网页版 Agent 在内置浏览器里单独登录";
+  let sub = t("chrome.off");
   if (on) {
     let st: ChromeStatus = { available: false, connected: false };
     try { st = await api.invoke<ChromeStatus>("chrome_status"); } catch { /* mock-less hosts */ }
-    sub = st.connected ? "已连接 Chrome，直接用你在 Chrome 里的登录"
-      : st.available ? "Chrome 已开启远程调试，第一次用时 Chrome 会问一次是否允许"
-      : "未检测到：在 Chrome 打开 chrome://inspect/#remote-debugging 并开启远程调试";
+    sub = t(st.connected ? "chrome.connected" : st.available ? "chrome.available" : "chrome.missing");
   }
-  return group("登录方式", row("用 Chrome 的登录", sub, toggle(on, (v) => void saveSettings({ web_via_chrome: v }).then(() => { if (page === "seats") void renderSeats(); }))));
+  return group(t("chrome.group"), row(t("chrome.row"), sub, toggle(on, (v) => void saveSettings({ web_via_chrome: v }).then(() => { if (page === "seats") void renderSeats(); }))));
 }
 async function testSeat(s: SeatView) {
-  toast("正在测试呼叫…");
+  toast(t("toast.testing"));
   const ok = await api.invoke<boolean>("test_call", { seatId: s.id });
-  toast(ok ? "接通并已挂断 ✓" : "没有检测到通话，驱动可能需要更新");
+  toast(t(ok ? "toast.testOk" : "toast.testFail"));
 }
 const saveSeat = (id: string, patch: Partial<Seat>) =>
   api.invoke("save_seats", { seats: seats.map((x) => (x.id === id ? { ...stripView(x), ...patch } : stripView(x))) });
@@ -168,7 +177,7 @@ function pickIcon(s: SeatView) {
     const f = file.files?.[0]; if (!f) return;
     const buf = new Uint8Array(await f.arrayBuffer()); let bin = "";
     for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-    try { await api.invoke("set_seat_icon", { seatId: s.id, fileName: f.name, dataBase64: btoa(bin) }); toast("图标已更换"); } catch (e) { toast(String(e)); }
+    try { await api.invoke("set_seat_icon", { seatId: s.id, fileName: f.name, dataBase64: btoa(bin) }); toast(t("toast.iconChanged")); } catch (e) { toast(String(e)); }
   });
   file.click();
 }
@@ -180,7 +189,7 @@ function renameInline(r: HTMLElement, s: SeatView, field: "name" | "target" = "n
   const input = el("input", "inline-name") as HTMLInputElement;
   const cur = (field === "name" ? s.name : s.target) ?? "";
   input.type = "text"; input.value = cur;
-  if (field === "target") input.placeholder = `${s.service} 侧栏里的 ${nounOf(s.driver.driver)} 名称`;
+  if (field === "target") input.placeholder = t("rename.targetPlaceholder", { service: s.service, noun: nounOf(s.driver.driver) });
   let done = false;
   const finish = async (save: boolean) => {
     if (done) return; done = true;
@@ -243,20 +252,20 @@ function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]) {
 function seatMenu(r: HTMLElement, s: SeatView): (MenuItem | "-")[] {
   const web = s.driver.kind === "web";
   const items: (MenuItem | "-")[] = [
-    { label: "测试呼叫", run: () => void testSeat(s), disabled: !s.enabled || s.status === "pending" || s.status === "unavailable" },
+    { label: t("menu.test"), run: () => void testSeat(s), disabled: !s.enabled || s.status === "pending" || s.status === "unavailable" },
   ];
   if (web) {
-    if (s.status === "connected") items.push({ label: "重新登录", run: () => void connectSeat(s) });
-    items.push({ label: "查看后台页面", run: () => void api.invoke("show_seat", { seatId: s.id, visible: true }).catch((e) => toast(String(e))) });
+    if (s.status === "connected") items.push({ label: t("menu.relogin"), run: () => void connectSeat(s) });
+    items.push({ label: t("menu.showPage"), run: () => void api.invoke("show_seat", { seatId: s.id, visible: true }).catch((e) => toast(String(e))) });
   }
-  items.push("-", { label: "重命名", run: () => renameInline(r, s) });
+  items.push("-", { label: t("menu.rename"), run: () => renameInline(r, s) });
   const noun = nounOf(s.driver.driver);
-  if (driverOf(s.driver.driver)?.picks) items.push({ label: s.target ? `换一个 ${noun}（当前：${s.target}）` : `指定 ${noun}…`, run: () => renameInline(r, s, "target") });
-  items.push({ label: "更换图标…", run: () => pickIcon(s) });
-  if (s.icon.kind === "custom") items.push({ label: "恢复官方图标", run: () => void api.invoke("reset_seat_icon", { seatId: s.id }) });
+  if (driverOf(s.driver.driver)?.picks) items.push({ label: s.target ? t("menu.changeTarget", { noun, target: s.target }) : t("menu.pickTarget", { noun }), run: () => renameInline(r, s, "target") });
+  items.push({ label: t("menu.changeIcon"), run: () => pickIcon(s) });
+  if (s.icon.kind === "custom") items.push({ label: t("menu.resetIcon"), run: () => void api.invoke("reset_seat_icon", { seatId: s.id }) });
   items.push("-");
-  if (web) items.push({ label: "退出登录", danger: true, confirm: "确认清除登录？", run: async () => { await api.invoke("disconnect_seat", { seatId: s.id }); toast("已清除登录"); } });
-  items.push({ label: "移除 Agent", danger: true, confirm: "确认移除？", run: async () => { await api.invoke("save_seats", { seats: seats.filter((x) => x.id !== s.id).map(stripView) }); toast("已移除"); } });
+  if (web) items.push({ label: t("menu.signOut"), danger: true, confirm: t("menu.signOutConfirm"), run: async () => { await api.invoke("disconnect_seat", { seatId: s.id }); toast(t("toast.signedOut")); } });
+  items.push({ label: t("menu.remove"), danger: true, confirm: t("menu.removeConfirm"), run: async () => { await api.invoke("save_seats", { seats: seats.filter((x) => x.id !== s.id).map(stripView) }); toast(t("toast.removed")); } });
   return items;
 }
 
@@ -335,19 +344,19 @@ async function renderSeats() {
     r.append(await avatarFor(s));
     const svc = overlaps(s.name, s.service) ? "" : `<span class="row__svc">${esc(s.service)}</span>`;
     const acct = s.account ? `<span class="sep">·</span>${esc(s.account)}` : "";
-    const tip = esc(`${s.service} · ${s.driver.kind === "web" ? s.driver.url : "桌面 App，通过辅助功能控制"}${s.driver_verified ? "" : " · 驱动尚未在真机校验"}`);
+    const tip = esc(`${s.service} · ${s.driver.kind === "web" ? s.driver.url : t("seat.tipApp")}${s.driver_verified ? "" : ` · ${t("seat.tipUnverified")}`}`);
     r.append(el("div", "row__text", `<div class="row__name">${esc(s.name)}${svc}</div><div class="row__sub" title="${tip}"><span class="status" data-s="${s.status}">${statusLabel(s)}</span><span class="sep">·</span>${esc(seatWhere(s))}${acct}</div>`));
 
     const acts = el("div", "actions");
     // the one action worth showing: only when the seat is on and can't work yet
     const needsHand = s.enabled && s.status !== "connected" && s.status !== "unavailable" && s.status !== "pending";
     if (needsHand) {
-      const b = el("button", "btn sm tint", s.driver.kind === "web" ? "登录" : "授权");
+      const b = el("button", "btn sm tint", t(s.driver.kind === "web" ? "btn.signIn" : "btn.grant"));
       b.addEventListener("click", () => void connectSeat(s));
       acts.append(b);
     }
     const more = el("button", "btn icon", `<svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/></svg>`);
-    more.type = "button"; more.title = "更多"; more.setAttribute("aria-label", `${s.name} 更多操作`);
+    more.type = "button"; more.title = t("btn.more"); more.setAttribute("aria-label", t("btn.moreAria", { name: s.name }));
     more.addEventListener("click", (e) => { e.stopPropagation(); if (menuEl) closeMenu(); else openMenu(more, seatMenu(r, s)); });
     acts.append(more);
     acts.append(toggle(s.enabled, (v) => void saveSeat(s.id, { enabled: v })));
@@ -357,7 +366,7 @@ async function renderSeats() {
   enableReorder(list);
 
   // 添加: one row that opens the catalogue right below the list; no dropdown, nothing to type
-  const add = el("button", "row add-toggle", `<span class="avatar plus">${addOpen ? MINUS_SVG : PLUS_SVG}</span><span class="row__name">${addOpen ? "收起" : "添加联系人"}</span>`) as HTMLButtonElement;
+  const add = el("button", "row add-toggle", `<span class="avatar plus">${addOpen ? MINUS_SVG : PLUS_SVG}</span><span class="row__name">${t(addOpen ? "add.close" : "add.open")}</span>`) as HTMLButtonElement;
   add.type = "button";
   add.setAttribute("aria-expanded", String(addOpen));
   add.addEventListener("click", () => {
@@ -369,15 +378,8 @@ async function renderSeats() {
   list.append(add);
 
   const help = el("details", "help");
-  help.innerHTML = `<summary>登录与授权说明</summary><ul>
-<li>开启「用 Chrome 的登录」后，网页版 Agent 在你 Chrome 里的一个后台标签页运行，直接沿用 Chrome 的登录与 Cookie。连接期间 Chrome 顶部会提示「正受到自动测试软件的控制」。</li>
-<li>没有 Chrome 时，登录在弹出的浏览器窗口里完成，支持 Google、Apple 与 Passkey。AgentDock 不接触密码，登录成功后窗口自动收起。</li>
-<li>之后呼叫、闭麦、挂断都在后台完成；会话过期时会显示「需要登录」。</li>
-<li>首次连接会请求一次麦克风权限，并自动做一次测试呼叫。</li>
-<li>桌面 App（如 Grok Bot）需要在系统设置里授予一次辅助功能权限，之后在后台按按钮，不会切到该 App。</li>
-<li>在「添加联系人」里，Grok Bot 会自动读出侧栏里的每个 Bot，点名字即加为一个联系人；呼叫时先选中它再发起语音。</li>
-<li>ChatGPT 有桌面 App 时选「ChatGPT dot · 桌面 App」，不走网页、不用再登录；同样只需要辅助功能权限。</li>
-</ul>`;
+  const tips: MsgKey[] = ["help.chrome", "help.builtin", "help.background", "help.mic", "help.apps", "help.bots", "help.chatgpt"];
+  help.innerHTML = `<summary>${esc(t("help.summary"))}</summary><ul>${tips.map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>`;
   const parts: HTMLElement[] = [list];
   if (addOpen) parts.push(await addPanel());
   parts.push(await chromeGroup(), help);
@@ -397,7 +399,7 @@ async function addSeat(driverId: string, target = "") {
     target: d.picks && target ? target : null,
   };
   await api.invoke("save_seats", { seats: [...seats.map(stripView), seat] });
-  toast(seat.target ? `已添加 ${seat.target}` : d.pending ? `已把 ${d.display_name} 放进 Dock，语音呼叫还在接入中` : d.kind === "web" ? "已添加，点「登录」完成连接" : "已添加");
+  toast(seat.target ? t("toast.addedTarget", { name: seat.target }) : d.pending ? t("toast.addedPlaceholder", { name: d.display_name }) : t(d.kind === "web" ? "toast.addedWeb" : "toast.added"));
 }
 
 /** The catalogue is open (kept across re-renders while the window is open). */
@@ -417,28 +419,28 @@ async function readTargets(driverId: string) {
 /** 添加联系人: every service as one row; apps with Bots list them as chips to tap. */
 async function addPanel(): Promise<HTMLDivElement> {
   const g = el("div", "group add-panel");
-  g.append(el("div", "group__title", "添加联系人"));
+  g.append(el("div", "group__title", esc(t("add.open"))));
   // what can be called first, placeholders after
   for (const d of [...drivers].sort((a, b) => Number(a.pending) - Number(b.pending))) {
-    const noun = d.target_noun ?? "对象";
+    const noun = d.target_noun ?? t("noun.target");
     const r = el("div", `row tile${d.installed ? "" : " is-off"}`);
     r.append(el("div", "avatar", await iconFor(iconKey(d.id))));
-    const sub = !d.installed ? "这台 Mac 上没有安装"
-      : d.pending ? "先放图标占位，语音呼叫还在接入中"
-      : d.kind === "web" ? ((settings.web_via_chrome ?? true) ? "网页，在 Chrome 里运行，沿用 Chrome 的登录" : "网页，在内置浏览器里登录一次")
-      : d.discover ? `桌面 App，每个 ${noun} 一个联系人` : "桌面 App，在后台操作，不用登录";
-    const kind = `<span class="kind">${d.kind === "web" ? "网页" : "App"}</span>${d.pending ? `<span class="kind soon">待接入</span>` : ""}`;
-    r.append(el("div", "row__text", `<div class="row__name">${esc(d.display_name)}${kind}</div><div class="row__sub">${sub}</div>`));
+    const sub = !d.installed ? t("add.notInstalled")
+      : d.pending ? t("add.placeholder")
+      : d.kind === "web" ? t((settings.web_via_chrome ?? true) ? "add.webChrome" : "add.webBuiltin")
+      : d.discover ? t("add.appTargets", { noun }) : t("add.app");
+    const kind = `<span class="kind">${t(d.kind === "web" ? "kind.web" : "kind.app")}</span>${d.pending ? `<span class="kind soon">${t("kind.soon")}</span>` : ""}`;
+    r.append(el("div", "row__text", `<div class="row__name">${esc(d.display_name)}${kind}</div><div class="row__sub">${esc(sub)}</div>`));
     const acts = el("div", "actions");
     if (d.discover) {
-      const b = el("button", "btn sm", reading.has(d.id) ? "读取中…" : d.id in found ? "重新读取" : `读取 ${noun}`) as HTMLButtonElement;
+      const b = el("button", "btn sm", esc(reading.has(d.id) ? t("add.reading") : d.id in found ? t("add.reread") : t("add.read", { noun }))) as HTMLButtonElement;
       b.type = "button"; b.disabled = reading.has(d.id) || !d.installed;
       b.addEventListener("click", () => void readTargets(d.id));
       acts.append(b);
     } else {
       // one contact per site, and per placeholder app; real apps can hold several (dots)
       const added = (d.kind === "web" || d.pending) && seats.some((s) => s.driver.driver === d.id);
-      const b = el("button", `btn sm${added ? "" : " tint"}`, added ? "已添加" : "添加") as HTMLButtonElement;
+      const b = el("button", `btn sm${added ? "" : " tint"}`, esc(t(added ? "add.added" : "add.add"))) as HTMLButtonElement;
       b.type = "button"; b.disabled = added || !d.installed;
       b.addEventListener("click", () => void addSeat(d.id));
       acts.append(b);
@@ -447,13 +449,13 @@ async function addPanel(): Promise<HTMLDivElement> {
     g.append(r);
     const names = found[d.id];
     if (d.discover && names && !reading.has(d.id)) {
-      if (!names.length) { g.append(el("p", "note indent", `没读到 ${noun}：确认 ${esc(d.display_name)} 打开了主窗口，并已在 系统设置 › 辅助功能 里允许 AgentDock`)); continue; }
+      if (!names.length) { g.append(el("p", "note indent", esc(t("add.noneFound", { noun, app: d.display_name })))); continue; }
       const have = new Set(seats.filter((s) => s.driver.driver === d.id && s.target).map((s) => s.target));
       const chips = el("div", "chips");
       for (const n of names) {
         const added = have.has(n);
         const c = el("button", `btn sm${added ? "" : " tint"}`, esc(added ? `✓ ${n}` : n)) as HTMLButtonElement;
-        c.type = "button"; c.disabled = added; c.title = added ? "已在 Dock 里" : `把 ${n} 加到 Dock`;
+        c.type = "button"; c.disabled = added; c.title = added ? t("add.inDock") : t("add.toDock", { name: n });
         c.addEventListener("click", () => void addSeat(d.id, n));
         chips.append(c);
       }
@@ -469,8 +471,8 @@ function keyChip(value: string, conflict: boolean, onChange: (v: string) => void
   const k = el("div", `key${conflict ? " is-conflict" : ""}`);
   const render = (v: string) => { k.innerHTML = v.split("+").map((p) => `<kbd>${esc(pretty(p))}</kbd>`).join(""); };
   render(value);
-  k.tabIndex = 0; k.title = "点击后按下新的组合键；Esc 取消";
-  k.addEventListener("click", () => { k.classList.add("is-rec"); k.innerHTML = "<kbd>按下组合键…</kbd>"; k.focus(); });
+  k.tabIndex = 0; k.title = t("hk.recordTip");
+  k.addEventListener("click", () => { k.classList.add("is-rec"); k.innerHTML = `<kbd>${esc(t("hk.recording"))}</kbd>`; k.focus(); });
   k.addEventListener("keydown", (e) => {
     if (!k.classList.contains("is-rec")) return;
     e.preventDefault();
@@ -484,61 +486,68 @@ function keyChip(value: string, conflict: boolean, onChange: (v: string) => void
   k.addEventListener("blur", () => { if (k.classList.contains("is-rec")) { k.classList.remove("is-rec"); render(value); } });
   return k;
 }
-const pretty = (p: string) => ({ Alt: host.os === "macos" ? "⌥" : "Alt", Control: host.os === "macos" ? "⌃" : "Ctrl", Shift: "⇧", Super: host.os === "macos" ? "⌘" : "Win", Space: "空格", Escape: "Esc" } as Record<string, string>)[p] ?? p;
+const pretty = (p: string) => ({ Alt: host.os === "macos" ? "⌥" : "Alt", Control: host.os === "macos" ? "⌃" : "Ctrl", Shift: "⇧", Super: host.os === "macos" ? "⌘" : "Win", Space: t("key.space"), Escape: "Esc" } as Record<string, string>)[p] ?? p;
 
 async function renderHotkeys() {
   const conflicts = await api.invoke<string[]>("hotkey_conflicts", { settings });
   const c = (k: string) => conflicts.includes(k.toLowerCase());
   const h = settings.hotkeys;
-  const g = group("全局",
-    row("展开 / 收起 Dock", "通话中也可用", keyChip(h.toggle, c(h.toggle), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, toggle: v } }).then(renderHotkeys))),
-    row("闭麦 / 开麦", "", keyChip(h.mute, c(h.mute), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, mute: v } }).then(renderHotkeys))),
-    row("挂断", "", keyChip(h.hangup, c(h.hangup), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, hangup: v } }).then(renderHotkeys))),
-    row("横向 / 竖向", "", keyChip(h.orientation, c(h.orientation), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, orientation: v } }).then(renderHotkeys))),
-    row("小圆点 / 宠物", "切换收起后的形象", keyChip(h.form, c(h.form), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, form: v } }).then(renderHotkeys))),
+  const g = group(t("hk.global"),
+    row(t("hk.toggle"), t("hk.toggleSub"), keyChip(h.toggle, c(h.toggle), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, toggle: v } }).then(renderHotkeys))),
+    row(t("hk.mute"), "", keyChip(h.mute, c(h.mute), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, mute: v } }).then(renderHotkeys))),
+    row(t("hk.hangup"), "", keyChip(h.hangup, c(h.hangup), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, hangup: v } }).then(renderHotkeys))),
+    row(t("hk.orientation"), "", keyChip(h.orientation, c(h.orientation), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, orientation: v } }).then(renderHotkeys))),
+    row(t("hk.form"), t("hk.formSub"), keyChip(h.form, c(h.form), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, form: v } }).then(renderHotkeys))),
   );
   const seatMod = el("select") as HTMLSelectElement;
   for (const m of ["Alt", "Control", "Super", "Control+Alt", "Super+Shift"]) seatMod.append(new Option(`${m.split("+").map(pretty).join("")} + 1…9`, m, false, m === h.seat_modifier));
   seatMod.addEventListener("change", () => saveSettings({ hotkeys: { ...settings.hotkeys, seat_modifier: seatMod.value } }).then(renderHotkeys));
   const order = seats.filter((s) => s.enabled).map((s, i) => `${pretty(h.seat_modifier)}${i + 1} ${esc(s.name)}`).join(" · ");
-  const g2 = group("Agent", row("呼叫第 n 个 Agent", order || "还没有启用的 Agent", seatMod));
-  const g3 = group("对讲机", row("按住说话", "按住「展开」键开麦，松开闭麦", toggle(h.push_to_talk, (v) => saveSettings({ hotkeys: { ...settings.hotkeys, push_to_talk: v } }))));
-  const note = el("p", "note", conflicts.length ? `有 ${conflicts.length} 组快捷键冲突（标红），请调整。` : "被系统占用的组合会自动跳过。");
+  const g2 = group(t("hk.agents"), row(t("hk.callNth"), order || t("hk.noAgents"), seatMod));
+  const g3 = group(t("hk.walkie"), row(t("hk.ptt"), t("hk.pttSub"), toggle(h.push_to_talk, (v) => saveSettings({ hotkeys: { ...settings.hotkeys, push_to_talk: v } }))));
+  const note = el("p", "note", esc(conflicts.length ? t("hk.conflicts", { n: conflicts.length }) : t("hk.note")));
   pageEl.replaceChildren(g, g2, g3, note);
 }
 
 // ───────────── 外观 ─────────────
 function renderAppearance() {
+  // 语言: native names in the menu, so the right one is findable from any language
+  const langSel = el("select") as HTMLSelectElement;
+  const curLang = settings.language ?? "system";
+  for (const [v, name] of LANGUAGES) langSel.append(new Option(v === "system" ? t("lang.system") : name, v, false, v === curLang));
+  langSel.addEventListener("change", () => void saveSettings({ language: langSel.value as LangSetting }).then(() => show(page)));
+  const gLang = group("", row(lang() === "en" ? t("lang.label") : `${t("lang.label")} · Language`, t("lang.sub"), langSel));
+
   const cards = el("div", "cards");
-  const forms: [AppSettings["default_form"], string, string][] = [
-    ["dot", "小圆点", '<i class="d"></i>'],
-    ["capsule", "胶囊", '<i class="p"></i>'],
-    ["expanded", "完整展开", '<i class="p" style="width:26px"></i><i class="c"></i><i class="c"></i>'],
-    ["pet", "常驻宠物", '<i class="pet"></i><i class="p" style="width:18px;height:4px;opacity:.5"></i>'],
+  const forms: [AppSettings["default_form"], MsgKey, string][] = [
+    ["dot", "form.dot", '<i class="d"></i>'],
+    ["capsule", "form.capsule", '<i class="p"></i>'],
+    ["expanded", "form.expanded", '<i class="p" style="width:26px"></i><i class="c"></i><i class="c"></i>'],
+    ["pet", "form.pet", '<i class="pet"></i><i class="p" style="width:18px;height:4px;opacity:.5"></i>'],
   ];
   for (const [v, label, pre] of forms) {
-    const c = el("div", `card${settings.default_form === v ? " is-on" : ""}`, `<div class="card__pre">${pre}</div><span>${label}</span>`);
+    const c = el("div", `card${settings.default_form === v ? " is-on" : ""}`, `<div class="card__pre">${pre}</div><span>${esc(t(label))}</span>`);
     c.addEventListener("click", () => { cards.querySelectorAll(".card").forEach((x) => x.classList.remove("is-on")); c.classList.add("is-on"); saveSettings({ default_form: v }); });
     cards.append(c);
   }
-  const gForm = el("div", "group"); gForm.append(el("div", "group__title", "默认形态"), cards,
-    el("p", "note", "不通话时 Dock 的样子。「常驻宠物」显示最近一位 agent 的头像。"));
+  const gForm = el("div", "group"); gForm.append(el("div", "group__title", esc(t("form.title"))), cards,
+    el("p", "note", esc(t("form.note"))));
 
   const matStrength = el("input") as HTMLInputElement; matStrength.type = "range"; matStrength.min = "0"; matStrength.max = "1"; matStrength.step = "0.05"; matStrength.value = String(settings.material_strength);
   matStrength.addEventListener("input", () => saveSettings({ material_strength: Number(matStrength.value) }));
   matStrength.addEventListener("change", () => saveSettings({ material_strength: Number(matStrength.value) }));
-  const gTheme = group("颜色",
-    row("主题", "", seg<AppSettings["theme"]>([["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]], settings.theme, (v) => saveSettings({ theme: v }))),
-    row("主题色", "给 Dock 的玻璃与图标染色", accentPicker()),
-    row("玻璃质感", host.material ? (host.material === "NSGlassEffectView" ? "Liquid Glass" : host.material === "NSVisualEffectView" ? "系统毛玻璃" : `Windows ${host.material}`) : "模糊回退", matStrength),
+  const gTheme = group(t("color.title"),
+    row(t("color.theme"), "", seg<AppSettings["theme"]>([["light", t("theme.light")], ["dark", t("theme.dark")], ["system", t("theme.system")]], settings.theme, (v) => saveSettings({ theme: v }))),
+    row(t("color.accent"), t("color.accentSub"), accentPicker()),
+    row(t("color.glass"), host.material ? (host.material === "NSGlassEffectView" ? "Liquid Glass" : host.material === "NSVisualEffectView" ? t("glass.visual") : `Windows ${host.material}`) : t("glass.fallback"), matStrength),
   );
   const snap = el("select") as HTMLSelectElement;
-  for (const [v, l] of [["free", "自由"], ["top_center", "顶部居中"], ["bottom_center", "底部居中"], ["top_left", "左上"], ["top_right", "右上"], ["bottom_left", "左下"], ["bottom_right", "右下"]] as [AppSettings["snap"], string][]) snap.append(new Option(l, v, false, v === settings.snap));
+  for (const v of ["free", "top_center", "bottom_center", "top_left", "top_right", "bottom_left", "bottom_right"] as AppSettings["snap"][]) snap.append(new Option(t(`snap.${v}` as MsgKey), v, false, v === settings.snap));
   snap.addEventListener("change", () => { const v = snap.value as AppSettings["snap"]; saveSettings(v === "free" ? { snap: v } : { snap: v, dock_anchor: null }); });
   const curScale = Math.min(1.6, Math.max(0.7, settings.dock_scale ?? 1));
   const scaleLabel = el("span", "chip", `${Math.round(curScale * 100)}%`);
   const scaleRange = el("input") as HTMLInputElement; scaleRange.type = "range"; scaleRange.min = "0.7"; scaleRange.max = "1.6"; scaleRange.step = "0.05"; scaleRange.value = String(curScale);
-  const scaleReset = el("button", "btn sm", "重置"); scaleReset.type = "button";
+  const scaleReset = el("button", "btn sm", esc(t("btn.reset"))); scaleReset.type = "button";
   const onScale = (v: number) => {
     const clamped = Math.round(Math.min(1.6, Math.max(0.7, v)) * 20) / 20;
     scaleRange.value = String(clamped);
@@ -548,40 +557,40 @@ function renderAppearance() {
   scaleRange.addEventListener("input", () => onScale(Number(scaleRange.value)));
   scaleRange.addEventListener("change", () => onScale(Number(scaleRange.value)));
   scaleReset.addEventListener("click", () => onScale(1));
-  const gLayout = group("布局",
-    row("大小", "也可在 Dock 上滚轮或拖动边缘", [scaleLabel, scaleRange, scaleReset]),
-    row("方向", `${settings.hotkeys.orientation.split("+").map(pretty).join("")} 或右键 Dock 切换`, seg<AppSettings["orientation"]>([["horizontal", "横向"], ["vertical", "竖向"]], settings.orientation ?? "horizontal", (v) => saveSettings({ orientation: v }))),
-    row("位置", "直接拖动 Dock 即可，位置会被记住", snap),
-    row("收起方式", "固定收起：点开后鼠标移开即收回", seg<AppSettings["collapse_mode"]>([["auto", "自动"], ["pinned_expanded", "固定展开"], ["pinned_collapsed", "固定收起"]], settings.collapse_mode ?? "auto", (v) => saveSettings({ collapse_mode: v }))),
-    row("自动收起", "空闲多久后收起，通话中不收起", (() => { const sel = el("select") as HTMLSelectElement; for (const [v, l] of [[0, "从不"], [3, "3 秒"], [8, "8 秒"], [15, "15 秒"], [30, "30 秒"]] as [number, string][]) sel.append(new Option(l, String(v), false, v === settings.auto_collapse_secs)); sel.addEventListener("change", () => saveSettings({ auto_collapse_secs: Number(sel.value) })); return sel; })()),
-    row("显示名字", "", seg<AppSettings["show_names"]>([["hover", "仅悬停"], ["always", "总是"], ["never", "从不"]], settings.show_names, (v) => saveSettings({ show_names: v }))),
-    row("减弱动画", "形变改为淡入淡出", toggle(settings.reduce_motion, (v) => saveSettings({ reduce_motion: v }))),
+  const gLayout = group(t("layout.title"),
+    row(t("layout.size"), t("layout.sizeSub"), [scaleLabel, scaleRange, scaleReset]),
+    row(t("layout.orientation"), esc(t("layout.orientationSub", { keys: settings.hotkeys.orientation.split("+").map(pretty).join("") })), seg<AppSettings["orientation"]>([["horizontal", t("orient.horizontal")], ["vertical", t("orient.vertical")]], settings.orientation ?? "horizontal", (v) => saveSettings({ orientation: v }))),
+    row(t("layout.position"), t("layout.positionSub"), snap),
+    row(t("layout.collapse"), t("layout.collapseSub"), seg<AppSettings["collapse_mode"]>([["auto", t("collapse.auto")], ["pinned_expanded", t("collapse.pinnedExpanded")], ["pinned_collapsed", t("collapse.pinnedCollapsed")]], settings.collapse_mode ?? "auto", (v) => saveSettings({ collapse_mode: v }))),
+    row(t("layout.autoCollapse"), t("layout.autoCollapseSub"), (() => { const sel = el("select") as HTMLSelectElement; for (const v of [0, 3, 8, 15, 30]) sel.append(new Option(v ? t("time.secs", { n: v }) : t("time.never"), String(v), false, v === settings.auto_collapse_secs)); sel.addEventListener("change", () => saveSettings({ auto_collapse_secs: Number(sel.value) })); return sel; })()),
+    row(t("layout.names"), "", seg<AppSettings["show_names"]>([["hover", t("names.hover")], ["always", t("names.always")], ["never", t("names.never")]], settings.show_names, (v) => saveSettings({ show_names: v }))),
+    row(t("layout.reduceMotion"), t("layout.reduceMotionSub"), toggle(settings.reduce_motion, (v) => saveSettings({ reduce_motion: v }))),
   );
   // macOS only: the app's own icon. Two places at most, never none, so settings stay reachable.
-  const gIcon = group("应用图标", row("显示在", "点程序坞图标打开设置；菜单栏图标里有同样的菜单",
-    seg<NonNullable<AppSettings["app_icon"]>>([["both", "程序坞和菜单栏"], ["dock", "仅程序坞"], ["menu_bar", "仅菜单栏"]], settings.app_icon ?? "both", (v) => saveSettings({ app_icon: v }))));
-  pageEl.replaceChildren(...[gForm, gTheme, gLayout, ...(host.os === "macos" ? [gIcon] : [])]);
+  const gIcon = group(t("icon.title"), row(t("icon.row"), t("icon.sub"),
+    seg<NonNullable<AppSettings["app_icon"]>>([["both", t("icon.both")], ["dock", t("icon.dock")], ["menu_bar", t("icon.menuBar")]], settings.app_icon ?? "both", (v) => saveSettings({ app_icon: v }))));
+  pageEl.replaceChildren(...[gLang, gForm, gTheme, gLayout, ...(host.os === "macos" ? [gIcon] : [])]);
 }
 
 // ───────────── 麦克风 ─────────────
 let levelRaf = 0;
 async function renderMic() {
   cancelAnimationFrame(levelRaf);
-  const dev = el("select") as HTMLSelectElement; dev.append(new Option("系统默认", ""));
+  const dev = el("select") as HTMLSelectElement; dev.append(new Option(t("mic.default"), ""));
   try {
     const list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audioinput");
-    for (const d of list) dev.append(new Option(d.label || `输入设备 ${dev.options.length}`, d.deviceId, false, d.deviceId === settings.input_device));
+    for (const d of list) dev.append(new Option(d.label || t("mic.device", { n: dev.options.length }), d.deviceId, false, d.deviceId === settings.input_device));
   } catch { /* no devices on this host */ }
   dev.addEventListener("change", () => saveSettings({ input_device: dev.value || null }));
   const level = el("div", "level", "<i></i>");
-  const g = group("输入",
-    row("输入设备", "通话使用系统默认设备", dev),
-    row("电平", "说话时会跳动，用来确认麦克风可用", level),
+  const g = group(t("mic.input"),
+    row(t("mic.inputDevice"), t("mic.inputDeviceSub"), dev),
+    row(t("mic.level"), t("mic.levelSub"), level),
   );
-  const g2 = group("通话",
-    row("闭麦方式", "系统级会同时静音其他会议软件", seg<AppSettings["mute_mode"]>([["system", "系统级"], ["seat", "仅 Agent"]], settings.mute_mode, (v) => saveSettings({ mute_mode: v }))),
-    row("通话时暂停音乐", "挂断后自动恢复", toggle(settings.pause_media_in_call, (v) => saveSettings({ pause_media_in_call: v }))),
-    row("切换前确认", "关闭时直接切换，3 秒内可撤销", toggle(settings.confirm_switch, (v) => saveSettings({ confirm_switch: v }))),
+  const g2 = group(t("mic.call"),
+    row(t("mic.muteMode"), t("mic.muteModeSub"), seg<AppSettings["mute_mode"]>([["system", t("mute.system")], ["seat", t("mute.seat")]], settings.mute_mode, (v) => saveSettings({ mute_mode: v }))),
+    row(t("mic.pauseMedia"), t("mic.pauseMediaSub"), toggle(settings.pause_media_in_call, (v) => saveSettings({ pause_media_in_call: v }))),
+    row(t("mic.confirmSwitch"), t("mic.confirmSwitchSub"), toggle(settings.confirm_switch, (v) => saveSettings({ confirm_switch: v }))),
   );
   pageEl.replaceChildren(g, g2);
   try {
@@ -590,10 +599,18 @@ async function renderMic() {
     const buf = new Uint8Array(an.frequencyBinCount); const bar = level.firstElementChild as HTMLElement;
     const tick = () => { if (!level.isConnected) { stream.getTracks().forEach((t) => t.stop()); ctx.close(); return; } an.getByteTimeDomainData(buf); let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128)); bar.style.width = `${Math.min(100, (peak / 128) * 160)}%`; levelRaf = requestAnimationFrame(tick); };
     tick();
-  } catch { (level.firstElementChild as HTMLElement).style.width = "0%"; level.title = "没有拿到麦克风权限或设备"; }
+  } catch { (level.firstElementChild as HTMLElement).style.width = "0%"; level.title = t("mic.noPermission"); }
 }
 
 // ───────────── 记忆 ─────────────
+/** The backend reports its memory status reason in Chinese (everos.rs); show it in the UI language. */
+const MEMORY_REASONS: Record<string, MsgKey> = {
+  "未设置 EVEROS_API_KEY": "mem.reason.noKey",
+  "已在设置中关闭": "mem.reason.off",
+  "EVEROS_ENABLED 已关闭": "mem.reason.envOff",
+  "EVEROS_BASE_URL 不是 http(s) 地址": "mem.reason.badUrl",
+  "已启用，呼叫时读写记忆": "mem.reason.active",
+};
 async function renderMemory() {
   const mem = settings.memory ?? { enabled: false, user_id: "", inject_context: true, top_k: 5 };
   let status: MemoryStatus = {
@@ -602,43 +619,44 @@ async function renderMemory() {
     reason: "未设置 EVEROS_API_KEY", inject_context: mem.inject_context, top_k: mem.top_k,
   };
   try { status = await api.invoke<MemoryStatus>("memory_status"); } catch { /* mock-less hosts */ }
-  const chip = el("span", "chip", status.active ? "生效中" : "未生效");
+  const reason = MEMORY_REASONS[status.reason] ? t(MEMORY_REASONS[status.reason]) : status.reason;
+  const chip = el("span", "chip", esc(t(status.active ? "mem.on" : "mem.offChip")));
   const g = group("EverOS",
-    row("启用长期记忆", "呼叫前检索相关记忆，通话内容写入 EverOS", toggle(mem.enabled, (v) => { void saveSettings({ memory: { ...mem, enabled: v } }).then(() => { if (page === "memory") void renderMemory(); }); })),
-    row("把记忆带给对方", "填入网页版 Agent 的输入框，不会自动发送", toggle(mem.inject_context, (v) => saveSettings({ memory: { ...settings.memory, inject_context: v } }))),
+    row(t("mem.enable"), t("mem.enableSub"), toggle(mem.enabled, (v) => { void saveSettings({ memory: { ...mem, enabled: v } }).then(() => { if (page === "memory") void renderMemory(); }); })),
+    row(t("mem.inject"), t("mem.injectSub"), toggle(mem.inject_context, (v) => saveSettings({ memory: { ...settings.memory, inject_context: v } }))),
   );
-  const g2 = group("当前状态",
-    row("状态", esc(status.reason), chip),
-    row("密钥", status.key_present ? "已检测到 EVEROS_API_KEY" : "未检测到 EVEROS_API_KEY", el("span", "chip", status.key_present ? "有" : "无")),
-    row("服务", esc(status.base_url), el("span", "chip", esc(status.app_id))),
-    row("用户", status.user_id ? esc(status.user_id) : "开启并检测到密钥后自动生成", el("span", "chip", "user_id")),
+  const g2 = group(t("mem.status"),
+    row(t("mem.state"), esc(reason), chip),
+    row(t("mem.key"), t(status.key_present ? "mem.keyFound" : "mem.keyMissing"), el("span", "chip", esc(t(status.key_present ? "mem.yes" : "mem.no")))),
+    row(t("mem.service"), esc(status.base_url), el("span", "chip", esc(status.app_id))),
+    row(t("mem.user"), status.user_id ? esc(status.user_id) : t("mem.userAuto"), el("span", "chip", "user_id")),
   );
-  const note = el("p", "note", "密钥只从环境变量 EVEROS_API_KEY 读取，不写进设置文件；从访达启动的 App 需要用 launchctl setenv 配置。自建服务用 EVEROS_BASE_URL。记忆请求失败不影响通话。");
+  const note = el("p", "note", esc(t("mem.note")));
   pageEl.replaceChildren(g, g2, note);
 }
 
 // ───────────── 关于 ─────────────
 function renderAbout() {
   const g = group("AgentDock",
-    row(`版本 ${esc(host.version)}`, `运行于 ${esc(host.os)} · 系统材质 ${host.material ? esc(host.material) : "不可用（使用模糊回退）"}`, el("span", "chip", "Tauri 2 · Rust")),
-    row("隐私", "不录音、不保存密码。长期记忆默认关闭，开启并配置 EVEROS_API_KEY 后才会上传。", el("span", "chip", "本地")),
+    row(esc(t("about.version", { v: host.version })), esc(t("about.runsOn", { os: host.os, material: host.material ?? t("about.noMaterial") })), el("span", "chip", "Tauri 2 · Rust")),
+    row(t("about.privacy"), t("about.privacySub"), el("span", "chip", esc(t("about.local")))),
   );
-  const d = el("div", "group"); d.append(el("div", "group__title", "驱动"));
+  const d = el("div", "group"); d.append(el("div", "group__title", esc(t("about.drivers"))));
   for (const dr of drivers) {
-    const st = el("span", "status", dr.verified ? "已在真机校验" : "待真机校验"); st.dataset.s = dr.verified ? "connected" : "needs_auth";
-    d.append(row(`${esc(dr.display_name)} <span class="chip">v${dr.version}</span> <span class="chip">${dr.kind === "web" ? "网页" : "App"}</span>`, dr.id, st));
+    const st = el("span", "status", esc(t(dr.verified ? "about.verified" : "about.unverified"))); st.dataset.s = dr.verified ? "connected" : "needs_auth";
+    d.append(row(`${esc(dr.display_name)} <span class="chip">v${dr.version}</span> <span class="chip">${t(dr.kind === "web" ? "kind.web" : "kind.app")}</span>`, dr.id, st));
   }
-  d.append(el("p", "note", "驱动是 JSON 文件，放进 配置目录/drivers/ 即可热更新，版本号更高者生效。"));
-  const q = el("button", "btn danger", "退出 AgentDock"); q.addEventListener("click", () => api.invoke("quit"));
-  pageEl.replaceChildren(g, d, group("", row("退出", "Dock 与后台 Agent 一起关闭", q)));
+  d.append(el("p", "note", esc(t("about.driversNote"))));
+  const q = el("button", "btn danger", esc(t("about.quitBtn"))); q.addEventListener("click", () => api.invoke("quit"));
+  pageEl.replaceChildren(g, d, group("", row(t("about.quit"), t("about.quitSub"), q)));
 }
 
 // ───────────── nav ─────────────
 async function show(p: PageId) {
   page = p;
   document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === p));
-  const [t, s] = TITLES[p]; $("#title").textContent = t;
-  $("#subtitle").textContent = s.replace("⌥", pretty("Alt")).replace("⌥", pretty("Alt"));
+  const [title, sub] = TITLES[p]; $("#title").textContent = t(title);
+  $("#subtitle").textContent = t(sub, { mod: pretty("Alt") });
   if (p === "seats") await renderSeats(); else if (p === "hotkeys") await renderHotkeys(); else if (p === "appearance") renderAppearance(); else if (p === "mic") await renderMic(); else if (p === "memory") await renderMemory(); else renderAbout();
 }
 document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.addEventListener("click", () => show(b.dataset.page as PageId)));
@@ -662,6 +680,11 @@ async function boot() {
     if (sorting || interacting()) { deferredSeats = true; return; }
     if (page === "seats" || page === "hotkeys") show(page);
   });
-  api.on<AppSettings>("settings:changed", (s) => { settings = s; applySettingsLocally(); });
+  api.on<AppSettings>("settings:changed", (s) => {
+    const before = lang();
+    settings = s; applySettingsLocally();
+    // switched from elsewhere (or "follow system" resolved differently): redraw in the new language
+    if (lang() !== before && !interacting()) void show(page);
+  });
 }
 boot();

@@ -89,6 +89,7 @@ AgentDock deliberately does one narrow thing:
 
 **App & settings**
 
+- Interface in 简体中文 · English · 繁體中文 · 日本語, following the system by default; settings, Dock, context and menu bar menus, and call failure messages switch together
 - Click the Dock icon for settings; or keep AgentDock in the Dock only / menu bar only
 - *Add contact* catalogue: one row per service, marked web / app, apps that aren't installed greyed out
 - Drag to reorder contacts (= ⌥1…⌥9), toggle, rename, custom icon (GIF ok)

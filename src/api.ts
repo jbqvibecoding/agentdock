@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { LangSetting, MsgKey } from "./i18n";
 
 export type Phase =
   | { phase: "idle" }
@@ -49,6 +50,8 @@ export interface AppSettings {
   web_via_chrome: boolean;
   /** macOS: where AgentDock's own icon lives; the Dock icon opens settings. */
   app_icon?: "both" | "dock" | "menu_bar";
+  /** Interface language; "system" follows the OS (HostInfo.locale). */
+  language?: LangSetting;
   memory: MemorySettings;
 }
 export interface ChromeStatus { available: boolean; connected: boolean }
@@ -60,7 +63,7 @@ export interface DriverInfo {
   target_noun: string | null;
   /** Placeholder: icon and contact only, calling not wired up yet. */ pending: boolean;
 }
-export interface HostInfo { os: string; vibrancy: boolean; material?: string; version: string; window_radius?: number }
+export interface HostInfo { os: string; vibrancy: boolean; material?: string; version: string; window_radius?: number; locale?: string }
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -79,7 +82,7 @@ const mock = (() => {
   let settings: AppSettings = {
     default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5, dock_scale: 1, accent: null,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
-    mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false, web_via_chrome: true, app_icon: "both",
+    mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false, web_via_chrome: true, app_icon: "both", language: "system",
     memory: { enabled: false, user_id: "", inject_context: true, top_k: 5 },
   };
   if (typeof window !== "undefined") (window as any).__mockSettings = settings;
@@ -161,7 +164,8 @@ const mock = (() => {
     open_settings: () => window.open("/settings.html", "_blank"),
     quit: () => undefined,
     // ?os=macos previews the macOS-only rows (screenshots)
-    host_info: () => ({ os: new URLSearchParams(location.search).get("os") ?? "browser", vibrancy: false, version: "0.1.0-dev" }),
+    // ?lang=ja picks the "system" language for screenshots; the mock defaults to Chinese like the tests
+    host_info: () => ({ os: new URLSearchParams(location.search).get("os") ?? "browser", vibrancy: false, version: "0.1.0-dev", locale: new URLSearchParams(location.search).get("lang") ?? "zh-CN" }),
     glass_scheme: () => null,
     memory_status: () => ({
       active: false, enabled: !!settings.memory?.enabled, key_present: false,
@@ -201,9 +205,9 @@ export const api = {
 export const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
 /** Theme-colour presets (设置 › 外观 › 主题色). `null` = untinted system glass. */
-export const ACCENTS: [string | null, string][] = [
-  [null, "无"], ["#0a84ff", "蓝"], ["#5e5ce6", "靛"], ["#bf5af2", "紫"], ["#ff375f", "粉"],
-  ["#ff9f0a", "橙"], ["#30d158", "绿"], ["#64d2ff", "青"], ["#8e8e93", "石墨"],
+export const ACCENTS: [string | null, MsgKey][] = [
+  [null, "accent.none"], ["#0a84ff", "accent.blue"], ["#5e5ce6", "accent.indigo"], ["#bf5af2", "accent.purple"], ["#ff375f", "accent.pink"],
+  ["#ff9f0a", "accent.orange"], ["#30d158", "accent.green"], ["#64d2ff", "accent.teal"], ["#8e8e93", "accent.graphite"],
 ];
 export const validAccent = (c: string | null | undefined): string | null => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : null);
 

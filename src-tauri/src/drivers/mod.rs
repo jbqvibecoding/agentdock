@@ -109,7 +109,8 @@ pub struct RosterSpec {
     pub rows: String,
     /// Field holding an entry's name (what `{target}` gets).
     pub name: String,
-    /// Boolean fields that make an entry uncallable, with the reason shown to the user.
+    /// Boolean fields that make an entry uncallable, with the reason shown to the user: a key
+    /// of the native string table under `roster.` ("group_chat"), or plain text.
     #[serde(default)]
     pub exclude: std::collections::BTreeMap<String, String>,
 }

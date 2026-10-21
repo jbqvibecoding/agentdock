@@ -1,5 +1,6 @@
 import { api, applyTheme, fmtTime, validAccent, type AppSettings, type DockState, type HostInfo, type SeatView } from "./api";
 import { iconFor, tintFor } from "./brand";
+import { resolveLang, setLang, t } from "./i18n";
 
 const dock = document.getElementById("dock") as HTMLDivElement;
 const bar = document.getElementById("bar") as HTMLDivElement;
@@ -149,7 +150,7 @@ function renderStatusText() {
 
 /** The brand a seat wears (added seats get ids like "gemini-app-x1y2"). */
 const seatBrand = (s: SeatView) => (s.icon.kind === "builtin" ? s.icon.key : s.id);
-const seatHint = (s: SeatView) => !s.enabled ? "未启用" : s.status === "pending" ? "待接入" : s.status === "needs_auth" ? "需登录 · 点击仍可尝试" : s.silent ? "无感呼叫" : "App 呼叫";
+const seatHint = (s: SeatView) => t(!s.enabled ? "dock.disabled" : s.status === "pending" ? "dock.pending" : s.status === "needs_auth" ? "dock.needsAuth" : s.silent ? "dock.silent" : "dock.appCall");
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
 async function render() {
@@ -175,12 +176,12 @@ async function render() {
     const lines = el("div", "pet-lines", "<i></i><i></i>");
     collapsed.append(av, lines);
     lastDotGlyph = "";
-    collapsed.title = p.phase === "in_call" ? `${pet?.name} · ${fmtTime(p.elapsed_secs)}` : "展开 AgentDock";
+    collapsed.title = p.phase === "in_call" ? `${pet?.name} · ${fmtTime(p.elapsed_secs)}` : t("dock.expand");
   } else {
     // only swap the glyph when it changes, so the breathing bars don't restart every tick
     const glyph = state.muted ? DOT_MUTED : DOT_WAVE;
     if (glyph !== lastDotGlyph) { collapsed.innerHTML = glyph; lastDotGlyph = glyph; }
-    collapsed.title = p.phase === "in_call" ? `通话中 ${fmtTime(p.elapsed_secs)} · 点击展开` : "展开 AgentDock";
+    collapsed.title = p.phase === "in_call" ? t("dock.inCallExpand", { time: fmtTime(p.elapsed_secs) }) : t("dock.expand");
   }
 
   if (form !== "bar") { await fit(form); kickLens(); return; }
@@ -188,36 +189,36 @@ async function render() {
 
   // expanded bar
   const frag = document.createDocumentFragment();
-  const micBtn = button(state.muted ? "amber" : "", state.muted ? SVG.micOff : SVG.mic, state.muted ? "开麦" : "闭麦", () => api.invoke("toggle_mute"));
+  const micBtn = button(state.muted ? "amber" : "", state.muted ? SVG.micOff : SVG.mic, t(state.muted ? "dock.unmute" : "dock.mute"), () => api.invoke("toggle_mute"));
   micBtn.id = "mic";
   micBtn.dataset.k = "mic";
 
   if (p.phase === "idle") {
-    frag.append(button("ghost", SVG.collapse, "收起", () => api.invoke("set_expanded", { expanded: false })));
+    frag.append(button("ghost", SVG.collapse, t("dock.collapse"), () => api.invoke("set_expanded", { expanded: false })));
     frag.append(micBtn);
     statusEl = el("div", "status idle");
     frag.append(statusEl);
     frag.append(el("div", "divider"));
     for (const s of seats.filter((s) => s.enabled || s.status === "pending")) frag.append(await seatButton(s, false, false));
-    frag.append(button("ghost add", SVG.plus, "添加 Agent", () => api.invoke("open_settings")));
+    frag.append(button("ghost add", SVG.plus, t("dock.addAgent"), () => api.invoke("open_settings")));
     frag.append(grip());
     renderStatusTextInto(statusEl);
   } else if (p.phase === "calling" || p.phase === "in_call") {
     const s = seatById(p.seat);
     const av = el("div", "avatar", s ? await seatIcon(s) : "");
     av.dataset.k = "avatar";
-    av.title = "收起";
+    av.title = t("dock.collapse");
     av.addEventListener("click", () => api.invoke("set_expanded", { expanded: false }));
     frag.append(av);
     const st = el("div", "status");
-    st.innerHTML = `<div class="name">${escapeHtml(s?.name ?? p.seat)}</div><div class="sub">${p.phase === "calling" ? "正在呼叫…" : `${escapeHtml(s?.service ?? "")} · ${fmtTime(p.elapsed_secs)}`}</div>`;
+    st.innerHTML = `<div class="name">${escapeHtml(s?.name ?? p.seat)}</div><div class="sub">${p.phase === "calling" ? escapeHtml(t("dock.calling")) : `${escapeHtml(s?.service ?? "")} · ${fmtTime(p.elapsed_secs)}`}</div>`;
     frag.append(st);
     const wave = el("canvas", "wave") as HTMLCanvasElement;
     if (vertical()) { wave.width = 68; wave.height = 168; } else { wave.width = 168; wave.height = 68; }
     frag.append(wave);
     waveCanvas = wave;
     frag.append(micBtn);
-    frag.append(button("red", SVG.hangup, "挂断", () => api.invoke("hangup")));
+    frag.append(button("red", SVG.hangup, t("dock.hangup"), () => api.invoke("hangup")));
     const others = enabledSeats().filter((x) => x.id !== p.seat);
     if (others.length) frag.append(el("div", "divider"));
     for (const o of others) frag.append(await seatButton(o, true, false));
@@ -226,26 +227,28 @@ async function render() {
     const av = el("div", "avatar", to ? await seatIcon(to) : "");
     frag.append(av);
     const st = el("div", "status");
-    st.innerHTML = `<div class="name">切到 ${escapeHtml(to?.name ?? p.to)}…</div><div class="sub">正在挂断 ${escapeHtml(from?.name ?? p.from)}${state.muted ? " · 已闭麦" : ""}</div>`;
+    st.innerHTML = `<div class="name">${escapeHtml(t("dock.switchTo", { name: to?.name ?? p.to }))}</div><div class="sub">${escapeHtml(t("dock.hangingUp", { name: from?.name ?? p.from }))}${state.muted ? ` · ${escapeHtml(t("dock.muted"))}` : ""}</div>`;
     frag.append(st);
-    const undo = el("button", "undo", `撤销 ${p.undo_secs_left}`);
+    const undo = el("button", "undo", escapeHtml(t("dock.undo", { n: p.undo_secs_left })));
     undo.type = "button";
     undo.dataset.k = "undo";
     undo.addEventListener("click", () => api.invoke("undo_switch"));
     frag.append(undo);
     frag.append(micBtn);
-    frag.append(button("red", SVG.hangup, "全部挂断", () => api.invoke("hangup")));
+    frag.append(button("red", SVG.hangup, t("dock.hangupAll"), () => api.invoke("hangup")));
     frag.append(el("div", "divider"));
     for (const o of enabledSeats()) frag.append(await seatButton(o, true, o.id === p.to));
   } else if (p.phase === "needs_human") {
     const s = seatById(p.seat);
     frag.append(el("div", "avatar", s ? await seatIcon(s) : ""));
     const st = el("div", "status");
-    st.innerHTML = `<div class="name">需要你看一眼</div><div class="sub">${escapeHtml(p.reason)}</div>`;
-    st.title = p.reason;
+    // the state machine's own reason is a key; driver reasons arrive already in the user's language
+    const reason = p.reason === "call_timeout" ? t("dock.callTimeout") : p.reason;
+    st.innerHTML = `<div class="name">${escapeHtml(t("dock.needsYou"))}</div><div class="sub">${escapeHtml(reason)}</div>`;
+    st.title = reason;
     frag.append(st);
-    frag.append(button("", SVG.eye, "查看页面", () => api.invoke("show_seat", { seatId: p.seat, visible: true })));
-    frag.append(button("red", SVG.hangup, "挂断", () => api.invoke("hangup")));
+    frag.append(button("", SVG.eye, t("dock.showPage"), () => api.invoke("show_seat", { seatId: p.seat, visible: true })));
+    frag.append(button("red", SVG.hangup, t("dock.hangup"), () => api.invoke("hangup")));
   }
 
   bar.replaceChildren(frag);
@@ -339,7 +342,7 @@ const GRIP_SVG = {
 function grip(): HTMLDivElement {
   const g = el("div", "grip", vertical() ? GRIP_SVG.toHorizontal : GRIP_SVG.toVertical);
   g.dataset.k = "grip";
-  g.title = vertical() ? "点一下：放平为横向 · 按住拖动：移动" : "点一下：立起为竖向 · 按住拖动：移动";
+  g.title = t(vertical() ? "dock.gripVertical" : "dock.gripHorizontal");
   g.addEventListener("click", () => { if (Date.now() - lastDragEnd > 300) void api.invoke("toggle_orientation"); });
   return g;
 }
@@ -673,8 +676,13 @@ dock.addEventListener("wheel", (e) => {
   wheelSaveTimer = window.setTimeout(() => { if (settings) void api.invoke("save_settings", { settings }); }, 220);
 }, { passive: false });
 
+/** The OS's preferred language, for "follow the system". */
+let hostLocale: string | undefined;
+
 function applySettings(s: AppSettings) {
   settings = s;
+  setLang(resolveLang(s.language, hostLocale));
+  collapsed.setAttribute("aria-label", t("dock.expand"));
   dock.dataset.orient = s.orientation ?? "horizontal";
   touchIdle();
   applyTheme(s.theme);
@@ -688,6 +696,7 @@ function applySettings(s: AppSettings) {
 
 async function boot() {
   const host = await api.invoke<HostInfo>("host_info");
+  hostLocale = host.locale;
   // The CSS keys off `[data-vibrancy="1"]`; toggleAttribute() would set an empty value and never match.
   if (host.vibrancy) document.documentElement.setAttribute("data-vibrancy", "1"); else document.documentElement.removeAttribute("data-vibrancy");
   document.documentElement.dataset.os = host.os;

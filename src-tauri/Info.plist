@@ -6,5 +6,12 @@
   <string>AgentDock 需要麦克风，才能让你与各个 agent 语音通话，并在通话中一键闭麦。</string>
   <key>LSUIElement</key>
   <true/>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>zh-Hans</string>
+    <string>en</string>
+    <string>zh-Hant</string>
+    <string>ja</string>
+  </array>
 </dict>
 </plist>

@@ -3,6 +3,7 @@
 pub mod drivers;
 pub mod everos;
 pub mod hotkeys;
+pub mod i18n;
 pub mod memory;
 pub mod mic;
 pub mod seats;
@@ -159,14 +160,14 @@ fn place_call<R: Runtime>(app: &AppHandle<R>, seat: String) {
         .map(|s| (s.name.clone(), s.service.clone(), matches!(s.driver, DriverKind::Web { .. }), s.target.clone()))
         .unwrap_or_else(|| (seat.clone(), seat.clone(), false, None));
     let reason = match e {
-        DriverError::NeedsAuth => "需要先登录或授权，去设置里连接账号".to_string(),
-        DriverError::NotFound(_) if web => format!("没找到 {name} 的语音入口：点「查看页面」看看是否已登录"),
+        DriverError::NeedsAuth => i18n::t("call.needs_auth"),
+        DriverError::NotFound(_) if web => i18n::tf("call.web_not_found", &[("name", &name)]),
         DriverError::NotFound(ref m) if target.as_deref().is_some_and(|t| m.contains(t)) => {
-            format!("{service} 侧栏里没找到「{}」：名字要和侧栏一致，且没折叠在「展开」里", target.unwrap_or_default())
+            i18n::tf("call.target_not_found", &[("service", &service), ("target", &target.unwrap_or_default())])
         }
-        DriverError::NotFound(_) => format!("没找到 {name} 的语音按钮：先在 {service} 里打开一个对话，输入框留空"),
+        DriverError::NotFound(_) => i18n::tf("call.voice_not_found", &[("name", &name), ("service", &service)]),
         DriverError::Chrome(m) | DriverError::NotCallable(m) => m,
-        other => format!("呼叫失败：{other}"),
+        other => i18n::tf("call.failed", &[("error", &other.to_string())]),
     };
     dispatch(app, Event::ProbeNeedsHuman { seat, reason });
 }
@@ -331,7 +332,7 @@ fn run_driver<R: Runtime>(app: &AppHandle<R>, seat_id: &str, op: DriverOp) -> Re
     // Placeholders: nothing to probe or press yet; a call says so instead of failing somewhere.
     if let Some(spec) = st.registry.get(driver_id).ok().filter(|d| d.pending) {
         return match op {
-            DriverOp::Call => Err(DriverError::NotCallable(format!("{} 的语音呼叫还在接入中，先在 Dock 上占个位", spec.display_name))),
+            DriverOp::Call => Err(DriverError::NotCallable(i18n::tf("call.pending", &[("name", &spec.display_name)]))),
             _ => Ok(()),
         };
     }
@@ -481,7 +482,7 @@ fn ingest_probe<R: Runtime>(app: &AppHandle<R>, seat_id: &str, result: ProbeResu
     let _ = app.emit("seat:probe", serde_json::json!({ "seatId": seat_id, "result": result }));
 
     if result.needs_human {
-        dispatch(app, Event::ProbeNeedsHuman { seat: seat_id.to_string(), reason: "页面需要你看一眼（验证或未知弹窗）".into() });
+        dispatch(app, Event::ProbeNeedsHuman { seat: seat_id.to_string(), reason: i18n::t("probe.needs_human") });
     } else {
         dispatch(app, Event::ProbeInCall { seat: seat_id.to_string(), in_call: result.in_call });
     }
@@ -873,7 +874,7 @@ fn connect_account_blocking(app: AppHandle, seat_id: String) -> CmdResult<String
         DriverKind::App { bundle_id, .. } => {
             if !AppDriver::is_installed(bundle_id) {
                 set_seat_status(&app, &seat_id, SeatStatus::Unavailable);
-                return Err("该应用尚未安装".into());
+                return Err(i18n::t("app.not_installed"));
             }
             if AppDriver::prompt_ax_trust() {
                 set_seat_status(&app, &seat_id, SeatStatus::Connected);
@@ -1007,7 +1008,7 @@ async fn app_targets(app: AppHandle, driver: String) -> CmdResult<Vec<String>> {
         let st = app.state::<AppState>();
         let spec = st.registry.get(&driver).map_err(err)?;
         AppDriver::targets(spec).map_err(|e| match e {
-            DriverError::NeedsAuth => "先在 系统设置 › 辅助功能 里允许 AgentDock".to_string(),
+            DriverError::NeedsAuth => i18n::t("app.needs_ax"),
             other => other.to_string(),
         })
     })
@@ -1043,11 +1044,11 @@ fn set_seat_icon(app: AppHandle, seat_id: String, file_name: String, data_base64
         .map(|e| e.to_ascii_lowercase())
         .unwrap_or_else(|| "png".into());
     if !["png", "svg", "webp", "gif", "apng", "jpg", "jpeg"].contains(&ext.as_str()) {
-        return Err("不支持的图片格式".into());
+        return Err(i18n::t("icon.bad_format"));
     }
     let bytes = base64::engine::general_purpose::STANDARD.decode(data_base64.trim()).map_err(err)?;
     if bytes.len() > 8 * 1024 * 1024 {
-        return Err("图片不能超过 8 MB".into());
+        return Err(i18n::t("icon.too_large"));
     }
     let dir = icons_dir(&st);
     std::fs::create_dir_all(&dir).map_err(err)?;
@@ -1142,26 +1143,26 @@ fn dock_menu(app: AppHandle) -> CmdResult<()> {
     let hk = app.state::<AppState>().settings.lock().unwrap().hotkeys.clone();
     let tip = |k: &str| k.replace("Alt", "⌥").replace("Control", "⌃").replace("Super", "⌘").replace("Shift", "⇧").replace('+', "");
     let orient_label = match orientation {
-        settings::Orientation::Horizontal => format!("切换为竖向    {}", tip(&hk.orientation)),
-        settings::Orientation::Vertical => format!("切换为横向    {}", tip(&hk.orientation)),
+        settings::Orientation::Horizontal => format!("{}    {}", i18n::t("menu.to_vertical"), tip(&hk.orientation)),
+        settings::Orientation::Vertical => format!("{}    {}", i18n::t("menu.to_horizontal"), tip(&hk.orientation)),
     };
     let form_label = match form {
-        settings::DefaultForm::Pet => format!("收起时显示小圆点    {}", tip(&hk.form)),
-        _ => format!("收起时显示宠物形象    {}", tip(&hk.form)),
+        settings::DefaultForm::Pet => format!("{}    {}", i18n::t("menu.form_dot"), tip(&hk.form)),
+        _ => format!("{}    {}", i18n::t("menu.form_pet"), tip(&hk.form)),
     };
-    let toggle_label = format!("{}    {}", if expanded { "收起" } else { "展开" }, tip(&hk.toggle));
+    let toggle_label = format!("{}    {}", i18n::t(if expanded { "menu.collapse" } else { "menu.expand" }), tip(&hk.toggle));
     let cur_pct = (app.state::<AppState>().settings.lock().unwrap().dock_scale.clamp(0.7, 1.6) * 100.0).round() as i32;
     let items: Vec<Box<dyn tauri::menu::IsMenuItem<tauri::Wry>>> = vec![
         Box::new(MenuItem::with_id(&app, "dock-toggle", toggle_label, true, None::<&str>).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "dock-orientation", orient_label, true, None::<&str>).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "dock-form", form_label, true, None::<&str>).map_err(err)?),
         Box::new(PredefinedMenuItem::separator(&app).map_err(err)?),
-        Box::new(MenuItem::with_id(&app, "dock-zoom-in", "放大 Dock (+10%)", cur_pct < 160, None::<&str>).map_err(err)?),
-        Box::new(MenuItem::with_id(&app, "dock-zoom-out", "缩小 Dock (-10%)", cur_pct > 70, None::<&str>).map_err(err)?),
-        Box::new(MenuItem::with_id(&app, "dock-zoom-reset", format!("重置大小 (当前 {cur_pct}%)"), cur_pct != 100, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-zoom-in", i18n::t("menu.zoom_in"), cur_pct < 160, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-zoom-out", i18n::t("menu.zoom_out"), cur_pct > 70, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "dock-zoom-reset", i18n::tf("menu.zoom_reset", &[("pct", &cur_pct.to_string())]), cur_pct != 100, None::<&str>).map_err(err)?),
         Box::new(PredefinedMenuItem::separator(&app).map_err(err)?),
-        Box::new(MenuItem::with_id(&app, "settings", "设置…", true, None::<&str>).map_err(err)?),
-        Box::new(MenuItem::with_id(&app, "quit", "退出 AgentDock", true, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "settings", i18n::t("menu.settings"), true, None::<&str>).map_err(err)?),
+        Box::new(MenuItem::with_id(&app, "quit", i18n::t("menu.quit"), true, None::<&str>).map_err(err)?),
     ];
     let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = items.iter().map(|b| b.as_ref()).collect();
     let menu = Menu::with_items(&app, &refs).map_err(err)?;
@@ -1215,12 +1216,20 @@ fn persist_settings(app: &AppHandle, mut settings: AppSettings) -> CmdResult<()>
     let _ = everos::assign_user_id(&mut settings.memory, &env);
     let client = everos::Client::resolve(&settings.memory, &env);
     let st = app.state::<AppState>();
-    let (hotkeys_changed, placement_changed, icon_changed) = {
+    let (hotkeys_changed, placement_changed, icon_changed, language_changed) = {
         let mut cur = st.settings.lock().unwrap();
-        let out = (cur.hotkeys != settings.hotkeys, cur.snap != settings.snap || cur.dock_anchor != settings.dock_anchor, cur.app_icon != settings.app_icon);
+        let out = (
+            cur.hotkeys != settings.hotkeys,
+            cur.snap != settings.snap || cur.dock_anchor != settings.dock_anchor,
+            cur.app_icon != settings.app_icon,
+            cur.language != settings.language,
+        );
         *cur = settings.clone();
         out
     };
+    if language_changed {
+        apply_language(app, settings.language);
+    }
     *st.everos.lock().unwrap() = client;
     settings.save(&settings::settings_path(&st.config_dir)).map_err(err)?;
     let _ = app.emit("settings:changed", &settings);
@@ -1327,6 +1336,8 @@ fn host_info() -> serde_json::Value {
         "material": MATERIAL.lock().unwrap().clone(),
         "version": env!("CARGO_PKG_VERSION"),
         "window_radius": *SETTINGS_RADIUS.lock().unwrap(),
+        // what "follow the system" resolves from, on both sides
+        "locale": i18n::system_locale(),
     })
 }
 
@@ -2037,13 +2048,28 @@ mod liquid_glass {
 
 // ───────────────────────── tray ─────────────────────────
 
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let toggle = MenuItem::with_id(app, "toggle", i18n::t("menu.toggle_dock"), true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", i18n::t("menu.settings"), true, Some("CmdOrCtrl+,"))?;
+    let quit = MenuItem::with_id(app, "quit", i18n::t("menu.quit"), true, Some("CmdOrCtrl+Q"))?;
+    Menu::with_items(app, &[&toggle, &settings, &PredefinedMenuItem::separator(app)?, &quit])
+}
+
+/// After a language change: the tray menu and the settings window title follow.
+fn apply_language(app: &AppHandle, language: settings::Language) {
+    i18n::set(language);
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id("main"), tray_menu(app)) {
+        let _ = tray.set_menu(Some(menu));
+    }
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.set_title(&i18n::t("window.settings"));
+    }
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     use tauri::tray::TrayIconBuilder;
-    let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏 Dock", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "设置…", true, Some("CmdOrCtrl+,"))?;
-    let quit = MenuItem::with_id(app, "quit", "退出 AgentDock", true, Some("CmdOrCtrl+Q"))?;
-    let menu = Menu::with_items(app, &[&toggle, &settings, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = tray_menu(app)?;
     let mut builder = TrayIconBuilder::with_id("main").menu(&menu).tooltip("AgentDock").show_menu_on_left_click(true);
     // macOS templates use alpha only: the glass app tile would become a solid square.
     #[cfg(target_os = "macos")]
@@ -2110,6 +2136,7 @@ pub fn run() {
             refresh_app_status(&mut seats.seats, &registry);
             let _ = seats.save(&seats::seats_path(&config_dir));
             let mut settings = AppSettings::load(&settings::settings_path(&config_dir));
+            i18n::set(settings.language);
             let env = everos::MemoryEnv::from_env();
             if everos::assign_user_id(&mut settings.memory, &env) {
                 if let Err(e) = settings.save(&settings::settings_path(&config_dir)) {
@@ -2184,6 +2211,9 @@ pub fn run() {
                 });
             }
             build_tray(app.handle())?;
+            if let Some(w) = app.get_webview_window("settings") {
+                let _ = w.set_title(&i18n::t("window.settings"));
+            }
             let icon_mode = app.state::<AppState>().settings.lock().unwrap().app_icon;
             apply_app_icon(app.handle(), icon_mode);
             register_hotkeys(app.handle())?;
