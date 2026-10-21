@@ -335,11 +335,11 @@ python3 .shots/shoot.py                                # regenerate the mock scr
 **CI and releases** ([`.github/workflows`](.github/workflows))
 
 - `CI`: every push to `main` and every PR runs the frontend build and the Rust unit tests on macOS.
-- `Release`: pushing a `v*` tag builds the universal macOS dmg and publishes it on GitHub Releases (with generated release notes). The version lives only in `package.json`; `tauri.conf.json` reads it:
+- `Release`: every push to `main` checks the version in `package.json`; if it has no release yet, the universal macOS dmg is built and published as `v<version>` on GitHub Releases, listing the commits since the last version. Pushes that keep the version are skipped within seconds. The version lives only in `package.json` (`tauri.conf.json` reads it), so a new release is just:
 
 ```bash
-npm version patch          # 0.1.0 → 0.1.1, commits and tags v0.1.1
-git push --follow-tags     # the Release workflow starts building
+npm version patch          # 0.2.0 → 0.2.1 (minor / major likewise; a -beta.1 style suffix makes a pre-release)
+git push --follow-tags     # the workflow builds and publishes; no manual tagging
 ```
 
 Running `Release` by hand from the Actions tab only builds; the installers come as workflow artifacts, no release is made.
@@ -370,7 +370,7 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 - [ ] Pin selectors on real devices and flip `verified: true` (Grok Bot calls already connect)
 - [ ] Windows build + Mica verification
 - [ ] Incoming-activity hint during a call (pill breathes when another seat has something to say)
-- [x] GitHub Actions: CI + tag-triggered universal macOS dmg releases
+- [x] GitHub Actions: CI + automatic universal macOS dmg release on a new version
 - [ ] Developer ID signing and notarization (no first-launch *Open Anyway*)
 
 ## Credits

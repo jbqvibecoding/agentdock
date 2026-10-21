@@ -339,11 +339,11 @@ python3 .shots/shoot.py                                # 重新生成 docs/scree
 **持续集成与发版**（[`.github/workflows`](.github/workflows)）
 
 - `CI`：每次推送到 `main` 和每个 PR，在 macOS 上跑前端构建和 Rust 单元测试。
-- `Release`：推送 `v*` 标签即打包 macOS 通用版 dmg，发布到 GitHub Releases（附自动生成的更新说明）。版本号只在 `package.json` 里改，`tauri.conf.json` 直接读它：
+- `Release`：每次推送到 `main` 自动检查 `package.json` 的版本号，还没发布过就打包 macOS 通用版 dmg，发布 `v<版本>` 到 GitHub Releases，「本次更新」列出上个版本以来的提交；版本号没变的推送几秒内就跳过。版本号只在 `package.json` 里改，`tauri.conf.json` 直接读它，所以发新版只要：
 
 ```bash
-npm version patch          # 0.1.0 → 0.1.1，同时提交并打标签 v0.1.1
-git push --follow-tags     # 推送后 Release 流水线开始打包
+npm version patch          # 0.2.0 → 0.2.1（minor / major 同理；带 -beta.1 这类后缀的发成预发布）
+git push --follow-tags     # 推送后流水线自己打包、发布，不用再手动打标签
 ```
 
 在 Actions 页面手动运行 `Release` 只打包，安装包作为流水线产物下载，不发 Release。
@@ -374,7 +374,7 @@ git push --follow-tags     # 推送后 Release 流水线开始打包
 - [ ] 各站选择器真机钉定并标记 `verified: true`（Grok Bot 已真机接通）
 - [ ] Windows 实机编译与 Mica 验证
 - [ ] 通话中来电提示（另一席位有消息时胶囊轻微呼吸）
-- [x] GitHub Actions：CI + 打标签自动发布 macOS 通用版 dmg
+- [x] GitHub Actions：CI + 推送新版本号即自动发布 macOS 通用版 dmg
 - [ ] Apple 开发者证书签名与公证（免去首次「仍要打开」）
 
 ## 致谢

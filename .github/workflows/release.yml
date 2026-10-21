@@ -1,21 +1,66 @@
-# 发版：推送 v* 标签（如 `npm version patch && git push --follow-tags`）即打包 macOS 通用版
-# （Apple 芯片 + Intel）并发布到 GitHub Releases。手动运行（workflow_dispatch）只打包、
-# 把安装包作为 Actions 产物上传，不建 Release。
+# 推送到 main 后自动发版：package.json 里的版本号还没有对应的 GitHub Release，就打包 macOS
+# 通用版（Apple 芯片 + Intel），发布 v<版本>，标签由 Release 一并创建。版本号没变的推送只做
+# 一次几秒钟的检查就结束。所以发新版只要改版本号再推送：
+#   npm version patch && git push --follow-tags
+# 手动运行（workflow_dispatch）只打包，安装包作为 Actions 产物下载，不发 Release。
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# 两次推送挨得很近时排队，不会对同一个版本发两次
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && ! gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$version 还没有 Release，开始打包发布"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$version 已经发布过（或为手动运行），不发新 Release"
+          fi
+
   macos:
+    needs: check
+    if: needs.check.outputs.publish == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # 生成「本次更新」要用到上一个版本标签以来的提交
+
+      - name: Changes since the last release
+        id: notes
+        run: |
+          version="${{ needs.check.outputs.version }}"
+          prev=$(git describe --tags --abbrev=0 --match 'v*' --exclude "v$version" 2>/dev/null || true)
+          {
+            echo "changes<<NOTES_EOF"
+            git log ${prev:+$prev..}HEAD --no-merges --pretty='- %s' | grep -vE '^- chore: release' || echo "- 维护更新"
+            if [ -n "$prev" ]; then echo; echo "完整对比：https://github.com/$GITHUB_REPOSITORY/compare/$prev...v$version"; fi
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v7
         with:
@@ -39,14 +84,19 @@ jobs:
           APPLE_SIGNING_IDENTITY: "-"
         with:
           args: --target universal-apple-darwin --bundles app,dmg
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: AgentDock ${{ github.ref_name }}
+          tagName: ${{ needs.check.outputs.publish == 'true' && format('v{0}', needs.check.outputs.version) || '' }}
+          releaseCommitish: ${{ github.sha }}
+          releaseName: AgentDock v${{ needs.check.outputs.version }}
           releaseDraft: false
-          prerelease: false
-          generateReleaseNotes: true
+          # 0.3.0-beta.1 这类带后缀的版本发成预发布
+          prerelease: ${{ contains(needs.check.outputs.version, '-') }}
           uploadUpdaterJson: false
           uploadWorkflowArtifacts: true
           releaseBody: |
+            ## 本次更新
+
+            ${{ steps.notes.outputs.changes }}
+
             ## 下载
 
             **`AgentDock_*_universal.dmg`**：Apple 芯片和 Intel Mac 通用，macOS 12 起可用（原生 Liquid Glass 需 macOS 26）。
@@ -60,5 +110,3 @@ jobs:
             3. 或者在终端执行一次：`xattr -dr com.apple.quarantine /Applications/AgentDock.app`
 
             呼叫 Grok Bot 等桌面 App 需要在 **系统设置 › 隐私与安全性 › 辅助功能** 里允许 AgentDock。升级到新版本后若又提示需要授权，把列表里的 AgentDock 关掉再打开一次。
-
-            ---
