@@ -15,10 +15,10 @@
 
 <br/>
 
-<img src="docs/screenshots/mac-settings-agents-light.png" width="820" alt="AgentDock 设置 › Agent 与悬浮的 Dock 胶囊" />
+<img src="docs/screenshots/mac-hero-light.png" width="920" alt="AgentDock 空闲态胶囊：收起、闭麦、九位联系人、添加、方向把手" />
 <br/>
 
-<p><sub>macOS 26 真机截图 · 设置窗和 Dock 胶囊都是系统 Liquid Glass（NSGlassEffectView）。胶囊从左到右：收起 · 系统闭麦 · 联系人（Grok Bot 里的三个 Bot · Muse · dot · Gemini · Claude · Antigravity · Cursor，后四个暂为待接入占位）· 添加 · ⇅ 方向把手</sub></p>
+<p><sub>macOS 26 真机截图 · 系统 Liquid Glass（NSGlassEffectView）。胶囊从左到右：收起 · 系统闭麦 · 联系人（Grok Bot 里的三个 Bot · Muse · dot · Gemini · Claude · Antigravity · Cursor，后四个暂为待接入占位）· 添加 · ⇅ 方向把手</sub></p>
 
 </div>
 
@@ -102,13 +102,21 @@ AgentDock 做的事情很窄：
 
 ### macOS 26 真机
 
-> 文件名 `mac-*`，Apple Silicon，玻璃由系统 `NSGlassEffectView` 绘制，1x 截图（1024 px 宽）。顶部大图同样是真机截图：设置 › Agent 和悬浮在上面的 Dock 胶囊。
+> 文件名 `mac-*`，Apple Silicon，玻璃由系统 `NSGlassEffectView` 绘制。设置页上那颗圆点是收起后的 Dock，它浮在所有窗口上面。
 
 <div align="center">
 
-| 设置 › 记忆（EverOS） |
-|:--:|
-| <img src="docs/screenshots/mac-settings-memory-light.png" width="640" /> |
+| 竖向 | 收起：小圆点 · 右键原生菜单（标注当前快捷键） |
+|:--:|:--:|
+| <img src="docs/screenshots/mac-vertical-idle-light.png" height="520" /> | <img src="docs/screenshots/mac-dot-light.png" width="120" /><br/><br/><img src="docs/screenshots/mac-menu-light.png" width="280" /> |
+
+<br/>
+
+| 设置 › Agent（展开的胶囊浮在上面） | 设置 › 记忆（EverOS） |
+|:--:|:--:|
+| <img src="docs/screenshots/mac-settings-agents-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-memory-light.png" width="460" /> |
+| **设置 › 快捷键** | **设置 › 麦克风** |
+| <img src="docs/screenshots/mac-settings-hotkeys-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-mic-light.png" width="460" /> |
 
 </div>
 

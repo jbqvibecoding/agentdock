@@ -15,10 +15,10 @@ one click to call, one click to mute, one click to hang up or hand the call to t
 
 <br/>
 
-<img src="docs/screenshots/mac-settings-agents-light.png" width="820" alt="AgentDock Settings › Agents with the Dock pill floating above" />
+<img src="docs/screenshots/mac-hero-light.png" width="920" alt="AgentDock idle pill: collapse, mute, nine contacts, add, orientation grip" />
 <br/>
 
-<p><sub>Captured on macOS 26 · the settings window and the Dock pill are both system Liquid Glass (NSGlassEffectView). Pill, left to right: collapse · system mute · contacts (three Bots from Grok Bot · Muse · dot · Gemini · Claude · Antigravity · Cursor; the last four are placeholders for now) · add · ⇅ orientation grip</sub></p>
+<p><sub>Captured on macOS 26 · system Liquid Glass (NSGlassEffectView). Left to right: collapse · system mute · contacts (three Bots from Grok Bot · Muse · dot · Gemini · Claude · Antigravity · Cursor; the last four are placeholders for now) · add · ⇅ orientation grip</sub></p>
 
 </div>
 
@@ -102,13 +102,21 @@ AgentDock deliberately does one narrow thing:
 
 ### Real device · macOS 26
 
-> Files named `mac-*`, Apple Silicon, glass drawn by the system `NSGlassEffectView`, 1x captures (1024 px wide). The image at the top is a real capture too: Settings › Agents with the Dock pill floating above it.
+> Files named `mac-*`, Apple Silicon, glass drawn by the system `NSGlassEffectView`. The small orb on the settings pages is the collapsed Dock, which floats above every window.
 
 <div align="center">
 
-| Settings › Memory (EverOS) |
-|:--:|
-| <img src="docs/screenshots/mac-settings-memory-light.png" width="640" /> |
+| Vertical | Collapsed: dot · native context menu (shows current shortcuts) |
+|:--:|:--:|
+| <img src="docs/screenshots/mac-vertical-idle-light.png" height="520" /> | <img src="docs/screenshots/mac-dot-light.png" width="120" /><br/><br/><img src="docs/screenshots/mac-menu-light.png" width="280" /> |
+
+<br/>
+
+| Settings › Agents (expanded pill floating above) | Settings › Memory (EverOS) |
+|:--:|:--:|
+| <img src="docs/screenshots/mac-settings-agents-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-memory-light.png" width="460" /> |
+| **Settings › Shortcuts** | **Settings › Microphone** |
+| <img src="docs/screenshots/mac-settings-hotkeys-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-mic-light.png" width="460" /> |
 
 </div>
 
