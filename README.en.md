@@ -120,40 +120,6 @@ AgentDock deliberately does one narrow thing:
 
 </div>
 
-### State overview (browser mock · 2x)
-
-> Rendered at 2x from the browser mock (controllable states, easy side-by-side); on a real Mac the glass is drawn by the system material and looks more translucent.
-
-<div align="center">
-
-| In call | Muted |
-|:--:|:--:|
-| <img src="docs/screenshots/dock-incall-light.png" width="440" /> | <img src="docs/screenshots/dock-incall-muted-light.png" width="440" /> |
-| **Switching (3 s undo)** | **Grip hover (⇅ = click to stand up)** |
-| <img src="docs/screenshots/dock-switching-light.png" width="440" /> | <img src="docs/screenshots/dock-grip-hover-light.png" width="440" /> |
-| **Collapsed: dot** | **Collapsed: pet** |
-| <img src="docs/screenshots/dock-dot-light.png" width="440" /> | <img src="docs/screenshots/dock-pet-light.png" width="440" /> |
-
-<br/>
-
-| Vertical · idle | Vertical · in call | Dark |
-|:--:|:--:|:--:|
-| <img src="docs/screenshots/dock-vertical-idle-dark.png" height="420" /> | <img src="docs/screenshots/dock-vertical-incall-light.png" height="420" /> | <img src="docs/screenshots/dock-incall-dark.png" width="420" /><br/><br/><img src="docs/screenshots/dock-switching-dark.png" width="420" /><br/><br/><img src="docs/screenshots/dock-dot-dark.png" width="420" /> |
-
-<br/>
-
-**Settings** — one sheet of system glass; sidebar more transparent, content brighter
-
-| Agents (contact list · login method) | Add contact (Grok Bot's Bots read automatically, tap to add) |
-|:--:|:--:|
-| <img src="docs/screenshots/settings-seats-light.png" width="460" /> | <img src="docs/screenshots/settings-add-light.png" width="460" /> |
-| **Appearance › App icon (Dock / menu bar)** | **Shortcuts** |
-| <img src="docs/screenshots/settings-app-icon-light.png" width="460" /> | <img src="docs/screenshots/settings-hotkeys-light.png" width="460" /> |
-| **Add contact (dark)** | **Appearance (dark)** |
-| <img src="docs/screenshots/settings-add-dark.png" width="460" /> | <img src="docs/screenshots/settings-appearance-dark.png" width="460" /> |
-
-</div>
-
 ## Install
 
 ### Download (macOS)

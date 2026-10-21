@@ -120,40 +120,6 @@ AgentDock 做的事情很窄：
 
 </div>
 
-### 状态总览（浏览器 mock · 2x）
-
-> 以下由浏览器 mock 以 2x 渲染（状态可控、便于逐项对比）；真机上玻璃由系统材质绘制，更通透。
-
-<div align="center">
-
-| 通话中 | 闭麦 |
-|:--:|:--:|
-| <img src="docs/screenshots/dock-incall-light.png" width="440" /> | <img src="docs/screenshots/dock-incall-muted-light.png" width="440" /> |
-| **切换席位（3 秒可撤销）** | **把手悬停（⇅ = 点一下立起来）** |
-| <img src="docs/screenshots/dock-switching-light.png" width="440" /> | <img src="docs/screenshots/dock-grip-hover-light.png" width="440" /> |
-| **收起：小圆点** | **收起：宠物** |
-| <img src="docs/screenshots/dock-dot-light.png" width="440" /> | <img src="docs/screenshots/dock-pet-light.png" width="440" /> |
-
-<br/>
-
-| 竖向 · 空闲 | 竖向 · 通话中 | 深色 |
-|:--:|:--:|:--:|
-| <img src="docs/screenshots/dock-vertical-idle-dark.png" height="420" /> | <img src="docs/screenshots/dock-vertical-incall-light.png" height="420" /> | <img src="docs/screenshots/dock-incall-dark.png" width="420" /><br/><br/><img src="docs/screenshots/dock-switching-dark.png" width="420" /><br/><br/><img src="docs/screenshots/dock-dot-dark.png" width="420" /> |
-
-<br/>
-
-**设置窗** —— 一整块系统玻璃，左栏更透、右栏更亮
-
-| Agent（联系人列表 · 登录方式） | 添加联系人（Grok Bot 的 Bot 自动读出，点名字即添加） |
-|:--:|:--:|
-| <img src="docs/screenshots/settings-seats-light.png" width="460" /> | <img src="docs/screenshots/settings-add-light.png" width="460" /> |
-| **外观 › 应用图标（程序坞 / 菜单栏）** | **快捷键** |
-| <img src="docs/screenshots/settings-app-icon-light.png" width="460" /> | <img src="docs/screenshots/settings-hotkeys-light.png" width="460" /> |
-| **添加联系人（深色）** | **外观（深色）** |
-| <img src="docs/screenshots/settings-add-dark.png" width="460" /> | <img src="docs/screenshots/settings-appearance-dark.png" width="460" /> |
-
-</div>
-
 ## 安装
 
 ### 直接下载（macOS）
