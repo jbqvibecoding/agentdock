@@ -46,10 +46,29 @@ function applySettingsLocally() {
 /** Switch the interface language: static markup at once, the current page on the next render. */
 function applyLanguage(): boolean {
   const next = resolveLang(settings.language, host.locale);
+  paintLangButton();
   if (next === lang() && document.documentElement.lang === next) return false;
   setLang(next);
   translateDom();
+  paintLangButton();
   return true;
+}
+
+/** The sidebar language button: the language in use, by its own name. */
+function paintLangButton() {
+  const name = LANGUAGES.find(([v]) => v === lang())?.[1] ?? "";
+  $("#lang-name").textContent = (settings.language ?? "system") === "system" ? `${name} · ${t("lang.system")}` : name;
+}
+
+async function chooseLanguage(v: LangSetting) {
+  await saveSettings({ language: v });
+  await show(page);
+}
+
+function openLangMenu(anchor: HTMLElement) {
+  const cur = settings.language ?? "system";
+  anchor.setAttribute("aria-expanded", "true");
+  openMenu(anchor, LANGUAGES.map(([v, name]) => ({ label: `${v === cur ? "✓" : "\u2003"} ${v === "system" ? t("lang.system") : name}`, run: () => void chooseLanguage(v) })), "left");
 }
 
 /** 主题色: preset swatches plus a custom picker; the Dock repaints live as you choose. */
@@ -210,6 +229,7 @@ let menuEl: HTMLDivElement | null = null;
 function closeMenu() {
   const wasOpen = menuEl != null;
   menuEl?.remove(); menuEl = null;
+  document.querySelector("#lang-btn")?.setAttribute("aria-expanded", "false");
   document.removeEventListener("pointerdown", onOutside, true);
   document.removeEventListener("keydown", onMenuKey, true);
   if (wasOpen) queueMicrotask(flushDeferred);
@@ -225,7 +245,7 @@ function flushDeferred() {
 document.addEventListener("focusout", () => window.setTimeout(flushDeferred, 0));
 function onOutside(e: Event) { if (menuEl && !menuEl.contains(e.target as Node)) closeMenu(); }
 function onMenuKey(e: KeyboardEvent) { if (e.key === "Escape") closeMenu(); }
-function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]) {
+function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[], align: "left" | "right" = "right") {
   closeMenu();
   const m = el("div", "menu"); m.setAttribute("role", "menu");
   for (const it of items) {
@@ -241,9 +261,9 @@ function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]) {
   document.body.append(m);
   const a = anchor.getBoundingClientRect(), mr = m.getBoundingClientRect();
   const below = a.bottom + 6 + mr.height < window.innerHeight - 8;
-  m.style.left = `${Math.max(8, a.right - mr.width)}px`;
+  m.style.left = `${align === "left" ? Math.min(a.left, window.innerWidth - mr.width - 8) : Math.max(8, a.right - mr.width)}px`;
   m.style.top = `${below ? a.bottom + 6 : a.top - 6 - mr.height}px`;
-  m.style.transformOrigin = below ? "top right" : "bottom right";
+  m.style.transformOrigin = `${below ? "top" : "bottom"} ${align}`;
   menuEl = m;
   document.addEventListener("pointerdown", onOutside, true);
   document.addEventListener("keydown", onMenuKey, true);
@@ -515,7 +535,7 @@ function renderAppearance() {
   const langSel = el("select") as HTMLSelectElement;
   const curLang = settings.language ?? "system";
   for (const [v, name] of LANGUAGES) langSel.append(new Option(v === "system" ? t("lang.system") : name, v, false, v === curLang));
-  langSel.addEventListener("change", () => void saveSettings({ language: langSel.value as LangSetting }).then(() => show(page)));
+  langSel.addEventListener("change", () => void chooseLanguage(langSel.value as LangSetting));
   const gLang = group("", row(lang() === "en" ? t("lang.label") : `${t("lang.label")} · Language`, t("lang.sub"), langSel));
 
   const cards = el("div", "cards");
@@ -660,6 +680,8 @@ async function show(p: PageId) {
   if (p === "seats") await renderSeats(); else if (p === "hotkeys") await renderHotkeys(); else if (p === "appearance") renderAppearance(); else if (p === "mic") await renderMic(); else if (p === "memory") await renderMemory(); else renderAbout();
 }
 document.querySelectorAll<HTMLButtonElement>(".nav__item").forEach((b) => b.addEventListener("click", () => show(b.dataset.page as PageId)));
+const langBtn = $("#lang-btn");
+langBtn.addEventListener("click", (e) => { e.stopPropagation(); if (menuEl) closeMenu(); else openLangMenu(langBtn); });
 
 async function boot() {
   host = await api.invoke<HostInfo>("host_info");

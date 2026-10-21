@@ -74,6 +74,23 @@ pub fn tf(key: &str, args: &[(&str, &str)]) -> String {
     args.iter().fold(t(key), |s, (k, v)| s.replace(&format!("{{{k}}}"), v))
 }
 
+/// The language menu: (menu id, setting, label). Languages carry their own names, so the right
+/// one is findable from any interface language.
+pub fn language_choices() -> [(&'static str, Language, String); 5] {
+    [
+        ("lang:system", Language::System, t("menu.lang_system")),
+        ("lang:zh-CN", Language::ZhCn, "简体中文".into()),
+        ("lang:en", Language::En, "English".into()),
+        ("lang:zh-TW", Language::ZhTw, "繁體中文".into()),
+        ("lang:ja", Language::Ja, "日本語".into()),
+    ]
+}
+
+/// "语言 · Language": the word in the current language, plus English so it can always be found.
+pub fn language_menu_title() -> String {
+    if current() == Lang::En { t("menu.language") } else { format!("{} · Language", t("menu.language")) }
+}
+
 /// [简体中文, English, 繁體中文, 日本語]
 fn table(key: &str) -> Option<[&'static str; 4]> {
     Some(match key {
@@ -183,6 +200,8 @@ fn table(key: &str) -> Option<[&'static str; 4]> {
         "menu.quit" => ["退出 AgentDock", "Quit AgentDock", "結束 AgentDock", "AgentDock を終了"],
         "menu.toggle_dock" => ["显示 / 隐藏 Dock", "Show / Hide Dock", "顯示 / 隱藏 Dock", "Dock を表示 / 非表示"],
         "window.settings" => ["AgentDock 设置", "AgentDock Settings", "AgentDock 設定", "AgentDock 設定"],
+        "menu.language" => ["语言", "Language", "語言", "言語"],
+        "menu.lang_system" => ["跟随系统", "Follow system", "跟隨系統", "システムに合わせる"],
         _ => return None,
     })
 }
@@ -211,6 +230,7 @@ mod tests {
             "icon.too_large", "chrome.lost", "chrome.no_tab", "chrome.refused", "chrome.not_enabled", "chrome.just_refused",
             "menu.expand", "menu.collapse", "menu.to_vertical", "menu.to_horizontal", "menu.form_dot", "menu.form_pet",
             "menu.zoom_in", "menu.zoom_out", "menu.zoom_reset", "menu.settings", "menu.quit", "menu.toggle_dock", "window.settings",
+            "menu.language", "menu.lang_system",
         ];
         let holes = |s: &str| {
             let mut v: Vec<String> = s.split('{').skip(1).filter_map(|p| p.split_once('}').map(|(h, _)| h.to_string())).collect();

@@ -1161,6 +1161,7 @@ fn dock_menu(app: AppHandle) -> CmdResult<()> {
         Box::new(MenuItem::with_id(&app, "dock-zoom-out", i18n::t("menu.zoom_out"), cur_pct > 70, None::<&str>).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "dock-zoom-reset", i18n::tf("menu.zoom_reset", &[("pct", &cur_pct.to_string())]), cur_pct != 100, None::<&str>).map_err(err)?),
         Box::new(PredefinedMenuItem::separator(&app).map_err(err)?),
+        Box::new(language_submenu(&app).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "settings", i18n::t("menu.settings"), true, None::<&str>).map_err(err)?),
         Box::new(MenuItem::with_id(&app, "quit", i18n::t("menu.quit"), true, None::<&str>).map_err(err)?),
     ];
@@ -1178,8 +1179,34 @@ fn step_dock_scale(app: &AppHandle, delta: Option<f32>) {
     let _ = persist_settings(app, s);
 }
 
+/// 语言 · Language ▸ follow the system, or one of the four; the current choice is ticked.
+fn language_submenu(app: &AppHandle) -> tauri::Result<tauri::menu::Submenu<tauri::Wry>> {
+    use tauri::menu::{CheckMenuItem, IsMenuItem, Submenu};
+    let current = app.state::<AppState>().settings.lock().unwrap().language;
+    let items = i18n::language_choices()
+        .into_iter()
+        .map(|(id, lang, label)| CheckMenuItem::with_id(app, id, label, true, lang == current, None::<&str>))
+        .collect::<tauri::Result<Vec<_>>>()?;
+    let refs: Vec<&dyn IsMenuItem<tauri::Wry>> = items.iter().map(|i| i as &dyn IsMenuItem<tauri::Wry>).collect();
+    Submenu::with_items(app, i18n::language_menu_title(), true, &refs)
+}
+
+/// A pick from a language menu (pill or menu bar). `false` when `id` is not one.
+fn on_language_menu(app: &AppHandle, id: &str) -> bool {
+    let Some((_, lang, _)) = i18n::language_choices().into_iter().find(|(choice, _, _)| *choice == id) else { return false };
+    let mut s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if s.language != lang {
+        s.language = lang;
+        let _ = persist_settings(app, s);
+    }
+    true
+}
+
 /// Window-menu (pill context menu) events; the tray has its own handler.
 fn on_app_menu(app: &AppHandle, id: &str) {
+    if on_language_menu(app, id) {
+        return;
+    }
     match id {
         "dock-toggle" => dispatch(app, Event::ToggleExpanded),
         "dock-orientation" => { let _ = toggle_orientation(app.clone()); }
@@ -2053,7 +2080,8 @@ fn tray_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let toggle = MenuItem::with_id(app, "toggle", i18n::t("menu.toggle_dock"), true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", i18n::t("menu.settings"), true, Some("CmdOrCtrl+,"))?;
     let quit = MenuItem::with_id(app, "quit", i18n::t("menu.quit"), true, Some("CmdOrCtrl+Q"))?;
-    Menu::with_items(app, &[&toggle, &settings, &PredefinedMenuItem::separator(app)?, &quit])
+    let language = language_submenu(app)?;
+    Menu::with_items(app, &[&toggle, &language, &settings, &PredefinedMenuItem::separator(app)?, &quit])
 }
 
 /// After a language change: the tray menu and the settings window title follow.
@@ -2083,6 +2111,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     }
     builder
         .on_menu_event(|app, ev| match ev.id().as_ref() {
+            id if on_language_menu(app, id) => {}
             "toggle" => {
                 if let Some(w) = app.get_webview_window("dock") {
                     if w.is_visible().unwrap_or(true) { let _ = w.hide(); } else { let _ = w.show(); }
