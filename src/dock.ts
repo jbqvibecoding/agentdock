@@ -16,8 +16,8 @@ const SVG = {
   mic: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>`,
   micOff: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="6" height="10" rx="3"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5M3 3l14 14"/></svg>`,
   // phone.down.fill proportions: a thick receiver band with rounded, drooping ear/mouth pads
-  hangup: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.4 11.6C7.4 6.2 16.6 6.2 21.6 11.6c.7.7.8 1.8.2 2.6l-1.7 2.1c-.6.7-1.6.9-2.4.4l-2.5-1.5c-.7-.4-1-1.2-.9-1.9l.3-1.5c-1.7-.5-3.5-.5-5.2 0l.3 1.5c.1.7-.2 1.5-.9 1.9l-2.5 1.5c-.8.5-1.8.3-2.4-.4l-1.7-2.1c-.6-.8-.5-1.9.2-2.6z"/></svg>`,
-  eye: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.5"/></svg>`,
+  hangup: `<svg viewBox="3 5 18 14" fill="currentColor"><path d="M12 8.4c3.4 0 6.5 1.3 8.6 3.5.8.8.8 2.1 0 3l-1.3 1.3a2 2 0 0 1-2.5.3l-1.4-.9a1.9 1.9 0 0 1-.9-1.8l.1-1c-1.7-.5-3.5-.5-5.2 0l.1 1c.1.7-.3 1.4-.9 1.8l-1.4.9a2 2 0 0 1-2.5-.3l-1.3-1.3c-.8-.9-.8-2.2 0-3C5.5 9.7 8.6 8.4 12 8.4z"/></svg>`,
+  eye: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4.75c-3.4 0-6.1 2.3-7.4 4.5a1.4 1.4 0 0 0 0 1.5c1.3 2.2 4 4.5 7.4 4.5s6.1-2.3 7.4-4.5a1.4 1.4 0 0 0 0-1.5C16.1 7.05 13.4 4.75 10 4.75z"/><circle cx="10" cy="10" r="2.6"/></svg>`,
   plus: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>`,
 };
 
@@ -113,14 +113,15 @@ function button(cls: string, svg: string, label: string, onClick: () => void): H
 
 async function seatButton(s: SeatView, small: boolean, active: boolean): Promise<HTMLButtonElement> {
   const b = button(`seat${small ? " sm" : ""}${active ? " active" : ""}${s.enabled ? "" : " disabled"}`, "", s.name, () => {
-    if (!s.enabled) return;
+    // pending = on the Dock as a placeholder; there is nothing to dial yet
+    if (!s.enabled || s.status === "pending") return;
     api.invoke("call_seat", { seatId: s.id });
   });
   b.dataset.seat = s.id;
   b.dataset.k = `seat:${s.id}`;
   b.dataset.status = s.status;
   if (settings?.show_names !== "never") b.title = `${s.name} · ${seatHint(s)}`;
-  b.style.setProperty("--seat-tint", tintFor(s.id));
+  b.style.setProperty("--seat-tint", tintFor(seatBrand(s)));
   const mark = el("div", "mark", await seatIcon(s));
   b.append(mark, el("i", "badge"));
   b.addEventListener("mouseenter", () => { hoverSeat = s.id; renderStatusText(); });
@@ -146,6 +147,8 @@ function renderStatusText() {
   if (dock.dataset.form === "bar") void fit("bar");
 }
 
+/** The brand a seat wears (added seats get ids like "gemini-app-x1y2"). */
+const seatBrand = (s: SeatView) => (s.icon.kind === "builtin" ? s.icon.key : s.id);
 const seatHint = (s: SeatView) => !s.enabled ? "未启用" : s.status === "pending" ? "待接入" : s.status === "needs_auth" ? "需登录 · 点击仍可尝试" : s.silent ? "无感呼叫" : "App 呼叫";
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
@@ -155,7 +158,7 @@ async function render() {
   dock.dataset.muted = String(state.muted);
   const cur = currentSeatId();
   const curSeat = cur ? seatById(cur) : null;
-  dock.style.setProperty("--seat-tint", curSeat ? tintFor(curSeat.id) : "");
+  dock.style.setProperty("--seat-tint", curSeat ? tintFor(seatBrand(curSeat)) : "");
 
   const form: "dot" | "pet" | "bar" = state.expanded ? "bar" : settings?.default_form === "pet" ? "pet" : "dot";
   dock.dataset.form = form;
@@ -239,6 +242,7 @@ async function render() {
     frag.append(el("div", "avatar", s ? await seatIcon(s) : ""));
     const st = el("div", "status");
     st.innerHTML = `<div class="name">需要你看一眼</div><div class="sub">${escapeHtml(p.reason)}</div>`;
+    st.title = p.reason;
     frag.append(st);
     frag.append(button("", SVG.eye, "查看页面", () => api.invoke("show_seat", { seatId: p.seat, visible: true })));
     frag.append(button("red", SVG.hangup, "挂断", () => api.invoke("hangup")));
@@ -479,7 +483,8 @@ function lensFrame(now: number) {
     const cx = r.left + r.width / 2 - d.left, cy = r.top + r.height / 2 - d.top;
     goal = { l: cx - w / 2, r: cx + w / 2, t: cy - h / 2, b: cy + h / 2 };
   }
-  const wantVis = target ? 1 : 0;
+  // filled buttons (hang up, muted mic) are already a disc: the lens slides in and dissolves into them
+  const wantVis = target && !target.matches(".red, .amber") ? 1 : 0;
   const reduce = !!settings?.reduce_motion;
   const horiz = !vertical();
   if (goal && (vis.x < 0.03 || reduce)) {

@@ -1,0 +1,32 @@
+{
+  "id": "chatgpt-app",
+  "display_name": "ChatGPT dot",
+  "version": 1,
+  "verified": false,
+  "url": null,
+  "bundle_id": "com.openai.codex",
+  "user_agent": null,
+  "target_noun": "dot",
+  "call": [
+    { "op": "click", "selectors": ["AXButton[{target}]", "AXLink[{target}]", "AXButton[~{target}]", "AXLink[~{target}]"] },
+    { "op": "sleep", "ms": 1200 },
+    { "op": "click", "selectors": ["AXButton[发起通话]", "AXButton[發起通話]", "AXButton[Start call]", "AXButton[呼叫]", "AXButton[Call]"] }
+  ],
+  "hangup": [
+    { "op": "click", "selectors": ["AXButton[挂断]", "AXButton[掛斷]", "AXButton[Hang up]"] }
+  ],
+  "mute": [
+    { "op": "click", "selectors": ["AXButton[将麦克风静音]", "AXCheckBox[将麦克风静音]", "AXButton[Mute microphone]", "AXCheckBox[Mute microphone]"] }
+  ],
+  "unmute": [
+    { "op": "click", "selectors": ["AXButton[取消麦克风静音]", "AXCheckBox[取消麦克风静音]", "AXButton[Unmute microphone]", "AXCheckBox[Unmute microphone]"] }
+  ],
+  "probe": {
+    "in_call": ["AXButton[挂断]", "AXButton[掛斷]", "AXButton[Hang up]"],
+    "muted": ["AXButton[取消麦克风静音]", "AXCheckBox[取消麦克风静音]", "AXButton[Unmute microphone]", "AXCheckBox[Unmute microphone]"],
+    "needs_human": [],
+    "logged_in": [],
+    "login_urls": [],
+    "account": null
+  }
+}

@@ -43,7 +43,7 @@ pub fn ensure_webview<R: Runtime>(app: &AppHandle<R>, seat_id: &str, spec: &Driv
 
 /// Injected into every seat page before it loads. Keeps the page from pausing media when hidden
 /// and tags the document so driver scripts can tell they run inside AgentDock.
-const BRIDGE_SCRIPT: &str = r#"
+pub(super) const BRIDGE_SCRIPT: &str = r#"
 (() => {
   try { Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
         Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true }); } catch (_) {}

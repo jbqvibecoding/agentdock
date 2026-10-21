@@ -65,6 +65,17 @@ export const BRAND: Record<string, { label: string; svg: string; tint: string; p
   },
 };
 
+/** Placeholder contacts (calling not wired up yet): the apps' own icons, taken from the installed
+ *  apps at the Apple grid's 824 px squircle and saved at 256 px; the SVG is a lettered fallback. */
+const lettered = (letter: string, bg: string, fg = "#ffffff") =>
+  `<svg viewBox="0 0 48 48" aria-hidden="true"><rect x="2" y="2" width="44" height="44" rx="11" fill="${bg}"/><text x="24" y="31.5" text-anchor="middle" font-family="-apple-system, system-ui, sans-serif" font-size="21" font-weight="600" fill="${fg}">${letter}</text></svg>`;
+Object.assign(BRAND, {
+  gemini: { label: "Gemini", tint: "#4285f4", png: "/brand/gemini.png", svg: lettered("G", "#ffffff", "#4285f4") },
+  claude: { label: "Claude", tint: "#d97757", png: "/brand/claude.png", svg: lettered("C", "#d97757") },
+  antigravity: { label: "Antigravity", tint: "#3b82f6", png: "/brand/antigravity.png", svg: lettered("A", "#ffffff", "#3b82f6") },
+  cursor: { label: "Cursor", tint: "#1d1d1f", png: "/brand/cursor.png", svg: lettered("C", "#1d1d1f") },
+});
+
 export const GENERIC_MARK = `<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" stroke-width="3" opacity=".6"/><path d="M24 15v12M18 21l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
 /** Returns icon markup, preferring official PNG assets in public/brand/ and falling back to inline SVG. */

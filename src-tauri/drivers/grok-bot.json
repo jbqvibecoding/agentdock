@@ -1,29 +1,43 @@
 {
   "id": "grok-bot",
   "display_name": "Grok Bot",
-  "version": 1,
+  "version": 4,
   "verified": false,
   "url": null,
   "bundle_id": "com.anysphere.sand",
   "user_agent": null,
+  "targets": ["AXButton.sand-agent-item", "AXCheckBox.sand-agent-item"],
+  "target_noun": "Bot",
+  "roster": {
+    "dir": "~/Library/Application Support/Grok Bot/sand-client-persistence",
+    "key_suffix": ".roster.last-roster",
+    "rows": "/value/rows",
+    "name": "name",
+    "exclude": {
+      "isGroup": "是群聊，群聊不能语音通话",
+      "isHiddenFromSidebar": "在 Grok Bot 侧栏里被隐藏了"
+    }
+  },
   "call": [
+    { "op": "click", "selectors": ["AXButton.sand-agent-item[@{target}]", "AXCheckBox.sand-agent-item[@{target}]", "AXButton[{target}]", "AXCheckBox[{target}]", "AXButton.sand-agent-item[~{target}]"] },
+    { "op": "sleep", "ms": 1200 },
     { "op": "clear", "selectors": ["AXTextArea", "AXTextField"] },
-    { "op": "click", "selectors": ["AXButton[Start voice chat]", "AXButton[Voice chat]", "AXButton[开始语音聊天]"] }
+    { "op": "click", "selectors": ["AXButton[发起语音聊天]", "AXButton[發起語音聊天]", "AXButton[Start voice chat]", "AXButton[音声チャットを開始]"] }
   ],
   "hangup": [
-    { "op": "click", "selectors": ["AXButton[Hang up]", "AXButton[End voice chat]", "AXButton[挂断]"] }
+    { "op": "click", "selectors": ["AXButton[挂断]", "AXButton[掛斷]", "AXButton[Hang up]", "AXButton[通話を終了]"] }
   ],
   "mute": [
-    { "op": "click", "selectors": ["AXButton[Mute]", "AXButton[静音]"] }
+    { "op": "click", "selectors": ["AXCheckBox[静音]", "AXCheckBox[靜音]", "AXCheckBox[Mute]", "AXButton[静音]", "AXButton[靜音]", "AXButton[Mute]"] }
   ],
   "unmute": [
-    { "op": "click", "selectors": ["AXButton[Unmute]", "AXButton[取消静音]"] }
+    { "op": "click", "selectors": ["AXCheckBox[取消静音]", "AXCheckBox[取消靜音]", "AXCheckBox[Unmute]", "AXButton[取消静音]", "AXButton[取消靜音]", "AXButton[Unmute]"] }
   ],
   "probe": {
-    "in_call": ["AXButton[Hang up]", "AXButton[End voice chat]"],
-    "muted": ["AXButton[Unmute]"],
-    "needs_human": ["AXSheet[End the current voice chat?]"],
-    "logged_in": ["AXButton[Start voice chat]", "AXTextArea"],
+    "in_call": ["AXButton[挂断]", "AXButton[掛斷]", "AXButton[Hang up]", "AXButton[通話を終了]"],
+    "muted": ["AXCheckBox[取消静音]", "AXCheckBox[取消靜音]", "AXCheckBox[Unmute]"],
+    "needs_human": ["AXSheet[结束当前语音聊天？]", "AXSheet[結束目前的語音聊天？]", "AXSheet[End the current voice chat?]"],
+    "logged_in": ["AXButton[发起语音聊天]", "AXButton[Start voice chat]", "AXTextArea"],
     "login_urls": [],
     "account": null
   }

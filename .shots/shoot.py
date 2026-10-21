@@ -1,11 +1,14 @@
 """Render README screenshots from the browser mock (npx vite --port 1420 must be running).
 Output: docs/screenshots/*.png at 2x. Real-machine shots (macOS Liquid Glass) are taken separately."""
-import asyncio, json, base64, subprocess, time, urllib.request, websockets
+import asyncio, json, base64, os, shutil, subprocess, tempfile, time, urllib.request, websockets
 PORT=9333
 OUT="docs/screenshots"
-chrome = subprocess.Popen(["google-chrome","--headless=new","--no-sandbox","--disable-gpu",f"--remote-debugging-port={PORT}","--window-size=1400,900","--hide-scrollbars","about:blank"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+MAC_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+binary = MAC_CHROME if os.path.exists(MAC_CHROME) else shutil.which("google-chrome") or shutil.which("chromium")
+profile = tempfile.mkdtemp(prefix="agentdock-shots-")
+chrome = subprocess.Popen([binary,"--headless=new","--no-sandbox","--disable-gpu","--no-first-run",f"--user-data-dir={profile}",f"--remote-debugging-port={PORT}","--window-size=1400,900","--hide-scrollbars","about:blank"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 time.sleep(2.5)
-ws_url = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json").read())[0]["webSocketDebuggerUrl"]
+ws_url = [t for t in json.loads(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json").read()) if t["type"]=="page"][0]["webSocketDebuggerUrl"]
 WALL={True:"url(/wall-dark.jpg) center/cover", False:"url(/wall-light.jpg) center/cover"}
 async def main():
     async with websockets.connect(ws_url, max_size=50_000_000) as ws:
@@ -69,13 +72,26 @@ async def main():
             await ev("agentdock.call('dot')"); await asyncio.sleep(2.2)
             await shot(f"dock-vertical-incall-{tag}", 240, 620)
             await ev("agentdock.hangup()"); await inv("toggle_orientation"); await asyncio.sleep(0.5)
+        async def settings_page(page, dark):
+            await goto(f"http://localhost:1420/settings.html?page={page}&os=macos", dark)
+            await ev("document.body.style.padding='0'; document.body.style.background='transparent'; document.documentElement.style.background="+json.dumps(WALL[dark])+"; 1")
+            await asyncio.sleep(0.8)
         for dark in (True, False):
             tag = "dark" if dark else "light"
             for page in ("seats","hotkeys","appearance","mic"):
-                await goto(f"http://localhost:1420/settings.html?page={page}", dark)
-                await ev("document.body.style.padding='0'; document.body.style.background='transparent'; document.documentElement.style.background="+json.dumps(WALL[dark])+"; 1")
-                await asyncio.sleep(0.8)
+                await settings_page(page, dark)
                 await shot(f"settings-{page}-{tag}", 980, 620)
+            # 添加联系人: the catalogue open, Grok Bot's Bots read, one of them added
+            await settings_page("seats", dark)
+            await ev("document.querySelector('.row.add-toggle').click(); 1"); await asyncio.sleep(1.0)
+            await ev("[...document.querySelectorAll('.chips button')].find(b => b.textContent === 'Analytics')?.click(); 1"); await asyncio.sleep(1.0)
+            await ev("document.querySelector('.add-panel').scrollIntoView({block: 'start'}); 1"); await asyncio.sleep(0.4)
+            await shot(f"settings-add-{tag}", 980, 620)
+            # 外观 › 应用图标 (macOS-only group, at the bottom of the page)
+            await settings_page("appearance", dark)
+            await ev("[...document.querySelectorAll('.group')].pop().scrollIntoView({block: 'end'}); 1"); await asyncio.sleep(0.4)
+            await shot(f"settings-app-icon-{tag}", 980, 620)
         print(await ev("JSON.stringify({w:innerWidth, sw:document.documentElement.scrollWidth})"))
 asyncio.run(main())
 chrome.terminate()
+shutil.rmtree(profile, ignore_errors=True)

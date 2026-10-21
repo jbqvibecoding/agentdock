@@ -95,6 +95,13 @@ impl Machine {
             }
 
             (Idle, Event::Call(seat)) | (NeedsHuman { .. }, Event::Call(seat)) => {
+                // The seat that needed a look may still hold a live call (a timeout the probe
+                // missed), and most apps keep one call at a time: hang it up before dialling.
+                if let NeedsHuman { seat: cur, .. } = &self.state.phase {
+                    if *cur != seat {
+                        fx.push(Effect::DriverHangup(cur.clone()));
+                    }
+                }
                 self.state.phase = Calling { seat: seat.clone() };
                 self.state.expanded = true;
                 self.calling_since = Some(now);
@@ -134,7 +141,8 @@ impl Machine {
                 fx.push(Effect::DriverHangup(seat));
             }
 
-            (Calling { seat: cur }, Event::ProbeInCall { seat, in_call: true }) if cur == seat => {
+            // Also out of "needs you": a call the probe only confirmed after the timeout is live after all.
+            (Calling { seat: cur } | NeedsHuman { seat: cur, .. }, Event::ProbeInCall { seat, in_call: true }) if cur == seat => {
                 self.call_started = Some(now);
                 self.calling_since = None;
                 self.state.phase = InCall { seat, elapsed_secs: 0 };
@@ -267,6 +275,32 @@ mod tests {
         assert!(matches!(m.state.phase, Phase::NeedsHuman { ref seat, .. } if seat == "dot"));
         assert_eq!(m.handle_at(Event::Hangup, t), vec![Effect::DriverHangup("dot".into())]);
         assert_eq!(m.state.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn calling_away_from_needs_human_hangs_that_seat_up_first() {
+        let t = Instant::now();
+        let mut m = Machine::new();
+        m.handle_at(Event::Call("grok-a".into()), t);
+        m.handle_at(Event::Tick, t + CALL_TIMEOUT + Duration::from_secs(1));
+        let fx = m.handle_at(Event::Call("grok-b".into()), t + Duration::from_secs(20));
+        assert_eq!(fx, vec![Effect::DriverHangup("grok-a".into()), Effect::DriverCall("grok-b".into())], "hang up, then dial, in that order");
+        assert!(matches!(m.state.phase, Phase::Calling { ref seat } if seat == "grok-b"));
+        // retrying the same seat just dials again
+        m.handle_at(Event::Tick, t + Duration::from_secs(40));
+        assert_eq!(m.handle_at(Event::Call("grok-b".into()), t + Duration::from_secs(41)), vec![Effect::DriverCall("grok-b".into())]);
+    }
+
+    #[test]
+    fn a_late_confirmation_turns_needs_human_into_the_call() {
+        let t = Instant::now();
+        let mut m = Machine::new();
+        m.handle_at(Event::Call("grok".into()), t);
+        m.handle_at(Event::Tick, t + CALL_TIMEOUT + Duration::from_secs(1));
+        m.handle_at(Event::ProbeInCall { seat: "other".into(), in_call: true }, t + Duration::from_secs(17));
+        assert!(matches!(m.state.phase, Phase::NeedsHuman { .. }), "another seat's report changes nothing");
+        m.handle_at(Event::ProbeInCall { seat: "grok".into(), in_call: true }, t + Duration::from_secs(18));
+        assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "grok"));
     }
 
     #[test]

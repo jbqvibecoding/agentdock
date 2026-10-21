@@ -1,0 +1,13 @@
+{
+  "id": "gemini-app",
+  "display_name": "Gemini",
+  "version": 1,
+  "verified": false,
+  "pending": true,
+  "url": null,
+  "bundle_id": "com.google.GeminiMacOS",
+  "user_agent": null,
+  "call": [],
+  "hangup": [],
+  "probe": { "in_call": [], "logged_in": [] }
+}

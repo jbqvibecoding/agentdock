@@ -2,15 +2,17 @@
 Runs against the Vite dev server (http://localhost:1420) in headless Chrome via CDP and asserts the
 state machine → DOM contract: idle → calling → in_call → muted → switching → undo → hangup → collapsed.
 """
-import asyncio, json, subprocess, sys, tempfile, time, urllib.request, websockets
+import asyncio, json, os, shutil, subprocess, sys, tempfile, time, urllib.request, websockets
 
 PORT = 9444
 URL = "http://localhost:1420/"
+MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME = MAC_CHROME if os.path.exists(MAC_CHROME) else shutil.which("google-chrome") or shutil.which("chromium")
 
 async def main() -> int:
     # Current Chrome refuses remote debugging on the default profile.
     profile = tempfile.mkdtemp(prefix="agentdock-chrome-")
-    chrome = subprocess.Popen(["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", f"--user-data-dir={profile}", f"--remote-debugging-port={PORT}", "--window-size=900,300", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    chrome = subprocess.Popen([CHROME, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", f"--user-data-dir={profile}", f"--remote-debugging-port={PORT}", "--window-size=900,300", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(40):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json", timeout=0.3).close()

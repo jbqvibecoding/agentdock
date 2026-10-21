@@ -6,10 +6,10 @@
 
 **A voice speed-dial for your personal AI agents — one Liquid Glass pill floating on the desktop.**
 
-Treat ChatGPT dot, Grok Bot, Copilot, Devin and Muse as contacts:<br/>
+Treat ChatGPT dot, every Bot in Grok Bot, Copilot, Devin and Muse as contacts:<br/>
 one click to call, one click to mute, one click to hang up or hand the call to the next agent. Not a chat window. Not a model router.
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-46%20unit%20%C2%B7%2031%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#platforms) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(unverified)-6b7280?logo=windows&logoColor=white)](#platforms) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-56%20unit%20%C2%B7%2031%20e2e-2ea043)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [中文](README.md) · [Features](#features) · [Install](#install) · [Shortcuts](#shortcuts) · [Architecture](#architecture) · [Connecting seats](#connecting-seats) · [Memory](#long-term-memory-everos) · [Privacy](#privacy--limits) · [Roadmap](#roadmap)
 
@@ -74,13 +74,35 @@ AgentDock deliberately does one narrow thing:
 
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+
+**Reaching the agents**
+
+- Web seats reuse the logins in your Chrome (Chrome remote debugging) — nothing to sign into twice; embedded browser as fallback
+- Desktop apps (Grok Bot, ChatGPT) are driven through Accessibility in the background, never brought forward
+- One contact per Bot in Grok Bot: the Bot list is read automatically, group chats (no voice) left out
+- An app holds one call at a time: a switch hangs up, waits for the call to end, then dials the next one
+
+</td>
+<td width="50%" valign="top">
+
+**App & settings**
+
+- Click the Dock icon for settings; or keep AgentDock in the Dock only / menu bar only
+- *Add contact* catalogue: one row per service, marked web / app, apps that aren't installed greyed out
+- Drag to reorder contacts (= ⌥1…⌥9), toggle, rename, custom icon (GIF ok)
+- Local builds signed with a fixed identity, so the Accessibility grant survives rebuilds
+
+</td>
+</tr>
 </table>
 
 ## Screenshots
 
 ### Real device · macOS 26
 
-> Files named `mac-*`, macOS 26.6.2 · Apple Silicon, glass drawn by the system `NSGlassEffectView`. The cloud Mac has no HiDPI display, so these are 1x captures (pixel = pt), not upscaled.
+> Files named `mac-*`, macOS 26.6.2 · Apple Silicon, glass drawn by the system `NSGlassEffectView`. The cloud Mac has no HiDPI display, so these are 1x captures (pixel = pt), not upscaled. They predate the redrawn hang-up / reveal glyphs; the browser-mock shots below show the current UI.
 
 <div align="center">
 
@@ -93,14 +115,6 @@ AgentDock deliberately does one narrow thing:
 | <img src="docs/screenshots/mac-switching-light.png" width="420" /> | <img src="docs/screenshots/mac-grip-hover-light.png" width="420" /> |
 | **Native context menu (shows current shortcuts)** | **Dot / pet / vertical** |
 | <img src="docs/screenshots/mac-menu-light.png" width="420" /> | <img src="docs/screenshots/mac-dot-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-pet-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-vertical-idle-light.png" height="260" /> &nbsp; <img src="docs/screenshots/mac-vertical-incall-light.png" height="260" /> |
-
-<br/>
-
-| Settings › Seats | Settings › Appearance (Layout · collapse mode) |
-|:--:|:--:|
-| <img src="docs/screenshots/mac-settings-seats-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-appearance-light.png" width="460" /> |
-| **Settings › Shortcuts** | **Settings › Seats (dark)** |
-| <img src="docs/screenshots/mac-settings-hotkeys-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-seats-dark.png" width="460" /> |
 
 </div>
 
@@ -128,11 +142,13 @@ AgentDock deliberately does one narrow thing:
 
 **Settings** — one sheet of system glass; sidebar more transparent, content brighter
 
-| Seats | Appearance › Layout |
+| Agents (contact list · login method) | Add contact (Grok Bot's Bots read automatically, tap to add) |
 |:--:|:--:|
-| <img src="docs/screenshots/settings-seats-light.png" width="460" /> | <img src="docs/screenshots/settings-layout-light.png" width="460" /> |
-| **Shortcuts** | **Seats (dark)** |
-| <img src="docs/screenshots/settings-hotkeys-light.png" width="460" /> | <img src="docs/screenshots/settings-seats-dark.png" width="460" /> |
+| <img src="docs/screenshots/settings-seats-light.png" width="460" /> | <img src="docs/screenshots/settings-add-light.png" width="460" /> |
+| **Appearance › App icon (Dock / menu bar)** | **Shortcuts** |
+| <img src="docs/screenshots/settings-app-icon-light.png" width="460" /> | <img src="docs/screenshots/settings-hotkeys-light.png" width="460" /> |
+| **Add contact (dark)** | **Appearance (dark)** |
+| <img src="docs/screenshots/settings-add-dark.png" width="460" /> | <img src="docs/screenshots/settings-appearance-dark.png" width="460" /> |
 
 </div>
 
@@ -151,7 +167,14 @@ npm run tauri dev        # dev mode with HMR
 npm run tauri build      # .app / .dmg → src-tauri/target/release/bundle/
 ```
 
-On first launch an AgentDock icon appears in the menu bar and a small dot at the top center of the screen. `⌥Space` expands it; right-click the pill for the menu / settings.
+For local macOS builds, sign with a fixed identity: an ad-hoc signature changes on every build, and macOS then drops grants such as Accessibility (so Grok Bot would need re-authorizing).
+
+```bash
+npm run signing          # once: a self-signed "AgentDock Local Signing" identity in the login keychain
+npm run build:mac        # build signed with it; grants survive rebuilds
+```
+
+On first launch AgentDock shows its icon in the Dock and the menu bar, and a small dot at the top center of the screen. Click the Dock icon for settings; `⌥Space` expands the dot; right-click the pill for the menu / settings. Settings › Appearance › App icon switches to Dock only or menu bar only.
 
 | Requirement | Version |
 |---|---|
@@ -202,11 +225,13 @@ Tauri 2
    ├─ mic.rs       system-level mute
    ├─ everos.rs    EverOS HTTP client (add / search / flush)
    ├─ memory.rs    read/write memory on the call lifecycle (pure, unit-tested)
-   ├─ drivers/     drivers-as-data (JSON) · web.rs hidden webview · app.rs Accessibility
-   └─ lib.rs       commands · tray · native material · cursor hover poll · probe loop · memory scheduling
+   ├─ drivers/     drivers-as-data (JSON) · chrome.rs your Chrome · web.rs embedded webview · app.rs Accessibility
+   └─ lib.rs       commands · tray / Dock icon · native material · cursor hover poll · probe loop · driver queue · memory scheduling
           │
           ├─ NSGlassEffectView / NSVisualEffectView / Mica   (system material)
-          ├─ hidden WKWebView / WebView2                      (one data directory per seat)
+          ├─ Chrome (remote debugging, one background tab per agent)   (reuses Chrome's logins)
+          ├─ hidden WKWebView / WebView2                      (fallback without Chrome)
+          ├─ desktop apps' accessibility tree (Grok Bot / ChatGPT)     (buttons pressed in the background)
           └─ input-device volume / IAudioEndpointVolume / pactl (mute)
 ```
 
@@ -214,7 +239,8 @@ Tauri 2
 
 - **The window is the glass shape.** The Dock window morphs with state and sizes itself to content; material, corner radius and shadow are drawn by the OS, the web layer only lays out symbols.
 - **Drivers are data.** Each vendor's URL, login check, selectors and call / hang-up / mute steps live in [`src-tauri/drivers/*.json`](src-tauri/drivers); drop a higher-`version` copy in the user data directory to hot-update without rebuilding.
-- **Invisible integration.** Web seats run in hidden, persistent webviews with isolated data directories; you log in once, everything after that is code-driven, no browser window ever pops up.
+- **Invisible integration.** Web seats run in a background tab of your Chrome and reuse its logins; without Chrome they fall back to a hidden, persistent embedded webview. Desktop-app seats are driven through Accessibility in the background and never take the foreground.
+- **One call at a time.** Calls, hang-ups and mutes run one after another on a single driver queue; a switch hangs up the previous agent and waits for that call to end before dialling the next.
 - **Hands off credentials.** The login window is the real site's login page and you complete it yourself (2FA / Passkey included); AgentDock never reads or stores passwords.
 
 ```
@@ -226,9 +252,10 @@ src-tauri/src
 ├── mic.rs          system-level mute (macOS / Windows / Linux)
 ├── everos.rs       EverOS v2 HTTP client (the key comes only from the environment)
 ├── memory.rs       search when a call starts; write on connect, captions, and hangup
-├── drivers/        mod.rs registry · web.rs hidden webview · app.rs desktop app (Accessibility)
-└── lib.rs          Tauri commands, tray, system material, hover poll, probe loop, memory scheduling
-src-tauri/drivers/*.json   chatgpt-dot · grok-bot · copilot-voice · muse-voice · devin-voice
+├── drivers/        mod.rs registry · chrome.rs Chrome remote debugging · web.rs embedded webview · app.rs desktop app (Accessibility + Bot list)
+└── lib.rs          Tauri commands, tray / Dock icon, system material, hover poll, probe loop, driver queue, memory scheduling
+src-tauri/drivers/*.json   chatgpt-dot · chatgpt-app · grok-bot · copilot-voice · muse-voice · devin-voice (+ placeholders: gemini-app · claude-app · antigravity · cursor)
+scripts/setup-signing.sh   one-time local self-signed identity for npm run build:mac
 src/dock.ts + dock.css     the pill
 src/settings.ts + .css     settings window (Seats / Shortcuts / Appearance / Microphone / Memory / About)
 src/brand.ts               built-in brand marks; public/brand/<key>.svg overrides
@@ -240,18 +267,27 @@ docs/ref/                  visual reference images + reproduction spec (SPEC.md)
 
 | Seat | Mechanism | Status |
 |---|---|---|
-| ChatGPT dot | hidden webview · chatgpt.com | selectors to be pinned on a real device |
-| Copilot Voice | hidden webview · copilot.microsoft.com | selectors to be pinned |
-| Muse | hidden webview · muse.ai | selectors to be pinned |
-| Devin | hidden webview · app.devin.ai | selectors to be pinned |
-| Grok Bot | desktop app · macOS Accessibility | needs Accessibility permission; to be pinned |
+| Grok Bot (one contact per Bot) | desktop app · macOS Accessibility | calls connect on a real Mac; Bot list read from the app's local cache, group chats left out |
+| ChatGPT dot · App | desktop app · macOS Accessibility | button names taken from the app bundle (Start call / Hang up); to be verified on a real Mac |
+| ChatGPT dot · web | Chrome tab or embedded webview · chatgpt.com | selectors to be pinned on a real device |
+| Copilot Voice | Chrome tab or embedded webview · copilot.microsoft.com | selectors to be pinned |
+| Muse | Chrome tab or embedded webview · muse.ai | selectors to be pinned |
+| Devin | Chrome tab or embedded webview · app.devin.ai | selectors to be pinned |
+| Gemini · Claude · Antigravity · Cursor | desktop app | icon placeholders for now (shown as *pending*); calling comes later |
+
+**Reuse your Chrome logins (recommended)**
+
+In Chrome 144+, open `chrome://inspect/#remote-debugging` and turn remote debugging on. With Settings › Agent › *Use Chrome's logins* (on by default), each web seat runs in its own background tab of your Chrome and reuses Chrome's logins, cookies and passkeys — nothing to sign into twice. Chrome asks *Allow remote debugging?* on the first connection; the connection is then kept, and Chrome shows its "controlled by automated test software" bar. Your own tabs are never touched. Without remote debugging, seats fall back to the embedded browser.
 
 **First connection (you do this once)**
 
-1. Settings › Seats › **Sign in / Connect**: a real login window opens (the embedded browser, visible this one time). Sign in as usual; the window closes itself and the seat shows *Connected*.
+1. Settings › Seats › **Sign in / Connect**: with Chrome, the seat's tab opens in Chrome; otherwise a real login window opens (the embedded browser, visible this one time). Sign in as usual; the window closes itself and the seat shows *Connected*.
 2. macOS asks once to allow AgentDock to use the microphone — allow.
 3. Click **Test call**: connect → 2 s → hang up. If it reports *no call detected*, pin the selectors as below.
-4. Grok Bot: click **Grant Accessibility →** and tick AgentDock in System Settings.
+4. Grok Bot: click **Grant Accessibility →** and tick AgentDock in System Settings. Buttons are then pressed in the background, without bringing Grok Bot forward. Grok Bot has no web version, so this is the only way in.
+5. One contact per Bot: click **Add contact** under the list in Settings › Agent; all your Grok Bot Bots are listed, tap a name to add it to the Dock. The list comes from Grok Bot's local cache, so the app need not be open; group chats (no voice) and Bots hidden from the sidebar are left out. A call selects that Bot first, then presses *Start voice chat*; existing contacts get **Choose Bot…** in the ⋯ menu.
+6. Switching between two Bots: Grok Bot holds one call at a time, so AgentDock hangs up the current one, waits for the call to end, then dials the next. A call still up in the app that AgentDock doesn't know about is ended first too.
+7. With the ChatGPT desktop app installed, add **ChatGPT dot · App**: it uses the app's dot *Start call / Hang up*, no web page and no second sign-in, and needs only the same Accessibility permission.
 
 **Pinning selectors (once per vendor)**
 
@@ -313,7 +349,7 @@ Empty lists use the generic selectors. Desktop-app seats (Grok Bot) have no comp
 ## Testing
 
 ```bash
-cd src-tauri && cargo test                             # 46 unit tests: state machine / agents / settings compat / placement / morph spring / hotkeys / drivers / EverOS
+cd src-tauri && cargo test                             # 56 unit tests: state machine (incl. hang up before dialling) / agents / settings compat / placement / morph spring / hotkeys / drivers (AX selectors, Bot list, group filter, Chrome) / EverOS
 npm run build                                          # type-check + bundle
 npx vite --port 1420 & python3 tests/e2e_mock.py       # 31 browser E2E checks: state→DOM, orientation, drag, grip, auto-collapse, collapse modes, settings (incl. memory toggle)
 bash tests/e2e_xvfb.sh                                 # Linux real-binary smoke (Xvfb)
@@ -325,10 +361,12 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 
 ## Privacy & limits
 
-- **No credentials.** Login happens on the real site page, by you; cookies stay inside each seat's isolated webview data directory.
+- **No credentials.** Login happens on the real site page, by you. With Chrome, cookies stay in Chrome; with the embedded browser they stay in AgentDock's data directory (shared by all seats on macOS).
 - **No uploads by default.** No telemetry. Only after Memory is enabled *and* the process has `EVEROS_API_KEY` are call events and on-screen captions sent to EverOS (Cloud, or your own `EVEROS_BASE_URL`).
 - **UI automation has limits.** None of the vendors expose a "call my agent" API, so everything goes through their UIs; redesigns require updating the driver JSON.
-- **Still to verify on your device:** `getUserMedia` permission inside a hidden webview and WebRTC throttling while invisible. If a site blocks embedded login, the fallback is driving your local Chrome via CDP.
+- **With Chrome**, AgentDock uses Chrome's own remote-debugging connection (which you enable in `chrome://inspect` and allow in Chrome's prompt) and only drives the tabs it opened for its seats; it never reads Chrome's cookie store.
+- **Grok Bot's Bot list** is read from the app's local cache (the roster in `~/Library/Application Support/Grok Bot/sand-client-persistence`): Bot names and whether each is a group chat or hidden — no conversation content, nothing uploaded.
+- **Still to verify on your device:** `getUserMedia` permission inside a hidden webview or background tab, and WebRTC throttling while invisible.
 - **System mute** is skipped (UI state only) on machines without an audio input device.
 
 ## Roadmap
@@ -339,7 +377,10 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 - [x] Auto-collapse · three collapse modes · hover to expand
 - [x] Recordable global shortcuts · native context menu
 - [x] Settings: drag-sort seats · custom icons / GIF · shortcuts · appearance · microphone · EverOS memory
-- [ ] Pin selectors on real devices and flip `verified: true`
+- [x] Web seats reuse Chrome's logins (remote debugging), embedded webview fallback
+- [x] Desktop apps driven in the background (Grok Bot, ChatGPT) · one contact per Grok Bot Bot · group-chat filter · hang up before switching
+- [x] Dock icon opens settings · menu-bar-only option · fixed local signing
+- [ ] Pin selectors on real devices and flip `verified: true` (Grok Bot calls already connect)
 - [ ] Windows build + Mica verification
 - [ ] Incoming-activity hint during a call (pill breathes when another seat has something to say)
 - [ ] Signed & notarized .dmg releases

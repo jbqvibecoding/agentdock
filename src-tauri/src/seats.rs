@@ -48,6 +48,10 @@ pub struct Seat {
     pub status: SeatStatus,
     #[serde(default)]
     pub account: Option<String>,
+    /// What to pick inside the service before calling, e.g. one Bot in Grok Bot ("Analytics").
+    /// Fills `{target}` in the driver's selectors; `None` calls whatever is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 impl Default for SeatStatus {
@@ -74,6 +78,7 @@ impl SeatsConfig {
             enabled,
             status,
             account: None,
+            target: None,
         };
         SeatsConfig {
             seats: vec![
@@ -201,6 +206,7 @@ mod tests {
         let mut cfg = SeatsConfig::defaults();
         cfg.get_mut("dot").unwrap().name = "Alfred".into();
         cfg.get_mut("dot").unwrap().icon = SeatIcon::Custom { path: "icons/alfred.gif".into() };
+        cfg.get_mut("grok-bot").unwrap().target = Some("Analytics".into());
         cfg.save(&path).unwrap();
         let loaded = SeatsConfig::load(&path);
         assert_eq!(loaded, cfg);

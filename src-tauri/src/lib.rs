@@ -33,12 +33,16 @@ pub struct AppState {
     pub hotkey_map: Mutex<Vec<(Shortcut, HotkeyAction)>>,
     /// Seats whose login window is currently shown; auto-hidden once a probe says logged in.
     pub logging_in: Mutex<std::collections::HashSet<String>>,
+    /// Held while drivers call / hang up / mute, so those presses never interleave.
+    pub driver_lane: Mutex<()>,
     /// Authoritative logical size of the dock pill so drags never inherit an OS-resized frame.
     pub dock_size: Mutex<(f64, f64)>,
     /// Open EverOS sessions, keyed by seat. Pure bookkeeping; HTTP happens off this lock.
     pub memory: Mutex<memory::CallBook>,
     /// `EVEROS_API_KEY` + settings. Rebuilt when settings are saved. Missing key → inactive.
     pub everos: Mutex<everos::Client>,
+    /// The connection to the user's Chrome, opened on the first web call that goes there.
+    pub chrome: drivers::chrome::Chrome,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,6 +61,18 @@ pub struct DriverInfo {
     pub version: u32,
     pub verified: bool,
     pub kind: String,
+    pub url: Option<String>,
+    pub bundle_id: Option<String>,
+    /// App drivers: whether the app is on this Mac. Web drivers: always true.
+    pub installed: bool,
+    /// The app can list what to call (Bots), see `app_targets`.
+    pub discover: bool,
+    /// The call picks something inside the service (`{target}` in its steps).
+    pub picks: bool,
+    /// What a target is called in the UI ("Bot", "dot").
+    pub target_noun: Option<String>,
+    /// Placeholder: icon and contact only, calling not wired up yet.
+    pub pending: bool,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -103,9 +119,56 @@ fn dispatch<R: Runtime>(app: &AppHandle<R>, ev: Event) {
     let after = st.machine.lock().unwrap().state.phase.clone();
     emit_state(app, &st);
     memory_on_phase(app, &before, &after);
-    for fx in effects {
+    let (driver_work, rest): (Vec<Effect>, Vec<Effect>) = effects.into_iter().partition(|fx| matches!(fx, Effect::DriverCall(_) | Effect::DriverHangup(_)));
+    for fx in rest {
         apply_effect(app, fx);
     }
+    run_driver_effects(app, driver_work);
+}
+
+/// One event's driver work runs on one blocking task, in the machine's order, and one event at a
+/// time: a switch hangs up before it dials (most apps hold a single call), and a hang-up pressed
+/// while a call is being placed lands after it instead of racing it.
+fn run_driver_effects<R: Runtime>(app: &AppHandle<R>, effects: Vec<Effect>) {
+    if effects.is_empty() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let _lane = st.driver_lane.lock().unwrap_or_else(|e| e.into_inner());
+        for fx in effects {
+            match fx {
+                Effect::DriverCall(seat) => place_call(&app, seat),
+                Effect::DriverHangup(seat) => {
+                    if let Err(e) = run_driver(&app, &seat, DriverOp::Hangup) {
+                        tracing::warn!("hangup {seat} failed: {e}");
+                    }
+                }
+                Effect::SystemMute(_) => {}
+            }
+        }
+    });
+}
+
+/// Place a call; a failure turns into "needs you" with a reason a person can act on.
+fn place_call<R: Runtime>(app: &AppHandle<R>, seat: String) {
+    let Err(e) = run_driver(app, &seat, DriverOp::Call) else { return };
+    tracing::warn!("call {seat} failed: {e}");
+    let (name, service, web, target) = app.state::<AppState>().seats.lock().unwrap().get(&seat)
+        .map(|s| (s.name.clone(), s.service.clone(), matches!(s.driver, DriverKind::Web { .. }), s.target.clone()))
+        .unwrap_or_else(|| (seat.clone(), seat.clone(), false, None));
+    let reason = match e {
+        DriverError::NeedsAuth => "需要先登录或授权，去设置里连接账号".to_string(),
+        DriverError::NotFound(_) if web => format!("没找到 {name} 的语音入口：点「查看页面」看看是否已登录"),
+        DriverError::NotFound(ref m) if target.as_deref().is_some_and(|t| m.contains(t)) => {
+            format!("{service} 侧栏里没找到「{}」：名字要和侧栏一致，且没折叠在「展开」里", target.unwrap_or_default())
+        }
+        DriverError::NotFound(_) => format!("没找到 {name} 的语音按钮：先在 {service} 里打开一个对话，输入框留空"),
+        DriverError::Chrome(m) | DriverError::NotCallable(m) => m,
+        other => format!("呼叫失败：{other}"),
+    };
+    dispatch(app, Event::ProbeNeedsHuman { seat, reason });
 }
 
 /// Search before the driver places the call, and write turns when the phase says the call
@@ -179,9 +242,19 @@ async fn recall_and_inject<R: Runtime>(app: AppHandle<R>, client: everos::Client
         };
         st.registry.get(&driver_id).map(|spec| spec.memory.composer.clone()).unwrap_or_default()
     };
-    for _ in 0..30 {
+    let script = drivers::inject_memory_script(&brief, &selectors);
+    // A Chrome tab only shows up once the call steps (which hold the Chrome line) are done.
+    for _ in 0..200 {
         if let Some(win) = app.get_webview_window(&web::window_label(&recall.seat_id)) {
-            if let Err(e) = win.eval(&drivers::inject_memory_script(&brief, &selectors)) {
+            if let Err(e) = win.eval(&script) {
+                tracing::warn!("everos inject failed (call continues): {e}");
+            }
+            return;
+        }
+        if app.state::<AppState>().chrome.has_tab(&recall.seat_id) {
+            let (app, seat, script) = (app.clone(), recall.seat_id.clone(), script.clone());
+            let r = tokio::task::spawn_blocking(move || app.state::<AppState>().chrome.eval(&seat, "", &script, false)).await;
+            if let Ok(Err(e)) = r {
                 tracing::warn!("everos inject failed (call continues): {e}");
             }
             return;
@@ -228,28 +301,15 @@ fn apply_effect<R: Runtime>(app: &AppHandle<R>, fx: Effect) {
             let current = st.machine.lock().unwrap().current_seat().map(str::to_string);
             drop(st);
             if let Some(seat) = current {
-                let _ = run_driver(&app, &seat, if m { DriverOp::Mute } else { DriverOp::Unmute });
+                tauri::async_runtime::spawn_blocking(move || {
+                    let st = app.state::<AppState>();
+                    let _lane = st.driver_lane.lock().unwrap_or_else(|e| e.into_inner());
+                    let _ = run_driver(&app, &seat, if m { DriverOp::Mute } else { DriverOp::Unmute });
+                });
             }
         }
-        Effect::DriverCall(seat) => {
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = run_driver(&app, &seat, DriverOp::Call) {
-                    tracing::warn!("call {seat} failed: {e}");
-                    let reason = match e {
-                        DriverError::NeedsAuth => "需要先登录或授权，去设置里连接账号".to_string(),
-                        other => format!("呼叫失败：{other}"),
-                    };
-                    dispatch(&app, Event::ProbeNeedsHuman { seat, reason });
-                }
-            });
-        }
-        Effect::DriverHangup(seat) => {
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = run_driver(&app, &seat, DriverOp::Hangup) {
-                    tracing::warn!("hangup {seat} failed: {e}");
-                }
-            });
-        }
+        // Drivers block (AX walks, Chrome round trips, waiting for the user to allow Chrome).
+        Effect::DriverCall(_) | Effect::DriverHangup(_) => run_driver_effects(&app, vec![fx]),
     }
 }
 
@@ -265,9 +325,22 @@ enum DriverOp {
 fn run_driver<R: Runtime>(app: &AppHandle<R>, seat_id: &str, op: DriverOp) -> Result<(), DriverError> {
     let st = app.state::<AppState>();
     let seat = st.seats.lock().unwrap().get(seat_id).cloned().ok_or_else(|| DriverError::Unknown(seat_id.into()))?;
+    let driver_id = match &seat.driver {
+        DriverKind::Web { driver, .. } | DriverKind::App { driver, .. } => driver,
+    };
+    // Placeholders: nothing to probe or press yet; a call says so instead of failing somewhere.
+    if let Some(spec) = st.registry.get(driver_id).ok().filter(|d| d.pending) {
+        return match op {
+            DriverOp::Call => Err(DriverError::NotCallable(format!("{} 的语音呼叫还在接入中，先在 Dock 上占个位", spec.display_name))),
+            _ => Ok(()),
+        };
+    }
     match &seat.driver {
-        DriverKind::Web { driver, .. } => {
+        DriverKind::Web { driver, url } => {
             let spec = st.registry.get(driver)?;
+            if use_chrome(&st) {
+                return chrome_op(app, &st.chrome, seat_id, spec, spec.url.as_deref().unwrap_or(url), op);
+            }
             let win = web::ensure_webview(app, seat_id, spec)?;
             match op {
                 DriverOp::Call => web::run_steps(&win, &spec.call),
@@ -283,11 +356,15 @@ fn run_driver<R: Runtime>(app: &AppHandle<R>, seat_id: &str, op: DriverOp) -> Re
                 set_seat_status(app, seat_id, SeatStatus::Unavailable);
                 return Err(DriverError::Unsupported);
             }
+            if let (DriverOp::Call, Some(why)) = (op, seat.target.as_deref().and_then(|t| AppDriver::refusal(spec, t))) {
+                return Err(DriverError::NotCallable(why));
+            }
+            let steps = |s: &[drivers::Step]| drivers::bind_target(s, seat.target.as_deref());
             let res = match op {
-                DriverOp::Call => AppDriver::activate(bundle_id).and_then(|_| AppDriver::run_steps(spec, &spec.call)),
-                DriverOp::Hangup => AppDriver::run_steps(spec, &spec.hangup),
-                DriverOp::Mute => AppDriver::run_steps(spec, &spec.mute),
-                DriverOp::Unmute => AppDriver::run_steps(spec, &spec.unmute),
+                DriverOp::Call => AppDriver::place_call(spec, &steps(&spec.call)),
+                DriverOp::Hangup => AppDriver::hang_up(spec, &steps(&spec.hangup)),
+                DriverOp::Mute => AppDriver::run_steps(spec, &steps(&spec.mute)),
+                DriverOp::Unmute => AppDriver::run_steps(spec, &steps(&spec.unmute)),
                 DriverOp::Probe => AppDriver::probe(spec).map(|r| {
                     ingest_probe(app, seat_id, r);
                 }),
@@ -298,6 +375,37 @@ fn run_driver<R: Runtime>(app: &AppHandle<R>, seat_id: &str, op: DriverOp) -> Re
             res
         }
     }
+}
+
+/// Web seats go to the user's Chrome when remote debugging is on there (and the setting allows),
+/// or once a Chrome connection exists; otherwise to AgentDock's own hidden webview.
+fn use_chrome(st: &AppState) -> bool {
+    st.settings.lock().unwrap().web_via_chrome && (st.chrome.is_connected() || drivers::chrome::available())
+}
+
+/// The same driver scripts, run in the seat's own background tab in Chrome. Only a call opens the
+/// tab (and, the first time, the connection Chrome asks the user to allow); the rest use it if it
+/// exists. Hang up / mute wait for a running call script; a probe skips a beat instead.
+fn chrome_op<R: Runtime>(app: &AppHandle<R>, chrome: &drivers::chrome::Chrome, seat_id: &str, spec: &drivers::DriverSpec, url: &str, op: DriverOp) -> Result<(), DriverError> {
+    let steps = match op {
+        DriverOp::Call => return chrome.eval(seat_id, url, &drivers::steps_script(&spec.call), true).map(drop),
+        DriverOp::Hangup => &spec.hangup,
+        DriverOp::Mute => &spec.mute,
+        DriverOp::Unmute => &spec.unmute,
+        DriverOp::Probe => {
+            if !chrome.has_tab(seat_id) {
+                return Ok(());
+            }
+            let v = chrome.eval(seat_id, url, &drivers::probe_script(&spec.probe, seat_id), false)?;
+            let r = serde_json::from_value(v).map_err(|e| DriverError::Step(e.to_string()))?;
+            ingest_probe(app, seat_id, r);
+            return Ok(());
+        }
+    };
+    if steps.is_empty() {
+        return Ok(());
+    }
+    chrome.eval(seat_id, url, &drivers::steps_script(steps), false).map(drop)
 }
 
 fn set_seat_status<R: Runtime>(app: &AppHandle<R>, seat_id: &str, status: SeatStatus) {
@@ -356,8 +464,11 @@ fn ingest_probe<R: Runtime>(app: &AppHandle<R>, seat_id: &str, result: ProbeResu
             None => false,
         }
     };
+    // Only a real change goes out: every `seats:changed` re-renders the settings list, and a
+    // probe every few seconds would close an open dropdown or menu under the user's pointer.
     if changed {
         persist_seats(&st);
+        emit_seats(app, &st);
     }
 
     // Login window auto-hides once the page reports a session.
@@ -368,7 +479,6 @@ fn ingest_probe<R: Runtime>(app: &AppHandle<R>, seat_id: &str, result: ProbeResu
     }
 
     let _ = app.emit("seat:probe", serde_json::json!({ "seatId": seat_id, "result": result }));
-    emit_seats(app, &st);
 
     if result.needs_human {
         dispatch(app, Event::ProbeNeedsHuman { seat: seat_id.to_string(), reason: "页面需要你看一眼（验证或未知弹窗）".into() });
@@ -662,9 +772,33 @@ fn get_seats(st: tauri::State<AppState>) -> Vec<SeatView> {
     seat_views(&st)
 }
 
+/// App seats need no login: installed + Accessibility allowed is all "connected" means.
+/// Seats on a placeholder driver stay "pending" whatever their kind.
+fn refresh_app_status(seats: &mut [Seat], registry: &Registry) {
+    for s in seats {
+        let driver = match &s.driver {
+            DriverKind::Web { driver, .. } | DriverKind::App { driver, .. } => driver,
+        };
+        if registry.get(driver).is_ok_and(|d| d.pending) {
+            s.status = SeatStatus::Pending;
+            continue;
+        }
+        if let DriverKind::App { bundle_id, .. } = &s.driver {
+            s.status = if !AppDriver::is_installed(bundle_id) {
+                SeatStatus::Unavailable
+            } else if AppDriver::is_ax_trusted() {
+                SeatStatus::Connected
+            } else {
+                SeatStatus::NeedsAuth
+            };
+        }
+    }
+}
+
 #[tauri::command]
-fn save_seats(app: AppHandle, seats: Vec<Seat>) -> CmdResult<()> {
+fn save_seats(app: AppHandle, mut seats: Vec<Seat>) -> CmdResult<()> {
     let st = app.state::<AppState>();
+    refresh_app_status(&mut seats, &st.registry);
     {
         let mut cfg = st.seats.lock().unwrap();
         cfg.seats = seats;
@@ -696,22 +830,45 @@ fn list_drivers(st: tauri::State<AppState>) -> Vec<DriverInfo> {
             version: d.version,
             verified: d.verified,
             kind: if d.url.is_some() { "web".into() } else { "app".into() },
+            url: d.url.clone(),
+            bundle_id: d.bundle_id.clone(),
+            installed: d.url.is_some() || d.bundle_id.as_deref().is_some_and(AppDriver::is_installed),
+            discover: !d.targets.is_empty(),
+            picks: drivers::uses_target(&d.call),
+            target_noun: d.target_noun.clone(),
+            pending: d.pending,
         })
         .collect()
 }
 
-/// Web seat: show the hidden webview as a real login window; it hides itself once logged in.
-/// App seat: open the OS accessibility settings so the user can grant permission.
+/// Web seat: in Chrome, open its tab in front so the user signs in there once (usually they
+/// already are); otherwise show the hidden webview as a login window that hides itself once logged
+/// in. App seat: open the OS accessibility settings so the user can grant permission.
+/// Returns where the login happens: "chrome", "webview" or "app".
 #[tauri::command]
-fn connect_account(app: AppHandle, seat_id: String) -> CmdResult<()> {
+async fn connect_account(app: AppHandle, seat_id: String) -> CmdResult<String> {
+    tauri::async_runtime::spawn_blocking(move || connect_account_blocking(app, seat_id)).await.map_err(err)?
+}
+
+fn connect_account_blocking(app: AppHandle, seat_id: String) -> CmdResult<String> {
     let st = app.state::<AppState>();
     let seat = st.seats.lock().unwrap().get(&seat_id).cloned().ok_or("unknown seat")?;
     match &seat.driver {
-        DriverKind::Web { driver, .. } => {
+        DriverKind::Web { driver, url } => {
             let spec = st.registry.get(driver).map_err(err)?;
-            let win = web::ensure_webview(&app, &seat_id, spec).map_err(err)?;
+            let url = spec.url.as_deref().unwrap_or(url);
             st.logging_in.lock().unwrap().insert(seat_id.clone());
-            web::show(&win).map_err(err)
+            if use_chrome(&st) {
+                st.chrome.show(&seat_id, url).map_err(err)?;
+                return Ok("chrome".into());
+            }
+            let win = web::ensure_webview(&app, &seat_id, spec).map_err(err)?;
+            web::show(&win).map_err(err)?;
+            // a long-hidden webview can come back blank (its web process was reclaimed): reload it
+            if let Ok(u) = tauri::Url::parse(url) {
+                let _ = win.navigate(u);
+            }
+            Ok("webview".into())
         }
         DriverKind::App { bundle_id, .. } => {
             if !AppDriver::is_installed(bundle_id) {
@@ -719,9 +876,8 @@ fn connect_account(app: AppHandle, seat_id: String) -> CmdResult<()> {
                 return Err("该应用尚未安装".into());
             }
             if AppDriver::prompt_ax_trust() {
-                let _ = AppDriver::activate(bundle_id);
                 set_seat_status(&app, &seat_id, SeatStatus::Connected);
-                return Ok(());
+                return Ok("app".into());
             }
             set_seat_status(&app, &seat_id, SeatStatus::NeedsAuth);
             #[cfg(target_os = "macos")]
@@ -729,14 +885,16 @@ fn connect_account(app: AppHandle, seat_id: String) -> CmdResult<()> {
                 use tauri_plugin_opener::OpenerExt;
                 app.opener().open_url(drivers::app::MACOS_ACCESSIBILITY_SETTINGS, None::<&str>).map_err(err)?;
             }
-            Ok(())
+            Ok("app".into())
         }
     }
 }
 
+/// Clears the built-in webview's session and closes the seat's Chrome tab; Chrome's own logins stay.
 #[tauri::command]
 fn disconnect_seat(app: AppHandle, seat_id: String) -> CmdResult<()> {
     let st = app.state::<AppState>();
+    st.chrome.close(&seat_id);
     web::disconnect(&app, &seat_id).map_err(err)?;
     st.probes.lock().unwrap().remove(&seat_id);
     {
@@ -751,28 +909,47 @@ fn disconnect_seat(app: AppHandle, seat_id: String) -> CmdResult<()> {
     Ok(())
 }
 
-/// Bring a seat's hidden page forward (captcha / "needs a human"), or hide it again.
+/// Bring a seat's hidden page forward (captcha / "needs a human"), or hide it again. App seats
+/// have no page of ours: their own window is brought to the front instead; Chrome seats, their tab.
 #[tauri::command]
-fn show_seat(app: AppHandle, seat_id: String, visible: bool) -> CmdResult<()> {
-    let win = app.get_webview_window(&web::window_label(&seat_id)).ok_or("seat has no webview yet")?;
-    if visible { web::show(&win) } else { web::hide(&win) }.map_err(err)
+async fn show_seat(app: AppHandle, seat_id: String, visible: bool) -> CmdResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let seat = st.seats.lock().unwrap().get(&seat_id).cloned().ok_or("unknown seat")?;
+        match &seat.driver {
+            DriverKind::App { bundle_id, .. } => return if visible { AppDriver::activate(bundle_id).map_err(err) } else { Ok(()) },
+            DriverKind::Web { driver, url } if visible && use_chrome(&st) => {
+                let spec = st.registry.get(driver).map_err(err)?;
+                return st.chrome.show(&seat_id, spec.url.as_deref().unwrap_or(url)).map_err(err);
+            }
+            DriverKind::Web { .. } => {}
+        }
+        let win = app.get_webview_window(&web::window_label(&seat_id)).ok_or("seat has no webview yet")?;
+        if visible { web::show(&win) } else { web::hide(&win) }.map_err(err)
+    })
+    .await
+    .map_err(err)?
 }
 
 /// Connect-flow self-check: call, wait for the page to report a call, hang up.
 #[tauri::command]
 async fn test_call(app: AppHandle, seat_id: String) -> CmdResult<bool> {
-    run_driver(&app, &seat_id, DriverOp::Call).map_err(err)?;
+    let driver = |op: DriverOp| {
+        let (app, seat_id) = (app.clone(), seat_id.clone());
+        tauri::async_runtime::spawn_blocking(move || run_driver(&app, &seat_id, op))
+    };
+    driver(DriverOp::Call).await.map_err(err)?.map_err(err)?;
     let mut connected = false;
     for _ in 0..30 {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let _ = run_driver(&app, &seat_id, DriverOp::Probe);
+        let _ = driver(DriverOp::Probe).await;
         if app.state::<AppState>().probes.lock().unwrap().get(&seat_id).map(|p| p.in_call).unwrap_or(false) {
             connected = true;
             break;
         }
     }
     tokio::time::sleep(Duration::from_millis(1500)).await;
-    let _ = run_driver(&app, &seat_id, DriverOp::Hangup);
+    let _ = driver(DriverOp::Hangup).await;
     Ok(connected)
 }
 
@@ -804,6 +981,11 @@ fn memory_report(app: AppHandle, window: tauri::Window, seat_id: String, lines: 
         tracing::warn!("memory report from unexpected window {}", window.label());
         return;
     }
+    memory_lines(&app, &seat_id, &lines);
+}
+
+/// New caption lines from a seat page (webview IPC or a Chrome tab's script value).
+fn memory_lines(app: &AppHandle, seat_id: &str, lines: &[memory::TranscriptLine]) {
     let st = app.state::<AppState>();
     let client = st.everos.lock().unwrap().clone();
     if !client.is_active() {
@@ -811,11 +993,32 @@ fn memory_report(app: AppHandle, window: tauri::Window, seat_id: String, lines: 
     }
     let batch = {
         let mut book = st.memory.lock().unwrap();
-        book.on_lines(&seat_id, &lines, memory::now_ms())
+        book.on_lines(seat_id, lines, memory::now_ms())
     };
     if let Some(batch) = batch {
         tauri::async_runtime::spawn(async move { write_batch(client, batch).await });
     }
+}
+
+/// What an app driver can call, read from the app (e.g. the Bots in Grok Bot's sidebar).
+#[tauri::command]
+async fn app_targets(app: AppHandle, driver: String) -> CmdResult<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let spec = st.registry.get(&driver).map_err(err)?;
+        AppDriver::targets(spec).map_err(|e| match e {
+            DriverError::NeedsAuth => "先在 系统设置 › 辅助功能 里允许 AgentDock".to_string(),
+            other => other.to_string(),
+        })
+    })
+    .await
+    .map_err(err)?
+}
+
+/// Whether web seats can use the user's Chrome right now (Settings › Agent).
+#[tauri::command]
+fn chrome_status(st: tauri::State<AppState>) -> serde_json::Value {
+    serde_json::json!({ "available": drivers::chrome::available(), "connected": st.chrome.is_connected() })
 }
 
 #[tauri::command]
@@ -989,14 +1192,32 @@ fn on_app_menu(app: &AppHandle, id: &str) {
     }
 }
 
+/// macOS: a Dock icon means a regular app (Dock + ⌘Tab); menu bar only means an accessory app.
+/// The bundle starts as an accessory (`LSUIElement`), so "menu bar only" never flashes an icon.
+fn apply_app_icon(app: &AppHandle, mode: settings::AppIcon) {
+    #[cfg(target_os = "macos")]
+    {
+        use settings::AppIcon;
+        let policy = if mode == AppIcon::MenuBar { tauri::ActivationPolicy::Accessory } else { tauri::ActivationPolicy::Regular };
+        if let Err(e) = app.set_activation_policy(policy) {
+            tracing::warn!("activation policy: {e}");
+        }
+        if let Some(tray) = app.tray_by_id("main") {
+            let _ = tray.set_visible(mode != AppIcon::Dock);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, mode);
+}
+
 fn persist_settings(app: &AppHandle, mut settings: AppSettings) -> CmdResult<()> {
     let env = everos::MemoryEnv::from_env();
     let _ = everos::assign_user_id(&mut settings.memory, &env);
     let client = everos::Client::resolve(&settings.memory, &env);
     let st = app.state::<AppState>();
-    let (hotkeys_changed, placement_changed) = {
+    let (hotkeys_changed, placement_changed, icon_changed) = {
         let mut cur = st.settings.lock().unwrap();
-        let out = (cur.hotkeys != settings.hotkeys, cur.snap != settings.snap || cur.dock_anchor != settings.dock_anchor);
+        let out = (cur.hotkeys != settings.hotkeys, cur.snap != settings.snap || cur.dock_anchor != settings.dock_anchor, cur.app_icon != settings.app_icon);
         *cur = settings.clone();
         out
     };
@@ -1004,6 +1225,9 @@ fn persist_settings(app: &AppHandle, mut settings: AppSettings) -> CmdResult<()>
     settings.save(&settings::settings_path(&st.config_dir)).map_err(err)?;
     let _ = app.emit("settings:changed", &settings);
     apply_theme(app, settings.theme);
+    if icon_changed {
+        apply_app_icon(app, settings.app_icon);
+    }
     #[cfg(target_os = "macos")]
     {
         let strength = settings.material_strength as f64;
@@ -1881,18 +2105,9 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir().unwrap_or_else(|_| std::env::temp_dir().join("agentdock"));
             std::fs::create_dir_all(&config_dir).ok();
+            let registry = Registry::bundled().with_overrides(&config_dir.join("drivers"));
             let mut seats = SeatsConfig::load(&seats::seats_path(&config_dir));
-            for s in &mut seats.seats {
-                if let DriverKind::App { bundle_id, .. } = &s.driver {
-                    if !AppDriver::is_installed(bundle_id) {
-                        s.status = SeatStatus::Unavailable;
-                    } else if AppDriver::is_ax_trusted() {
-                        s.status = SeatStatus::Connected;
-                    } else {
-                        s.status = SeatStatus::NeedsAuth;
-                    }
-                }
-            }
+            refresh_app_status(&mut seats.seats, &registry);
             let _ = seats.save(&seats::seats_path(&config_dir));
             let mut settings = AppSettings::load(&settings::settings_path(&config_dir));
             let env = everos::MemoryEnv::from_env();
@@ -1907,7 +2122,6 @@ pub fn run() {
             } else {
                 tracing::info!("everos memory off: {}", everos_client.status().reason);
             }
-            let registry = Registry::bundled().with_overrides(&config_dir.join("drivers"));
             let mut machine = Machine::new();
             machine.state.expanded = !matches!(settings.default_form, settings::DefaultForm::Dot | settings::DefaultForm::Pet);
             let scale = settings.dock_scale.clamp(0.7, 1.6) as f64;
@@ -1932,9 +2146,11 @@ pub fn run() {
                 probes: Mutex::new(HashMap::new()),
                 hotkey_map: Mutex::new(Vec::new()),
                 logging_in: Mutex::new(Default::default()),
+                driver_lane: Mutex::new(()),
                 dock_size: Mutex::new(init_size),
                 memory: Mutex::new(memory::CallBook::default()),
                 everos: Mutex::new(everos_client),
+                chrome: Default::default(),
             });
 
             let dock = app.get_webview_window("dock").expect("dock window");
@@ -1967,10 +2183,9 @@ pub fn run() {
                     }
                 });
             }
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
             build_tray(app.handle())?;
+            let icon_mode = app.state::<AppState>().settings.lock().unwrap().app_icon;
+            apply_app_icon(app.handle(), icon_mode);
             register_hotkeys(app.handle())?;
             app.on_menu_event(|app, ev| on_app_menu(app, ev.id().as_ref()));
             spawn_hover_watcher(app.handle().clone());
@@ -1991,20 +2206,31 @@ pub fn run() {
                     let memory_on = st.everos.lock().unwrap().is_active();
                     let seats: Vec<Seat> = st.seats.lock().unwrap().seats.clone();
                     let logging_in: Vec<String> = st.logging_in.lock().unwrap().iter().cloned().collect();
+                    // Mid call / hang-up nothing is settled: in a switch between two Bots of one
+                    // app, the old call is still up and would read as the new one connecting.
+                    let drivers_busy = st.driver_lane.try_lock().is_err();
                     for seat in seats.iter().filter(|s| s.enabled || logging_in.contains(&s.id)) {
                         let is_active = active.as_deref() == Some(seat.id.as_str());
                         let is_login = logging_in.contains(&seat.id);
-                        let has_view = handle.get_webview_window(&web::window_label(&seat.id)).is_some();
-                        let due = is_active || is_login || (n % 20 == 0 && (has_view || matches!(seat.driver, DriverKind::App { .. })));
-                        if due && (!phase_idle || has_view || is_login || matches!(seat.driver, DriverKind::App { .. })) {
+                        let has_view = handle.get_webview_window(&web::window_label(&seat.id)).is_some() || st.chrome.has_tab(&seat.id);
+                        let is_app = matches!(seat.driver, DriverKind::App { .. });
+                        // An app probe walks the whole accessibility tree; 1.5 s is plenty there.
+                        let due = (is_active && (!is_app || n % 3 == 0)) || is_login || (n % 20 == 0 && (has_view || is_app));
+                        if due && !drivers_busy && (!phase_idle || has_view || is_login || is_app) {
                             let _ = run_driver(&handle, &seat.id, DriverOp::Probe);
                         }
                         // Visible captions about every 2s while this seat is the live call.
                         if memory_on && is_active && !phase_idle && n % 4 == 0 {
                             if let DriverKind::Web { driver, .. } = &seat.driver {
                                 let selectors = st.registry.get(driver).map(|spec| spec.memory.transcript.clone()).unwrap_or_default();
+                                let script = drivers::transcript_script(&selectors, &seat.id);
                                 if let Some(win) = handle.get_webview_window(&web::window_label(&seat.id)) {
-                                    let _ = win.eval(&drivers::transcript_script(&selectors, &seat.id));
+                                    let _ = win.eval(&script);
+                                } else if st.chrome.has_tab(&seat.id) {
+                                    let lines = st.chrome.eval(&seat.id, "", &script, false).ok().and_then(|v| serde_json::from_value::<Vec<memory::TranscriptLine>>(v).ok());
+                                    if let Some(lines) = lines.filter(|l| !l.is_empty()) {
+                                        memory_lines(&handle, &seat.id, &lines);
+                                    }
                                 }
                             }
                         }
@@ -2015,10 +2241,19 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
-            get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat,
+            get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat, chrome_status, app_targets,
             driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,
             get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info, glass_scheme
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running AgentDock");
+        .build(tauri::generate_context!())
+        .expect("error while building AgentDock")
+        .run(|app, event| {
+            // Clicking the Dock icon opens the settings window (the pill is always on screen already).
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                let _ = open_settings(app.clone());
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }

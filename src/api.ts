@@ -23,6 +23,8 @@ export interface ProbeResult {
 export interface Seat {
   id: string; name: string; service: string; driver: DriverKind; icon: SeatIcon;
   enabled: boolean; status: SeatStatus; account: string | null;
+  /** What to pick inside the service before calling, e.g. one Bot in Grok Bot. */
+  target?: string | null;
 }
 export interface SeatView extends Seat { probe: ProbeResult | null; driver_verified: boolean; silent: boolean }
 
@@ -44,9 +46,20 @@ export interface AppSettings {
   default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; auto_collapse_secs: number; collapse_mode: CollapseMode; show_names: "hover" | "always" | "never";
   reduce_motion: boolean; material_strength: number; dock_scale?: number; accent?: string | null; hotkeys: Hotkeys; mute_mode: "system" | "seat";
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
+  web_via_chrome: boolean;
+  /** macOS: where AgentDock's own icon lives; the Dock icon opens settings. */
+  app_icon?: "both" | "dock" | "menu_bar";
   memory: MemorySettings;
 }
-export interface DriverInfo { id: string; display_name: string; version: number; verified: boolean; kind: "web" | "app" }
+export interface ChromeStatus { available: boolean; connected: boolean }
+export interface DriverInfo {
+  id: string; display_name: string; version: number; verified: boolean; kind: "web" | "app";
+  url: string | null; bundle_id: string | null; installed: boolean;
+  /** The app can list what to call (its Bots). */ discover: boolean;
+  /** A call picks something inside the service first. */ picks: boolean;
+  target_noun: string | null;
+  /** Placeholder: icon and contact only, calling not wired up yet. */ pending: boolean;
+}
 export interface HostInfo { os: string; vibrancy: boolean; material?: string; version: string; window_radius?: number }
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -66,7 +79,7 @@ const mock = (() => {
   let settings: AppSettings = {
     default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5, dock_scale: 1, accent: null,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
-    mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false,
+    mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false, web_via_chrome: true, app_icon: "both",
     memory: { enabled: false, user_id: "", inject_context: true, top_k: 5 },
   };
   if (typeof window !== "undefined") (window as any).__mockSettings = settings;
@@ -90,13 +103,23 @@ const mock = (() => {
     save_settings: (a) => { settings = a.settings; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
     save_seats: (a) => { seats.splice(0, seats.length, ...a.seats.map((s: Seat) => ({ ...s, probe: null, driver_verified: false, silent: s.driver.kind === "web" }))); emit("seats:changed", seats); },
     reorder_seats: (a) => { const ids: string[] = a.ids; seats.sort((x, y) => ids.indexOf(x.id) - ids.indexOf(y.id)); emit("seats:changed", seats); },
-    list_drivers: () => [
-      { id: "chatgpt-dot", display_name: "ChatGPT dot", version: 1, verified: false, kind: "web" },
-      { id: "copilot-voice", display_name: "Copilot Voice", version: 1, verified: false, kind: "web" },
-      { id: "devin-voice", display_name: "Devin voice", version: 1, verified: false, kind: "web" },
-      { id: "grok-bot", display_name: "Grok Bot", version: 1, verified: false, kind: "app" },
-      { id: "muse-voice", display_name: "Meta Muse voice", version: 1, verified: false, kind: "web" },
-    ],
+    list_drivers: () => {
+      const web = (id: string, display_name: string, url: string) => ({ id, display_name, version: 1, verified: false, kind: "web", url, bundle_id: null, installed: true, discover: false, picks: false, target_noun: null, pending: false });
+      const app = (id: string, display_name: string, bundle_id: string, discover: boolean, target_noun: string) => ({ id, display_name, version: 1, verified: false, kind: "app", url: null, bundle_id, installed: true, discover, picks: true, target_noun, pending: false });
+      const soon = (id: string, display_name: string, bundle_id: string) => ({ ...app(id, display_name, bundle_id, false, ""), picks: false, target_noun: null, pending: true });
+      return [
+        soon("antigravity", "Antigravity", "com.google.antigravity"),
+        app("chatgpt-app", "ChatGPT dot", "com.openai.codex", false, "dot"),
+        web("chatgpt-dot", "ChatGPT dot", "https://chatgpt.com/"),
+        soon("claude-app", "Claude", "com.anthropic.claudefordesktop"),
+        web("copilot-voice", "Copilot Voice", "https://copilot.microsoft.com/"),
+        soon("cursor", "Cursor", "com.todesktop.230313mzl4w4u92"),
+        web("devin-voice", "Devin voice", "https://app.devin.ai/"),
+        soon("gemini-app", "Gemini", "com.google.GeminiMacOS"),
+        app("grok-bot", "Grok Bot", "com.anysphere.sand", true, "Bot"),
+        web("muse-voice", "Meta Muse voice", "https://muse.ai/"),
+      ];
+    },
     call_seat: (a) => {
       const p = state.phase;
       if ((p.phase === "in_call" || p.phase === "calling") && p.seat !== a.seatId) {
@@ -124,7 +147,9 @@ const mock = (() => {
     toggle_orientation: () => { settings = { ...settings, orientation: settings.orientation === "vertical" ? "horizontal" : "vertical" }; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
     toggle_collapsed_form: () => { settings = { ...settings, default_form: settings.default_form === "pet" ? "dot" : "pet" }; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
     dock_menu: () => { (window as any).__mockMenuOpened = ((window as any).__mockMenuOpened || 0) + 1; },
-    connect_account: (a) => { const s = seats.find((x) => x.id === a.seatId); if (s) { s.status = "connected"; s.account = "demo@example.com"; emit("seats:changed", seats); } },
+    connect_account: (a) => { const s = seats.find((x) => x.id === a.seatId); if (s) { s.status = "connected"; s.account = "demo@example.com"; emit("seats:changed", seats); } return s?.driver.kind === "app" ? "app" : "webview"; },
+    chrome_status: () => ({ available: false, connected: false }),
+    app_targets: () => ["Analytics", "Radar", "Content", "Code"],
     disconnect_seat: (a) => { const s = seats.find((x) => x.id === a.seatId); if (s) { s.status = "needs_auth"; s.account = null; emit("seats:changed", seats); } },
     show_seat: () => undefined,
     test_call: () => new Promise((r) => setTimeout(() => r(true), 1500)),
@@ -135,7 +160,8 @@ const mock = (() => {
     hotkey_conflicts: (a) => { const h = a.settings.hotkeys; const all = [h.toggle, h.mute, h.hangup, h.orientation, h.form].map((k: string) => k.toLowerCase()); return all.filter((k: string, i: number) => all.indexOf(k) !== i); },
     open_settings: () => window.open("/settings.html", "_blank"),
     quit: () => undefined,
-    host_info: () => ({ os: "browser", vibrancy: false, version: "0.1.0-dev" }),
+    // ?os=macos previews the macOS-only rows (screenshots)
+    host_info: () => ({ os: new URLSearchParams(location.search).get("os") ?? "browser", vibrancy: false, version: "0.1.0-dev" }),
     glass_scheme: () => null,
     memory_status: () => ({
       active: false, enabled: !!settings.memory?.enabled, key_present: false,

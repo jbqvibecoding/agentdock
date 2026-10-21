@@ -187,6 +187,19 @@ button { cursor: pointer; }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .actions { display: flex; gap: 6px; align-items: center; }
+/* 添加联系人: a toggle row closing the contact list, then the catalogue of services */
+.row.add-toggle { width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; text-align: left; font: inherit; color: var(--accent); cursor: pointer; transition: background 160ms ease; }
+.row.add-toggle:hover { background: var(--lens-hover); }
+.row.add-toggle .row__name { color: var(--accent); }
+.row.add-toggle .avatar.plus { color: var(--accent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, transparent); }
+.row.add-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.add-panel .row.tile { min-height: 60px; }
+.add-panel .row.tile.is-off .avatar, .add-panel .row.tile.is-off .row__text { opacity: .45; }
+.kind { margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--track); color: var(--fg-2); font-size: 10.5px; font-weight: 500; }
+.kind.soon { margin-left: 4px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+/* chips line up with the row text: 18px row padding + 36px avatar + 12px gap */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 14px 66px; }
+.note.indent { padding-left: 66px; margin: 0; }
 
 .switch { position: relative; width: 46px; height: 28px; border-radius: 14px; background: var(--track); border: 0; transition: background 160ms; flex: none; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform 200ms cubic-bezier(.32,.72,0,1); }

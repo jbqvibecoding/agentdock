@@ -51,6 +51,17 @@ pub enum CollapseMode {
     PinnedCollapsed,
 }
 
+/// Where AgentDock itself shows up on macOS. Clicking the Dock icon opens the settings window;
+/// the menu bar icon holds the same menu. At least one of the two is always there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AppIcon {
+    #[default]
+    Both,
+    Dock,
+    MenuBar,
+}
+
 /// Centre of the pill in logical screen px; written when the user drags the dock.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DockAnchor {
@@ -122,6 +133,12 @@ pub struct AppSettings {
     pub pause_media_in_call: bool,
     pub input_device: Option<String>,
     pub confirm_switch: bool,
+    /// Run web seats in the user's own Chrome (its logins and cookies) when Chrome's remote
+    /// debugging is on; otherwise, or when off, use AgentDock's built-in webview.
+    #[serde(default = "default_web_via_chrome")]
+    pub web_via_chrome: bool,
+    #[serde(default)]
+    pub app_icon: AppIcon,
     /// EverOS long-term memory. Off until the user opts in; still a no-op without `EVEROS_API_KEY`.
     #[serde(default)]
     pub memory: MemorySettings,
@@ -164,6 +181,9 @@ impl Default for MemorySettings {
 
 fn default_auto_collapse() -> u32 {
     8
+}
+fn default_web_via_chrome() -> bool {
+    true
 }
 fn default_dock_scale() -> f32 {
     1.0
@@ -222,6 +242,8 @@ impl Default for AppSettings {
             pause_media_in_call: true,
             input_device: None,
             confirm_switch: false,
+            web_via_chrome: default_web_via_chrome(),
+            app_icon: AppIcon::Both,
             memory: MemorySettings::default(),
         }
     }
@@ -312,6 +334,8 @@ mod tests {
         hk.remove("orientation");
         hk.remove("form");
         v.as_object_mut().unwrap().remove("memory");
+        v.as_object_mut().unwrap().remove("web_via_chrome");
+        v.as_object_mut().unwrap().remove("app_icon");
         let s: AppSettings = serde_json::from_value(v).unwrap();
         assert_eq!(s, AppSettings::default());
         assert!(!s.memory.enabled);

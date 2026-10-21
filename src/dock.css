@@ -52,9 +52,9 @@
     --lens-hover: linear-gradient(180deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, .18));
     --lens-rim: rgba(255, 255, 255, .48);
     --lens-shadow: inset 0 1px .5px rgba(255, 255, 255, .55), inset 0 -1px .5px rgba(255, 255, 255, .16), inset 0 0 0 .75px rgba(255, 255, 255, .28), 0 4px 12px rgba(0, 0, 0, .28);
-    --drop-fill: rgba(255, 255, 255, .13); --drop-sheen: rgba(255, 255, 255, .34);
-    --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .6), inset 0 -.5px 1px rgba(255, 255, 255, .14), inset 0 0 0 .5px rgba(255, 255, 255, .24);
-    --drop-shadow: 0 6px 18px rgba(0, 0, 0, .38), 0 1px 3px rgba(0, 0, 0, .25);
+    --drop-fill: rgba(255, 255, 255, .08); --drop-sheen: rgba(255, 255, 255, .3);
+    --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .62), inset 0 -.5px 1px rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .26);
+    --drop-shadow: 0 3px 10px rgba(0, 0, 0, .2), 0 1px 2px rgba(0, 0, 0, .14);
     --avatar-ring: 0 0 0 .5px rgba(255, 255, 255, .16), 0 1px 4px rgba(0, 0, 0, .45);
     --sym: rgba(255, 255, 255, .92); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .24);
     --fg: rgba(255, 255, 255, .95); --fg-2: rgba(255, 255, 255, .62);
@@ -68,9 +68,9 @@
   --lens-hover: linear-gradient(180deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, .18));
   --lens-rim: rgba(255, 255, 255, .48);
   --lens-shadow: inset 0 1px .5px rgba(255, 255, 255, .55), inset 0 -1px .5px rgba(255, 255, 255, .16), inset 0 0 0 .75px rgba(255, 255, 255, .28), 0 4px 12px rgba(0, 0, 0, .28);
-  --drop-fill: rgba(255, 255, 255, .13); --drop-sheen: rgba(255, 255, 255, .34);
-  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .6), inset 0 -.5px 1px rgba(255, 255, 255, .14), inset 0 0 0 .5px rgba(255, 255, 255, .24);
-  --drop-shadow: 0 6px 18px rgba(0, 0, 0, .38), 0 1px 3px rgba(0, 0, 0, .25);
+  --drop-fill: rgba(255, 255, 255, .08); --drop-sheen: rgba(255, 255, 255, .3);
+  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .62), inset 0 -.5px 1px rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .26);
+  --drop-shadow: 0 3px 10px rgba(0, 0, 0, .2), 0 1px 2px rgba(0, 0, 0, .14);
   --avatar-ring: 0 0 0 .5px rgba(255, 255, 255, .16), 0 1px 4px rgba(0, 0, 0, .45);
   --sym: rgba(255, 255, 255, .92); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .24);
   --fg: rgba(255, 255, 255, .95); --fg-2: rgba(255, 255, 255, .62);
@@ -90,9 +90,9 @@
 :root[data-glass="dark"] {
   --sym: rgba(255, 255, 255, .94); --sym-faint: rgba(255, 255, 255, .5); --divider: rgba(255, 255, 255, .22);
   --fg: rgba(255, 255, 255, .95); --fg-2: rgba(255, 255, 255, .62);
-  --drop-fill: rgba(255, 255, 255, .13); --drop-sheen: rgba(255, 255, 255, .34);
-  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .6), inset 0 -.5px 1px rgba(255, 255, 255, .14), inset 0 0 0 .5px rgba(255, 255, 255, .24);
-  --drop-shadow: 0 6px 18px rgba(0, 0, 0, .38), 0 1px 3px rgba(0, 0, 0, .25);
+  --drop-fill: rgba(255, 255, 255, .08); --drop-sheen: rgba(255, 255, 255, .3);
+  --drop-edge: inset 0 1px .5px rgba(255, 255, 255, .62), inset 0 -.5px 1px rgba(255, 255, 255, .16), inset 0 0 0 .5px rgba(255, 255, 255, .26);
+  --drop-shadow: 0 3px 10px rgba(0, 0, 0, .2), 0 1px 2px rgba(0, 0, 0, .14);
   --avatar-ring: 0 0 0 .5px rgba(255, 255, 255, .16), 0 1px 4px rgba(0, 0, 0, .45);
 }
 /* Theme colour (设置 › 外观 › 主题色): the native glass is tinted by Rust; here the glyphs and the lens
@@ -196,11 +196,19 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 .btn.is-hot > svg { transform: scale(1.1); }
 .btn.is-pressed > svg { transform: scale(.84); transition-duration: 130ms; }
 .btn.add > svg { width: calc(18px * var(--scale)); height: calc(18px * var(--scale)); }
-/* toggles that are "on" fill like Control Center modules */
-.btn.red, .btn.amber { width: calc(40px * var(--scale)); height: calc(40px * var(--scale)); margin: 0 calc(2px * var(--scale)); color: #fff; }
-.btn.red { background: radial-gradient(120% 90% at 50% 0%, #ff7a70, var(--red) 60%); box-shadow: inset 0 1px .5px rgba(255, 255, 255, .5), 0 4px 12px rgba(255, 69, 58, .34); }
-.btn.red > svg { width: calc(24px * var(--scale)); height: calc(24px * var(--scale)); filter: drop-shadow(0 .5px .5px rgba(120, 0, 0, .25)); }
-.btn.amber { background: radial-gradient(120% 90% at 50% 0%, #ffc04d, var(--amber) 60%); box-shadow: inset 0 1px .5px rgba(255, 255, 255, .5), 0 4px 12px rgba(255, 159, 10, .3); }
+/* toggles that are "on" fill like Control Center modules: a small tinted-glass disc, no coloured glow.
+   The lens fades out over them (dock.ts), so they brighten on hover instead. */
+.btn.red, .btn.amber {
+  width: calc(34px * var(--scale)); height: calc(34px * var(--scale)); margin: 0 calc(5px * var(--scale)); color: #fff;
+  box-shadow: inset 0 1px .5px rgba(255, 255, 255, .42), inset 0 -.5px 1px rgba(0, 0, 0, .12), inset 0 0 0 .5px rgba(255, 255, 255, .22), 0 1px 4px rgba(0, 0, 0, .14);
+  transition: transform 420ms var(--spring-css), filter 200ms ease, background 220ms ease;
+}
+.btn.red { background: color-mix(in srgb, var(--red) 88%, transparent); }
+.btn.amber { background: color-mix(in srgb, var(--amber) 88%, transparent); }
+.btn.red > svg { width: calc(19px * var(--scale)); height: calc(19px * var(--scale)); }
+.btn.amber > svg { width: calc(17px * var(--scale)); height: calc(17px * var(--scale)); }
+.btn.red.is-hot, .btn.amber.is-hot { filter: brightness(1.08) saturate(1.06); }
+.btn.red.is-pressed, .btn.amber.is-pressed { transform: scale(.9); transition-duration: 130ms; }
 
 /* agent seats: the official app icon as a round avatar (cropped past the squircle edge) */
 .seat .mark { position: relative; width: calc(30px * var(--scale)); height: calc(30px * var(--scale)); border-radius: 50%; overflow: hidden; box-shadow: var(--avatar-ring); transition: transform 520ms var(--spring-css), filter 220ms ease, opacity 220ms ease; }
@@ -216,9 +224,9 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 .seat[data-status="unavailable"] .badge { background: var(--red); }
 .seat.active .mark { box-shadow: 0 0 0 2px var(--sym), var(--avatar-ring); }
 
-.status { min-width: 0; display: grid; align-content: center; gap: calc(2px * var(--scale)); padding: 0 calc(6px * var(--scale)); }
+.status { min-width: 0; max-width: calc(240px * var(--scale)); display: grid; align-content: center; gap: calc(2px * var(--scale)); padding: 0 calc(6px * var(--scale)); }
 .status .name { font-size: calc(13px * var(--scale)); font-weight: 600; letter-spacing: -.01em; line-height: 1.1; color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
-.status .sub { font-size: calc(11px * var(--scale)); line-height: 1.1; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.status .sub { font-size: calc(11px * var(--scale)); line-height: 1.1; color: var(--fg-2); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .status.idle { display: none; }                  /* the reference shows no text while idle */
 
 .divider { width: 1px; height: calc(24px * var(--scale)); flex: none; margin: 0 calc(4px * var(--scale)); background: linear-gradient(180deg, transparent, var(--divider) 25%, var(--divider) 75%, transparent); }
@@ -236,7 +244,7 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 #dock[data-resize-edge="ns"] .bar, #dock[data-resize-edge="ns"] .dot { cursor: ns-resize; }
 #dock[data-orient="vertical"] .bar { flex-direction: column; padding: var(--pad) 0; }
 #dock[data-orient="vertical"] .divider { width: calc(24px * var(--scale)); height: 1px; margin: calc(4px * var(--scale)) 0; background: linear-gradient(90deg, transparent, var(--divider) 25%, var(--divider) 75%, transparent); }
-#dock[data-orient="vertical"] .btn.red, #dock[data-orient="vertical"] .btn.amber { margin: calc(2px * var(--scale)) 0; }
+#dock[data-orient="vertical"] .btn.red, #dock[data-orient="vertical"] .btn.amber { margin: calc(5px * var(--scale)) 0; }
 #dock[data-orient="vertical"] .avatar { margin: calc(3px * var(--scale)) 0; }
 #dock[data-orient="vertical"] .wave { width: calc(34px * var(--scale)); height: calc(84px * var(--scale)); }
 #dock[data-orient="vertical"] .status { writing-mode: vertical-rl; text-orientation: mixed; padding: calc(6px * var(--scale)) 0; justify-items: center; max-height: calc(128px * var(--scale)); }

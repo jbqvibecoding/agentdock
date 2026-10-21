@@ -6,10 +6,10 @@
 
 **你的个人 AI agent 语音通讯录 —— 一条悬浮在桌面上的 Liquid Glass 拨号盘。**
 
-把 ChatGPT dot、Grok Bot、Copilot、Devin、Muse 当成一排可呼叫的联系人：<br/>
+把 ChatGPT dot、Grok Bot 里的每个 Bot、Copilot、Devin、Muse 当成一排可呼叫的联系人：<br/>
 一键呼叫 · 一键闭麦 · 一键挂断或切到下一位。不是聊天窗口，不是模型路由器。
 
-[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-46%20unit%20%C2%B7%2031%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![macOS 26 Liquid Glass](https://img.shields.io/badge/macOS%2026-Liquid%20Glass-0a84ff?logo=apple&logoColor=white)](#平台) [![Windows Mica](https://img.shields.io/badge/Windows%2011-Mica%20(未实机验证)-6b7280?logo=windows&logoColor=white)](#平台) [![Tauri 2](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app) [![Rust](https://img.shields.io/badge/Rust-core-dea584?logo=rust&logoColor=black)](src-tauri) [![Tests](https://img.shields.io/badge/tests-56%20unit%20%C2%B7%2031%20e2e-2ea043)](#测试) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 [English](README.en.md) · [功能](#功能) · [安装](#安装) · [快捷键](#快捷键) · [架构](#架构) · [接入席位](#接入席位) · [长期记忆](#长期记忆everos) · [隐私](#隐私与边界) · [路线图](#路线图)
 
@@ -74,13 +74,35 @@ AgentDock 做的事情很窄：
 
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+
+**接入与登录**
+
+- 网页版 Agent 直接用你 Chrome 里的登录（Chrome 远程调试），不用再登一次；没开时退回内置浏览器
+- 桌面 App（Grok Bot、ChatGPT）通过辅助功能在后台按按钮，不切到前台
+- Grok Bot 里每个 Bot 一个联系人：自动读出 Bot 列表，群聊（不能语音）自动排除
+- 同一个 App 一次只能一路通话：切换时先挂断、等通话真正结束，再拨下一位
+
+</td>
+<td width="50%" valign="top">
+
+**应用与设置**
+
+- 程序坞图标点一下打开设置；可改为仅程序坞或仅菜单栏
+- 「添加联系人」目录：每个服务一行，标明网页 / App，没装的 App 置灰
+- 联系人拖拽排序（= ⌥1…⌥9）、开关、改名、换图标（支持 GIF）
+- 本机固定签名打包，重新打包后辅助功能授权不丢
+
+</td>
+</tr>
 </table>
 
 ## 截图
 
 ### macOS 26 真机实拍
 
-> 文件名 `mac-*`，macOS 26.6.2 · Apple Silicon，玻璃由系统 `NSGlassEffectView` 绘制。云端 Mac 无 HiDPI 显示器，因此为 1x 实拍（像素 = pt），未做放大。
+> 文件名 `mac-*`，macOS 26.6.2 · Apple Silicon，玻璃由系统 `NSGlassEffectView` 绘制。云端 Mac 无 HiDPI 显示器，因此为 1x 实拍（像素 = pt），未做放大。真机图拍摄于挂断 / 查看图标重绘之前，最新界面见下方浏览器 mock。
 
 <div align="center">
 
@@ -93,14 +115,6 @@ AgentDock 做的事情很窄：
 | <img src="docs/screenshots/mac-switching-light.png" width="420" /> | <img src="docs/screenshots/mac-grip-hover-light.png" width="420" /> |
 | **右键原生菜单（标注当前快捷键）** | **小圆点 / 宠物 / 竖向** |
 | <img src="docs/screenshots/mac-menu-light.png" width="420" /> | <img src="docs/screenshots/mac-dot-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-pet-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-vertical-idle-light.png" height="260" /> &nbsp; <img src="docs/screenshots/mac-vertical-incall-light.png" height="260" /> |
-
-<br/>
-
-| 设置 › 席位 | 设置 › 外观（布局 · 收起方式） |
-|:--:|:--:|
-| <img src="docs/screenshots/mac-settings-seats-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-appearance-light.png" width="460" /> |
-| **设置 › 快捷键** | **设置 › 席位（深色）** |
-| <img src="docs/screenshots/mac-settings-hotkeys-light.png" width="460" /> | <img src="docs/screenshots/mac-settings-seats-dark.png" width="460" /> |
 
 </div>
 
@@ -128,11 +142,13 @@ AgentDock 做的事情很窄：
 
 **设置窗** —— 一整块系统玻璃，左栏更透、右栏更亮
 
-| 席位 | 外观 › 布局 |
+| Agent（联系人列表 · 登录方式） | 添加联系人（Grok Bot 的 Bot 自动读出，点名字即添加） |
 |:--:|:--:|
-| <img src="docs/screenshots/settings-seats-light.png" width="460" /> | <img src="docs/screenshots/settings-layout-light.png" width="460" /> |
-| **快捷键** | **席位（深色）** |
-| <img src="docs/screenshots/settings-hotkeys-light.png" width="460" /> | <img src="docs/screenshots/settings-seats-dark.png" width="460" /> |
+| <img src="docs/screenshots/settings-seats-light.png" width="460" /> | <img src="docs/screenshots/settings-add-light.png" width="460" /> |
+| **外观 › 应用图标（程序坞 / 菜单栏）** | **快捷键** |
+| <img src="docs/screenshots/settings-app-icon-light.png" width="460" /> | <img src="docs/screenshots/settings-hotkeys-light.png" width="460" /> |
+| **添加联系人（深色）** | **外观（深色）** |
+| <img src="docs/screenshots/settings-add-dark.png" width="460" /> | <img src="docs/screenshots/settings-appearance-dark.png" width="460" /> |
 
 </div>
 
@@ -152,7 +168,14 @@ npm run tauri dev        # 开发模式（热更新）
 npm run tauri build      # 打包 .app / .dmg → src-tauri/target/release/bundle/
 ```
 
-首次启动：菜单栏出现 AgentDock 图标，屏幕顶部中央出现一个小圆点。`⌥Space` 展开，右键胶囊打开菜单 / 设置。
+macOS 本机打包建议用固定签名：未签名（ad-hoc）的包每次重新打包签名都会变，系统会收回辅助功能等授权，Grok Bot 就得重新授权。
+
+```bash
+npm run signing          # 一次性：在登录钥匙串里创建自签名证书「AgentDock Local Signing」
+npm run build:mac        # 用这个证书签名打包，授权在重新打包后依然有效
+```
+
+首次启动：程序坞和菜单栏都出现 AgentDock 图标，屏幕顶部中央出现一个小圆点。点程序坞图标打开设置，`⌥Space` 展开，右键胶囊打开菜单 / 设置。设置 › 外观 › 应用图标 可改为「仅程序坞」或「仅菜单栏」。
 
 | 要求 | 版本 |
 |---|---|
@@ -206,11 +229,13 @@ Tauri 2
    ├─ mic.rs       系统级闭麦
    ├─ everos.rs    EverOS HTTP 客户端（add / search / flush）
    ├─ memory.rs    呼叫生命周期上的记忆读写（纯逻辑，可单测）
-   ├─ drivers/     驱动即数据（JSON）· web.rs 隐藏 webview · app.rs Accessibility
-   └─ lib.rs       命令 · 托盘 · 原生材质 · 光标 hover 轮询 · 探测循环 · 记忆调度
+   ├─ drivers/     驱动即数据（JSON）· chrome.rs 你的 Chrome · web.rs 内置 webview · app.rs Accessibility
+   └─ lib.rs       命令 · 托盘 / 程序坞 · 原生材质 · 光标 hover 轮询 · 探测循环 · 驱动串行队列 · 记忆调度
           │
           ├─ NSGlassEffectView / NSVisualEffectView / Mica   （系统材质）
-          ├─ 隐藏 WKWebView / WebView2                        （每席位独立数据目录）
+          ├─ Chrome（远程调试，每个 Agent 一个后台标签页）    （沿用 Chrome 登录）
+          ├─ 隐藏 WKWebView / WebView2                        （没有 Chrome 时的回退）
+          ├─ 桌面 App 的辅助功能树（Grok Bot / ChatGPT）     （后台按按钮）
           └─ 系统输入设备音量 / IAudioEndpointVolume / pactl  （闭麦）
 ```
 
@@ -218,7 +243,8 @@ Tauri 2
 
 - **窗口即玻璃形状。** Dock 窗口随状态形变并自适应内容大小；材质、圆角、阴影由系统绘制，前端只负责布局与符号。
 - **驱动即数据。** 每家的 URL、登录判定、按钮选择器、呼叫 / 挂断 / 静音步骤都在 [`src-tauri/drivers/*.json`](src-tauri/drivers)；放一份更高 `version` 的到用户目录即可热更新，无需重新编译。
-- **无感接入。** 网页型席位跑在隐藏、常驻、独立数据目录的 webview 里；登录只做一次，之后全部代码控制，不弹任何浏览器窗口。
+- **无感接入。** 网页型席位优先跑在你 Chrome 的后台标签页里，直接沿用 Chrome 的登录；没有 Chrome 时退回隐藏、常驻的内置 webview。桌面 App 型席位通过辅助功能在后台操作，不抢前台。
+- **一次一路通话。** 呼叫、挂断、闭麦在同一条驱动队列里依次执行；切换时先挂断上一位并等通话真正结束，再拨下一位。
 - **不碰凭据。** 登录窗就是真实的站点登录页，由你本人完成（含 2FA / Passkey）；AgentDock 不读取、不存储密码。
 
 ```
@@ -230,9 +256,10 @@ src-tauri/src
 ├── mic.rs          系统级闭麦（macOS / Windows / Linux）
 ├── everos.rs       EverOS v2 HTTP 客户端（密钥只来自环境变量）
 ├── memory.rs       呼叫开始时检索、接通 / 对白 / 挂断时写入
-├── drivers/        mod.rs 注册表 · web.rs 隐藏 webview · app.rs 桌面 App (Accessibility)
-└── lib.rs          Tauri 命令、托盘、系统材质、hover 轮询、探测循环、记忆调度
-src-tauri/drivers/*.json   chatgpt-dot · grok-bot · copilot-voice · muse-voice · devin-voice
+├── drivers/        mod.rs 注册表 · chrome.rs Chrome 远程调试 · web.rs 内置 webview · app.rs 桌面 App（Accessibility + Bot 列表）
+└── lib.rs          Tauri 命令、托盘 / 程序坞、系统材质、hover 轮询、探测循环、驱动队列、记忆调度
+src-tauri/drivers/*.json   chatgpt-dot · chatgpt-app · grok-bot · copilot-voice · muse-voice · devin-voice（+ 占位：gemini-app · claude-app · antigravity · cursor）
+scripts/setup-signing.sh   一次性创建本机自签名证书，用于 npm run build:mac
 src/dock.ts + dock.css     Dock 条
 src/settings.ts + .css     设置窗（席位 / 快捷键 / 外观 / 麦克风 / 记忆 / 关于）
 src/brand.ts               内置品牌标识；public/brand/<key>.svg 可覆盖
@@ -244,18 +271,27 @@ docs/ref/                  视觉参考图与还原规格（SPEC.md）
 
 | 席位 | 方式 | 状态 |
 |---|---|---|
-| ChatGPT dot | 隐藏 webview · chatgpt.com | 选择器待真机钉定 |
-| Copilot Voice | 隐藏 webview · copilot.microsoft.com | 选择器待真机钉定 |
-| Muse | 隐藏 webview · muse.ai | 选择器待真机钉定 |
-| Devin | 隐藏 webview · app.devin.ai | 选择器待真机钉定 |
-| Grok Bot | 桌面 App · macOS Accessibility | 需辅助功能权限，待真机钉定 |
+| Grok Bot（每个 Bot 一个联系人） | 桌面 App · macOS 辅助功能 | 真机已接通；Bot 列表读自 App 本机缓存，群聊排除 |
+| ChatGPT dot · App | 桌面 App · macOS 辅助功能 | 按钮名取自安装包（发起通话 / 挂断），待真机验证 |
+| ChatGPT dot · 网页 | Chrome 标签页或内置 webview · chatgpt.com | 选择器待真机钉定 |
+| Copilot Voice | Chrome 标签页或内置 webview · copilot.microsoft.com | 选择器待真机钉定 |
+| Muse | Chrome 标签页或内置 webview · muse.ai | 选择器待真机钉定 |
+| Devin | Chrome 标签页或内置 webview · app.devin.ai | 选择器待真机钉定 |
+| Gemini · Claude · Antigravity · Cursor | 桌面 App | 先上图标占位（显示「待接入」），语音呼叫后续接入 |
+
+**用 Chrome 里已有的登录（推荐）**
+
+在 Chrome（144+）打开 `chrome://inspect/#remote-debugging` 开启远程调试。设置 › Agent › 「用 Chrome 的登录」默认开启：网页版 Agent 会在你 Chrome 里各开一个后台标签页，直接沿用 Chrome 的登录、Cookie 与 Passkey，不用再登录一次。第一次连接时 Chrome 会弹「允许远程调试？」，点允许；之后连接一直保持，Chrome 顶部会显示「正受到自动测试软件的控制」。你自己的标签页不会被动。没开远程调试时自动退回内置浏览器。
 
 **首次连接（需要你本人操作一次）**
 
-1. 设置 › 席位 › **登录 / 连接账号**：弹出真实登录窗（内置浏览器这一次可见），像平时一样登录，完成后自动收起，状态变为「已连接」。
+1. 设置 › 席位 › **登录 / 连接账号**：用 Chrome 时会在 Chrome 里打开该 Agent 的标签页；否则弹出真实登录窗（内置浏览器这一次可见），像平时一样登录，完成后自动收起，状态变为「已连接」。
 2. 系统弹一次「允许 AgentDock 使用麦克风」，允许。
 3. 点 **测试呼叫**：接通 → 2 秒 → 挂断。若提示「没检测到通话」，按下面步骤钉一次选择器。
-4. Grok Bot：点 **授权辅助功能 →** 跳到系统设置勾选 AgentDock。
+4. Grok Bot：点 **授权辅助功能 →** 跳到系统设置勾选 AgentDock。之后在后台按 Grok Bot 里的按钮，不会把它切到前台。Grok Bot 没有网页版，只能这样接。
+5. 一个 Bot 一个联系人：设置 › Agent 列表底部点 **添加联系人**，Grok Bot 下会列出你所有的 Bot，点名字即加到 Dock。列表读自 Grok Bot 本机缓存，不用打开 App；群聊不能语音、侧栏里隐藏的 Bot 也点不到，这两类不会出现。呼叫时先在侧栏选中它，再按「发起语音聊天」；已有的联系人可在 ⋯ 菜单里「指定 Bot…」。
+6. 在两个 Bot 之间切换：Grok Bot 一次只能一路通话，AgentDock 会先挂断当前这位、等通话结束，再拨下一位。如果 App 里还挂着一通 AgentDock 不知道的通话，也会先把它结束。
+7. ChatGPT 装了桌面 App 时，在「添加联系人」里选 **ChatGPT dot · App**：用 App 里 dot 的「发起通话 / 挂断」，不走网页、不用再登录，同样只需要辅助功能权限。
 
 **钉定选择器（每家做一次）**
 
@@ -317,7 +353,7 @@ npm run tauri dev
 ## 测试
 
 ```bash
-cd src-tauri && cargo test                             # 46 个单元测试：状态机 / Agent / 设置兼容 / 放置 / 形变弹簧 / 快捷键 / 驱动 / EverOS
+cd src-tauri && cargo test                             # 56 个单元测试：状态机（含切换先挂断）/ Agent / 设置兼容 / 放置 / 形变弹簧 / 快捷键 / 驱动（AX 选择器、Bot 列表、群聊过滤、Chrome）/ EverOS
 npm run build                                          # 前端类型检查 + 打包
 npx vite --port 1420 & python3 tests/e2e_mock.py       # 31 项浏览器 E2E：状态机→DOM、横竖、拖拽、把手、自动收起、三档收起、设置页（含记忆开关）
 bash tests/e2e_xvfb.sh                                 # Linux 真实二进制冒烟（Xvfb）
@@ -329,10 +365,12 @@ python3 .shots/shoot.py                                # 重新生成 docs/scree
 
 ## 隐私与边界
 
-- **不接触密码。** 登录发生在真实站点页面，由你完成；cookie 留在各席位独立的 webview 数据目录里。
+- **不接触密码。** 登录发生在真实站点页面，由你完成。用 Chrome 时 Cookie 留在 Chrome 里；用内置浏览器时留在 AgentDock 的数据目录里（macOS 上各 Agent 共用一份）。
 - **默认不上传。** 没有遥测。只有在「记忆」里开启并且进程里有 `EVEROS_API_KEY` 时，通话事件和页面上可见的对白才会发到 EverOS（Cloud 或你自己的 `EVEROS_BASE_URL`）。
 - **界面自动化的天然边界。** 四家都没有公开「呼叫我的 agent」接口，全部走界面自动化；界面改版需要更新驱动 JSON。
-- **待实测项。** 隐藏 webview 的 `getUserMedia` 授权与不可见时的 WebRTC 节流需在你登录后的真机上验证；若某站拦截内嵌登录，退化为控制本机 Chrome（CDP）。
+- **用 Chrome 时**，AgentDock 通过 Chrome 自己的远程调试连接（需你在 `chrome://inspect` 开启并在弹窗里允许）只操作它为各 Agent 打开的标签页，不读取 Chrome 的 Cookie 文件。
+- **Grok Bot 的 Bot 列表**读自它本机的缓存文件（`~/Library/Application Support/Grok Bot/sand-client-persistence` 里的 roster），只读 Bot 名字、是否群聊、是否隐藏，不读聊天内容，也不上传。
+- **待实测项。** 隐藏 webview / 后台标签页的 `getUserMedia` 授权与不可见时的 WebRTC 节流需在你登录后的真机上验证。
 - **系统级闭麦**在没有音频输入设备的机器上会跳过（只切换 UI 状态）。
 
 ## 路线图
@@ -343,7 +381,10 @@ python3 .shots/shoot.py                                # 重新生成 docs/scree
 - [x] 自动收起 · 三档收起方式 · hover 展开
 - [x] 全局快捷键（可录制）· 原生右键菜单
 - [x] 设置窗：席位拖拽排序 · 自定义图标 / GIF · 快捷键 · 外观 · 麦克风 · EverOS 记忆
-- [ ] 各站选择器真机钉定并标记 `verified: true`
+- [x] 网页版 Agent 沿用 Chrome 登录（远程调试），内置 webview 回退
+- [x] 桌面 App 后台驱动（Grok Bot、ChatGPT）· Grok Bot 每个 Bot 一个联系人 · 群聊过滤 · 切换先挂断
+- [x] 程序坞图标打开设置 · 可选仅菜单栏 · 本机固定签名打包
+- [ ] 各站选择器真机钉定并标记 `verified: true`（Grok Bot 已真机接通）
 - [ ] Windows 实机编译与 Mica 验证
 - [ ] 通话中来电提示（另一席位有消息时胶囊轻微呼吸）
 - [ ] 签名与公证的 .dmg 发布

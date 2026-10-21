@@ -1,4 +1,4 @@
-import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type DriverInfo, type HostInfo, type MemoryStatus, type Seat, type SeatView } from "./api";
+import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type ChromeStatus, type DriverInfo, type HostInfo, type MemoryStatus, type Seat, type SeatView } from "./api";
 import { iconFor } from "./brand";
 
 type PageId = "seats" | "hotkeys" | "appearance" | "mic" | "memory" | "about";
@@ -119,19 +119,39 @@ function statusLabel(s: SeatView): string {
   switch (s.status) {
     case "connected": return "已连接";
     case "needs_auth": return s.driver.kind === "app" ? "需要授权" : "需要登录";
-    case "pending": return "语音未开放";
+    case "pending": return driverOf(s.driver.driver)?.pending ? "待接入" : "语音未开放";
     case "unavailable": return "未安装";
     default: return "未连接";
   }
 }
-const seatWhere = (s: SeatView) => (s.driver.kind === "web" ? new URL(s.driver.url).host.replace(/^www\./, "") : "桌面 App");
+const driverOf = (id: string) => drivers.find((d) => d.id === id);
+/** What a driver's call targets are called: "Bot" in Grok Bot, "dot" in ChatGPT. */
+const nounOf = (id: string) => driverOf(id)?.target_noun ?? "对象";
+const iconKey = (driverId: string) => (driverId.startsWith("chatgpt") ? "dot" : driverId.replace(/-(voice|app)$/, ""));
+const seatWhere = (s: SeatView) => s.driver.kind === "web" ? new URL(s.driver.url).host.replace(/^www\./, "")
+  : s.target && s.target !== s.name ? `桌面 App · ${nounOf(s.driver.driver)}「${s.target}」` : "桌面 App";
 const overlaps = (a: string, b: string) => a.toLowerCase().includes(b.toLowerCase()) || b.toLowerCase().includes(a.toLowerCase());
 
 async function connectSeat(s: SeatView) {
   try {
-    await api.invoke("connect_account", { seatId: s.id });
-    toast(s.driver.kind === "web" ? "登录窗已打开，登录后会自动收起" : "已打开 系统设置 › 辅助功能");
+    if (s.driver.kind === "web") toast("正在打开…");
+    const via = await api.invoke<string>("connect_account", { seatId: s.id });
+    toast(via === "chrome" ? "已在 Chrome 打开，沿用 Chrome 的登录" : s.driver.kind === "web" ? "登录窗已打开，登录后会自动收起" : "已打开 系统设置 › 辅助功能");
   } catch (e) { toast(String(e)); }
+}
+
+/** 登录方式: web Agents use the user's Chrome (its logins) when Chrome's remote debugging is on. */
+async function chromeGroup(): Promise<HTMLDivElement> {
+  const on = settings.web_via_chrome ?? true;
+  let sub = "关闭时，网页版 Agent 在内置浏览器里单独登录";
+  if (on) {
+    let st: ChromeStatus = { available: false, connected: false };
+    try { st = await api.invoke<ChromeStatus>("chrome_status"); } catch { /* mock-less hosts */ }
+    sub = st.connected ? "已连接 Chrome，直接用你在 Chrome 里的登录"
+      : st.available ? "Chrome 已开启远程调试，第一次用时 Chrome 会问一次是否允许"
+      : "未检测到：在 Chrome 打开 chrome://inspect/#remote-debugging 并开启远程调试";
+  }
+  return group("登录方式", row("用 Chrome 的登录", sub, toggle(on, (v) => void saveSettings({ web_via_chrome: v }).then(() => { if (page === "seats") void renderSeats(); }))));
 }
 async function testSeat(s: SeatView) {
   toast("正在测试呼叫…");
@@ -153,16 +173,21 @@ function pickIcon(s: SeatView) {
   file.click();
 }
 
-/** Inline rename: the name turns into a field; Enter / blur saves, Esc cancels. */
-function renameInline(r: HTMLElement, s: SeatView) {
+/** Inline edit of the name (or which Bot it calls): the name turns into a field; Enter / blur
+ *  saves, Esc cancels. An empty Bot means "whatever is open in the app". */
+function renameInline(r: HTMLElement, s: SeatView, field: "name" | "target" = "name") {
   const nameEl = r.querySelector<HTMLElement>(".row__name"); if (!nameEl) return;
   const input = el("input", "inline-name") as HTMLInputElement;
-  input.type = "text"; input.value = s.name;
+  const cur = (field === "name" ? s.name : s.target) ?? "";
+  input.type = "text"; input.value = cur;
+  if (field === "target") input.placeholder = `${s.service} 侧栏里的 ${nounOf(s.driver.driver)} 名称`;
   let done = false;
   const finish = async (save: boolean) => {
     if (done) return; done = true;
+    input.blur();
     const v = input.value.trim();
-    if (save && v && v !== s.name) await saveSeat(s.id, { name: v }); else void renderSeats();
+    if (save && v !== cur && (v || field === "target")) await saveSeat(s.id, field === "name" ? { name: v } : { target: v || null });
+    else void renderSeats();
   };
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") void finish(true); if (e.key === "Escape") void finish(false); });
   input.addEventListener("blur", () => void finish(true));
@@ -174,10 +199,21 @@ function renameInline(r: HTMLElement, s: SeatView) {
 type MenuItem = { label: string; run: () => void; danger?: boolean; disabled?: boolean; confirm?: string };
 let menuEl: HTMLDivElement | null = null;
 function closeMenu() {
+  const wasOpen = menuEl != null;
   menuEl?.remove(); menuEl = null;
   document.removeEventListener("pointerdown", onOutside, true);
   document.removeEventListener("keydown", onMenuKey, true);
+  if (wasOpen) queueMicrotask(flushDeferred);
 }
+
+/** Typing a name or a menu open: a re-render now would throw the edit away, so it waits. */
+const interacting = () => menuEl != null || !!document.activeElement?.closest("#page input, #page select, #page textarea");
+function flushDeferred() {
+  if (!deferredSeats || sorting || interacting()) return;
+  deferredSeats = false;
+  if (page === "seats" || page === "hotkeys") void show(page);
+}
+document.addEventListener("focusout", () => window.setTimeout(flushDeferred, 0));
 function onOutside(e: Event) { if (menuEl && !menuEl.contains(e.target as Node)) closeMenu(); }
 function onMenuKey(e: KeyboardEvent) { if (e.key === "Escape") closeMenu(); }
 function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]) {
@@ -213,7 +249,10 @@ function seatMenu(r: HTMLElement, s: SeatView): (MenuItem | "-")[] {
     if (s.status === "connected") items.push({ label: "重新登录", run: () => void connectSeat(s) });
     items.push({ label: "查看后台页面", run: () => void api.invoke("show_seat", { seatId: s.id, visible: true }).catch((e) => toast(String(e))) });
   }
-  items.push("-", { label: "重命名", run: () => renameInline(r, s) }, { label: "更换图标…", run: () => pickIcon(s) });
+  items.push("-", { label: "重命名", run: () => renameInline(r, s) });
+  const noun = nounOf(s.driver.driver);
+  if (driverOf(s.driver.driver)?.picks) items.push({ label: s.target ? `换一个 ${noun}（当前：${s.target}）` : `指定 ${noun}…`, run: () => renameInline(r, s, "target") });
+  items.push({ label: "更换图标…", run: () => pickIcon(s) });
   if (s.icon.kind === "custom") items.push({ label: "恢复官方图标", run: () => void api.invoke("reset_seat_icon", { seatId: s.id }) });
   items.push("-");
   if (web) items.push({ label: "退出登录", danger: true, confirm: "确认清除登录？", run: async () => { await api.invoke("disconnect_seat", { seatId: s.id }); toast("已清除登录"); } });
@@ -225,7 +264,7 @@ function seatMenu(r: HTMLElement, s: SeatView): (MenuItem | "-")[] {
 // macOS 上 dragover / drop 根本到不了网页，所以真机里拖不动。这里按住任意一行（控件除外）上下拖，
 // 被拖的行浮起跟手，其余行实时让位；松手后落到空位，再提交新顺序（后端同步 Dock 与 ⌥1–⌥9）。
 let sorting = false;          // a re-render mid-drag would yank the row out from under the pointer
-let deferredSeats = false;    // seats:changed arrived while sorting → re-render once it's over
+let deferredSeats = false;    // seats:changed arrived while sorting or editing → re-render once it's over
 function enableReorder(list: HTMLElement) {
   list.addEventListener("pointerdown", (e) => {
     const t = e.target as HTMLElement;
@@ -301,7 +340,7 @@ async function renderSeats() {
 
     const acts = el("div", "actions");
     // the one action worth showing: only when the seat is on and can't work yet
-    const needsHand = s.enabled && s.status !== "connected" && s.status !== "unavailable";
+    const needsHand = s.enabled && s.status !== "connected" && s.status !== "unavailable" && s.status !== "pending";
     if (needsHand) {
       const b = el("button", "btn sm tint", s.driver.kind === "web" ? "登录" : "授权");
       b.addEventListener("click", () => void connectSeat(s));
@@ -317,39 +356,113 @@ async function renderSeats() {
   }
   enableReorder(list);
 
-  // add a seat: one compact line at the end of the list
-  const add = el("div", "row add");
-  add.append(el("div", "avatar plus", `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>`));
-  const sel = el("select") as HTMLSelectElement;
-  for (const d of drivers) sel.append(new Option(`${d.display_name} · ${d.kind === "web" ? "网页" : "App"}`, d.id));
-  const name = el("input") as HTMLInputElement; name.type = "text"; name.placeholder = "名称（可选）";
-  const addBtn = el("button", "btn sm tint", "添加");
-  addBtn.addEventListener("click", async () => {
-    const d = drivers.find((x) => x.id === sel.value)!;
-    const id = `${d.id}-${Math.random().toString(36).slice(2, 6)}`;
-    const seat: Seat = {
-      id, name: name.value.trim() || d.display_name, service: d.display_name,
-      driver: d.kind === "web" ? { kind: "web", url: urlForDriver(d.id), driver: d.id } : { kind: "app", bundle_id: bundleForDriver(d.id), driver: d.id },
-      icon: { kind: "builtin", key: d.id.split("-")[0] === "chatgpt" ? "dot" : d.id.replace(/-voice$/, "") }, enabled: true, status: "unknown", account: null,
-    };
-    await api.invoke("save_seats", { seats: [...seats.map(stripView), seat] });
-    toast("已添加，点「登录」或「授权」完成连接");
+  // 添加: one row that opens the catalogue right below the list; no dropdown, nothing to type
+  const add = el("button", "row add-toggle", `<span class="avatar plus">${addOpen ? MINUS_SVG : PLUS_SVG}</span><span class="row__name">${addOpen ? "收起" : "添加联系人"}</span>`) as HTMLButtonElement;
+  add.type = "button";
+  add.setAttribute("aria-expanded", String(addOpen));
+  add.addEventListener("click", () => {
+    addOpen = !addOpen;
+    // Bots are read as soon as the catalogue opens, so they are just there to tap
+    if (addOpen) for (const d of drivers) if (d.discover && d.installed && !(d.id in found)) void readTargets(d.id);
+    void renderSeats();
   });
-  add.append(sel, name, addBtn);
   list.append(add);
 
   const help = el("details", "help");
   help.innerHTML = `<summary>登录与授权说明</summary><ul>
-<li>登录在弹出的真实浏览器窗口里完成，支持 Google、Apple 与 Passkey。AgentDock 不接触密码，登录成功后窗口自动收起。</li>
+<li>开启「用 Chrome 的登录」后，网页版 Agent 在你 Chrome 里的一个后台标签页运行，直接沿用 Chrome 的登录与 Cookie。连接期间 Chrome 顶部会提示「正受到自动测试软件的控制」。</li>
+<li>没有 Chrome 时，登录在弹出的浏览器窗口里完成，支持 Google、Apple 与 Passkey。AgentDock 不接触密码，登录成功后窗口自动收起。</li>
 <li>之后呼叫、闭麦、挂断都在后台完成；会话过期时会显示「需要登录」。</li>
 <li>首次连接会请求一次麦克风权限，并自动做一次测试呼叫。</li>
-<li>桌面 App（如 Grok Bot）需要在系统设置里授予辅助功能权限，呼叫时会短暂切换到该 App。</li>
+<li>桌面 App（如 Grok Bot）需要在系统设置里授予一次辅助功能权限，之后在后台按按钮，不会切到该 App。</li>
+<li>在「添加联系人」里，Grok Bot 会自动读出侧栏里的每个 Bot，点名字即加为一个联系人；呼叫时先选中它再发起语音。</li>
+<li>ChatGPT 有桌面 App 时选「ChatGPT dot · 桌面 App」，不走网页、不用再登录；同样只需要辅助功能权限。</li>
 </ul>`;
-  pageEl.replaceChildren(list, help);
+  const parts: HTMLElement[] = [list];
+  if (addOpen) parts.push(await addPanel());
+  parts.push(await chromeGroup(), help);
+  pageEl.replaceChildren(...parts);
 }
-const stripView = (s: SeatView): Seat => ({ id: s.id, name: s.name, service: s.service, driver: s.driver, icon: s.icon, enabled: s.enabled, status: s.status, account: s.account });
-const urlForDriver = (id: string) => ({ "chatgpt-dot": "https://chatgpt.com/", "copilot-voice": "https://copilot.microsoft.com/", "devin-voice": "https://app.devin.ai/", "muse-voice": "https://muse.ai/" } as Record<string, string>)[id] ?? "https://example.com/";
-const bundleForDriver = (id: string) => ({ "grok-bot": "com.anysphere.sand" } as Record<string, string>)[id] ?? id;
+
+const PLUS_SVG = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>`;
+const MINUS_SVG = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 10h10"/></svg>`;
+
+async function addSeat(driverId: string, target = "") {
+  const d = driverOf(driverId);
+  if (!d) return;
+  const seat: Seat = {
+    id: `${d.id}-${Math.random().toString(36).slice(2, 6)}`, name: target || d.display_name, service: d.display_name,
+    driver: d.kind === "web" ? { kind: "web", url: d.url ?? "", driver: d.id } : { kind: "app", bundle_id: d.bundle_id ?? d.id, driver: d.id },
+    icon: { kind: "builtin", key: iconKey(d.id) }, enabled: true, status: d.pending ? "pending" : "unknown", account: null,
+    target: d.picks && target ? target : null,
+  };
+  await api.invoke("save_seats", { seats: [...seats.map(stripView), seat] });
+  toast(seat.target ? `已添加 ${seat.target}` : d.pending ? `已把 ${d.display_name} 放进 Dock，语音呼叫还在接入中` : d.kind === "web" ? "已添加，点「登录」完成连接" : "已添加");
+}
+
+/** The catalogue is open (kept across re-renders while the window is open). */
+let addOpen = false;
+/** Targets read from apps, per driver (Grok Bot's Bots); `[]` = read, nothing found. */
+const found: Record<string, string[]> = {};
+const reading = new Set<string>();
+async function readTargets(driverId: string) {
+  if (reading.has(driverId)) return;
+  reading.add(driverId);
+  void renderSeats();
+  try { found[driverId] = await api.invoke<string[]>("app_targets", { driver: driverId }); } catch (e) { found[driverId] = []; toast(String(e)); }
+  reading.delete(driverId);
+  if (page === "seats") void renderSeats();
+}
+
+/** 添加联系人: every service as one row; apps with Bots list them as chips to tap. */
+async function addPanel(): Promise<HTMLDivElement> {
+  const g = el("div", "group add-panel");
+  g.append(el("div", "group__title", "添加联系人"));
+  // what can be called first, placeholders after
+  for (const d of [...drivers].sort((a, b) => Number(a.pending) - Number(b.pending))) {
+    const noun = d.target_noun ?? "对象";
+    const r = el("div", `row tile${d.installed ? "" : " is-off"}`);
+    r.append(el("div", "avatar", await iconFor(iconKey(d.id))));
+    const sub = !d.installed ? "这台 Mac 上没有安装"
+      : d.pending ? "先放图标占位，语音呼叫还在接入中"
+      : d.kind === "web" ? ((settings.web_via_chrome ?? true) ? "网页，在 Chrome 里运行，沿用 Chrome 的登录" : "网页，在内置浏览器里登录一次")
+      : d.discover ? `桌面 App，每个 ${noun} 一个联系人` : "桌面 App，在后台操作，不用登录";
+    const kind = `<span class="kind">${d.kind === "web" ? "网页" : "App"}</span>${d.pending ? `<span class="kind soon">待接入</span>` : ""}`;
+    r.append(el("div", "row__text", `<div class="row__name">${esc(d.display_name)}${kind}</div><div class="row__sub">${sub}</div>`));
+    const acts = el("div", "actions");
+    if (d.discover) {
+      const b = el("button", "btn sm", reading.has(d.id) ? "读取中…" : d.id in found ? "重新读取" : `读取 ${noun}`) as HTMLButtonElement;
+      b.type = "button"; b.disabled = reading.has(d.id) || !d.installed;
+      b.addEventListener("click", () => void readTargets(d.id));
+      acts.append(b);
+    } else {
+      // one contact per site, and per placeholder app; real apps can hold several (dots)
+      const added = (d.kind === "web" || d.pending) && seats.some((s) => s.driver.driver === d.id);
+      const b = el("button", `btn sm${added ? "" : " tint"}`, added ? "已添加" : "添加") as HTMLButtonElement;
+      b.type = "button"; b.disabled = added || !d.installed;
+      b.addEventListener("click", () => void addSeat(d.id));
+      acts.append(b);
+    }
+    r.append(acts);
+    g.append(r);
+    const names = found[d.id];
+    if (d.discover && names && !reading.has(d.id)) {
+      if (!names.length) { g.append(el("p", "note indent", `没读到 ${noun}：确认 ${esc(d.display_name)} 打开了主窗口，并已在 系统设置 › 辅助功能 里允许 AgentDock`)); continue; }
+      const have = new Set(seats.filter((s) => s.driver.driver === d.id && s.target).map((s) => s.target));
+      const chips = el("div", "chips");
+      for (const n of names) {
+        const added = have.has(n);
+        const c = el("button", `btn sm${added ? "" : " tint"}`, esc(added ? `✓ ${n}` : n)) as HTMLButtonElement;
+        c.type = "button"; c.disabled = added; c.title = added ? "已在 Dock 里" : `把 ${n} 加到 Dock`;
+        c.addEventListener("click", () => void addSeat(d.id, n));
+        chips.append(c);
+      }
+      g.append(chips);
+    }
+  }
+  return g;
+}
+const stripView = (s: SeatView): Seat => ({ id: s.id, name: s.name, service: s.service, driver: s.driver, icon: s.icon, enabled: s.enabled, status: s.status, account: s.account, target: s.target ?? null });
 
 // ───────────── 快捷键 ─────────────
 function keyChip(value: string, conflict: boolean, onChange: (v: string) => void): HTMLDivElement {
@@ -444,7 +557,10 @@ function renderAppearance() {
     row("显示名字", "", seg<AppSettings["show_names"]>([["hover", "仅悬停"], ["always", "总是"], ["never", "从不"]], settings.show_names, (v) => saveSettings({ show_names: v }))),
     row("减弱动画", "形变改为淡入淡出", toggle(settings.reduce_motion, (v) => saveSettings({ reduce_motion: v }))),
   );
-  pageEl.replaceChildren(gForm, gTheme, gLayout);
+  // macOS only: the app's own icon. Two places at most, never none, so settings stay reachable.
+  const gIcon = group("应用图标", row("显示在", "点程序坞图标打开设置；菜单栏图标里有同样的菜单",
+    seg<NonNullable<AppSettings["app_icon"]>>([["both", "程序坞和菜单栏"], ["dock", "仅程序坞"], ["menu_bar", "仅菜单栏"]], settings.app_icon ?? "both", (v) => saveSettings({ app_icon: v }))));
+  pageEl.replaceChildren(...[gForm, gTheme, gLayout, ...(host.os === "macos" ? [gIcon] : [])]);
 }
 
 // ───────────── 麦克风 ─────────────
@@ -543,7 +659,7 @@ async function boot() {
   await show(TITLES[initial] ? initial : "seats");
   api.on<SeatView[]>("seats:changed", (s) => {
     seats = s;
-    if (sorting) { deferredSeats = true; return; }
+    if (sorting || interacting()) { deferredSeats = true; return; }
     if (page === "seats" || page === "hotkeys") show(page);
   });
   api.on<AppSettings>("settings:changed", (s) => { settings = s; applySettingsLocally(); });

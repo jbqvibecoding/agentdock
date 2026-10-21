@@ -1,0 +1,13 @@
+{
+  "id": "antigravity",
+  "display_name": "Antigravity",
+  "version": 1,
+  "verified": false,
+  "pending": true,
+  "url": null,
+  "bundle_id": "com.google.antigravity",
+  "user_agent": null,
+  "call": [],
+  "hangup": [],
+  "probe": { "in_call": [], "logged_in": [] }
+}

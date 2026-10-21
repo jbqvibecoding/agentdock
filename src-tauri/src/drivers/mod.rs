@@ -3,6 +3,7 @@
 //! Web seats run inside hidden, persistent webviews; app seats go through Accessibility / UIA.
 
 pub mod app;
+pub mod chrome;
 pub mod web;
 
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,10 @@ pub struct DriverSpec {
     /// Whether the selectors were pinned against the live product on a real machine.
     #[serde(default)]
     pub verified: bool,
+    /// A placeholder: the contact and its icon exist, calling is not wired up yet. Seats on it
+    /// stay "pending", are never probed, and a call explains instead of failing.
+    #[serde(default)]
+    pub pending: bool,
     pub url: Option<String>,
     pub bundle_id: Option<String>,
     pub user_agent: Option<String>,
@@ -79,6 +84,42 @@ pub struct DriverSpec {
     /// Empty lists fall back to generic composer / `[data-message-author-role]` selectors.
     #[serde(default)]
     pub memory: MemorySelectors,
+    /// App seats: elements listing what can be called (e.g. Bot rows); their first text is a
+    /// seat `target`. Lets the settings window offer those names instead of having them typed.
+    #[serde(default)]
+    pub targets: Vec<String>,
+    /// What a target is called in the settings window, e.g. "Bot".
+    #[serde(default)]
+    pub target_noun: Option<String>,
+    /// App seats: the app's own cached list of what can be called. Preferred over reading the
+    /// sidebar: complete (collapsed sections too), works without the app open, and says which
+    /// entries cannot take a call (group chats).
+    #[serde(default)]
+    pub roster: Option<RosterSpec>,
+}
+
+/// A JSON roster in a key-value store directory whose file names are base32 keys
+/// (`<base32(key)>.blob`). The newest file whose key ends with `key_suffix` wins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RosterSpec {
+    /// `~` is the home directory.
+    pub dir: String,
+    pub key_suffix: String,
+    /// JSON pointer to the array of entries.
+    pub rows: String,
+    /// Field holding an entry's name (what `{target}` gets).
+    pub name: String,
+    /// Boolean fields that make an entry uncallable, with the reason shown to the user.
+    #[serde(default)]
+    pub exclude: std::collections::BTreeMap<String, String>,
+}
+
+/// Whether any step selector mentions `{target}`.
+pub fn uses_target(steps: &[Step]) -> bool {
+    steps.iter().any(|s| match s {
+        Step::Click { selectors } | Step::Clear { selectors } | Step::WaitFor { selectors, .. } => selectors.iter().any(|x| x.contains("{target}")),
+        _ => false,
+    })
 }
 
 /// Where a web seat keeps its composer and its visible transcript. Both lists are tried in order.
@@ -106,6 +147,14 @@ pub enum DriverError {
     Unknown(String),
     #[error("driver step failed: {0}")]
     Step(String),
+    #[error("control not found: {0}")]
+    NotFound(String),
+    /// Talking to the user's Chrome failed; the message is already user-facing.
+    #[error("{0}")]
+    Chrome(String),
+    /// The target cannot take a call (e.g. a group chat); the message is user-facing.
+    #[error("{0}")]
+    NotCallable(String),
     #[error("seat needs login or permission")]
     NeedsAuth,
     #[error("platform not supported for this driver")]
@@ -119,6 +168,11 @@ pub const BUNDLED: &[(&str, &str)] = &[
         "chatgpt-dot",
         include_str!("../../drivers/chatgpt-dot.json"),
     ),
+    ("chatgpt-app", include_str!("../../drivers/chatgpt-app.json")),
+    ("gemini-app", include_str!("../../drivers/gemini-app.json")),
+    ("claude-app", include_str!("../../drivers/claude-app.json")),
+    ("antigravity", include_str!("../../drivers/antigravity.json")),
+    ("cursor", include_str!("../../drivers/cursor.json")),
     (
         "copilot-voice",
         include_str!("../../drivers/copilot-voice.json"),
@@ -289,6 +343,7 @@ pub fn inject_memory_script(text: &str, composer: &[String]) -> String {
 /// Scrape visible user/assistant bubbles and report the ones this page has not reported yet.
 /// Role comes from `data-message-author-role` / `data-role`, then a class or aria hint.
 /// Nodes with no role are skipped so chrome text does not become memory.
+/// The new lines are also the script's value, for tabs in the user's Chrome (no Tauri IPC there).
 pub fn transcript_script(selectors: &[String], seat_id: &str) -> String {
     let defaults = DEFAULT_TRANSCRIPT
         .iter()
@@ -324,11 +379,37 @@ pub fn transcript_script(selectors: &[String], seat_id: &str) -> String {
     lines.push({{ role, content }});
   }}
   const fresh = lines.slice(-12);
-  if (!fresh.length) return "empty";
+  if (!fresh.length) return [];
   window.__TAURI_INTERNALS__?.invoke("memory_report", {{ seatId: {seat}, lines: fresh }});
-  return "ok";
+  return fresh;
 }})()"#
     )
+}
+
+/// Fill a seat's `target` (e.g. which Bot inside Grok Bot) into `{target}` in step selectors.
+/// Without a target, steps that mention `{target}` are dropped, along with a `sleep` right after.
+pub fn bind_target(steps: &[Step], target: Option<&str>) -> Vec<Step> {
+    let target = target.map(str::trim).filter(|t| !t.is_empty());
+    let mut out = Vec::with_capacity(steps.len());
+    let mut dropped = false;
+    for step in steps {
+        let bind = |sels: &Vec<String>| -> Option<Option<Vec<String>>> {
+            if !sels.iter().any(|s| s.contains("{target}")) {
+                return Some(None);
+            }
+            target.map(|t| Some(sels.iter().map(|s| s.replace("{target}", t)).collect()))
+        };
+        let bound = match step {
+            Step::Click { selectors } => bind(selectors).map(|b| b.map_or_else(|| step.clone(), |selectors| Step::Click { selectors })),
+            Step::Clear { selectors } => bind(selectors).map(|b| b.map_or_else(|| step.clone(), |selectors| Step::Clear { selectors })),
+            Step::WaitFor { selectors, timeout_ms } => bind(selectors).map(|b| b.map_or_else(|| step.clone(), |selectors| Step::WaitFor { selectors, timeout_ms: *timeout_ms })),
+            Step::Sleep { .. } if dropped => None,
+            _ => Some(step.clone()),
+        };
+        dropped = bound.is_none();
+        out.extend(bound);
+    }
+    out
 }
 
 /// JS that runs a step list sequentially inside the page.
@@ -368,15 +449,25 @@ mod tests {
         assert_eq!(
             r.ids(),
             [
+                "antigravity",
+                "chatgpt-app",
                 "chatgpt-dot",
+                "claude-app",
                 "copilot-voice",
+                "cursor",
                 "devin-voice",
+                "gemini-app",
                 "grok-bot",
                 "muse-voice"
             ]
         );
         for id in r.ids() {
             let s = r.get(id).unwrap();
+            if s.pending {
+                // placeholders: an app to point at, no call wiring yet
+                assert!(s.bundle_id.is_some() || s.url.is_some(), "{id} points at an app or a site");
+                continue;
+            }
             assert!(!s.call.is_empty(), "{id} has a call sequence");
             assert!(!s.hangup.is_empty(), "{id} has a hangup sequence");
             assert!(
@@ -425,6 +516,22 @@ mod tests {
         );
         let steps = steps_script(&spec.call);
         assert!(steps.contains("\"op\":\"click\""));
+    }
+
+    #[test]
+    fn target_fills_selectors_or_drops_its_steps() {
+        let steps = vec![
+            Step::Click { selectors: vec!["AXLink[{target}]".into()] },
+            Step::Sleep { ms: 1200 },
+            Step::Clear { selectors: vec!["AXTextArea".into()] },
+            Step::Click { selectors: vec!["AXButton[发起语音聊天]".into()] },
+        ];
+        let bound = bind_target(&steps, Some(" Analytics "));
+        assert_eq!(bound[0], Step::Click { selectors: vec!["AXLink[Analytics]".into()] });
+        assert_eq!(bound.len(), 4);
+        let plain = bind_target(&steps, None);
+        assert_eq!(plain, steps[2..].to_vec(), "no target: the select step and its pause are skipped");
+        assert_eq!(bind_target(&steps, Some("  ")), plain);
     }
 
     #[test]

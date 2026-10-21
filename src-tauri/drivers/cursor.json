@@ -1,0 +1,13 @@
+{
+  "id": "cursor",
+  "display_name": "Cursor",
+  "version": 1,
+  "verified": false,
+  "pending": true,
+  "url": null,
+  "bundle_id": "com.todesktop.230313mzl4w4u92",
+  "user_agent": null,
+  "call": [],
+  "hangup": [],
+  "probe": { "in_call": [], "logged_in": [] }
+}
