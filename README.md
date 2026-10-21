@@ -412,6 +412,10 @@ git push --follow-tags     # 推送后 Release 流水线开始打包
 
 视觉以 Apple Human Interface Guidelines 与 macOS Tahoe 系统控件为准（参考图与还原规格见 [`docs/ref`](docs/ref)）。基于 [Tauri 2](https://tauri.app)、[window-vibrancy](https://github.com/tauri-apps/window-vibrancy)、[objc2](https://github.com/madsmtm/objc2)。
 
+## 参与贡献
+
+欢迎 Issue 和 PR，最常见的是各家界面改版后更新驱动 JSON。开发、测试与提交约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## 许可证
 
-[MIT](LICENSE) © 2026 we1jia
+[MIT](LICENSE) © 2026 we1jia。可以自由使用、修改、分发和商用，保留版权与许可声明即可。各家产品名称与图标归其所有者，仅用于标识对应服务。

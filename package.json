@@ -2,7 +2,17 @@
   "name": "agentdock",
   "private": true,
   "version": "0.1.0",
+  "description": "A Liquid Glass voice speed-dial for your personal AI agents",
   "license": "MIT",
+  "author": "we1jia",
+  "homepage": "https://github.com/we1jia/AgentDock#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/we1jia/AgentDock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/we1jia/AgentDock/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

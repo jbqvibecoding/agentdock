@@ -408,6 +408,10 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 
 Visual language follows the Apple Human Interface Guidelines and macOS Tahoe system controls (reference images and reproduction spec in [`docs/ref`](docs/ref)). Built on [Tauri 2](https://tauri.app), [window-vibrancy](https://github.com/tauri-apps/window-vibrancy) and [objc2](https://github.com/madsmtm/objc2).
 
+## Contributing
+
+Issues and PRs are welcome — most often a driver JSON update after a vendor redesign. Setup, tests and conventions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
-[MIT](LICENSE) © 2026 we1jia
+[MIT](LICENSE) © 2026 we1jia. Free to use, modify, distribute and sell, as long as the copyright and license notice stay. Product names and icons belong to their owners and only identify the matching service.

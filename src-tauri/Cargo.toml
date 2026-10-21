@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "AgentDock — a liquid-glass voice dialer for your personal agents"
 authors = ["we1jia"]
 license = "MIT"
+repository = "https://github.com/we1jia/AgentDock"
 edition = "2021"
 
 [lib]

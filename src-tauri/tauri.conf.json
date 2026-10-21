@@ -58,6 +58,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "we1jia",
+    "copyright": "Copyright © 2026 we1jia. Released under the MIT License.",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "category": "Productivity",
+    "shortDescription": "A Liquid Glass voice speed-dial for your AI agents",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
