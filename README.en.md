@@ -15,10 +15,10 @@ one click to call, one click to mute, one click to hang up or hand the call to t
 
 <br/>
 
-<img src="docs/screenshots/mac-hero-light.png" width="920" alt="AgentDock idle pill" />
+<img src="docs/screenshots/mac-settings-agents-light.png" width="820" alt="AgentDock Settings › Agents with the Dock pill floating above" />
 <br/>
 
-<p><sub>Captured on macOS 26 · native NSGlassEffectView. Left to right: collapse · system mute · seats (dot / Grok Bot / Copilot / Muse) · add seat · ⇅ orientation grip</sub></p>
+<p><sub>Captured on macOS 26 · the settings window and the Dock pill are both system Liquid Glass (NSGlassEffectView). Pill, left to right: collapse · system mute · contacts (three Bots from Grok Bot · Muse · dot · Gemini · Claude · Antigravity · Cursor; the last four are placeholders for now) · add · ⇅ orientation grip</sub></p>
 
 </div>
 
@@ -102,19 +102,13 @@ AgentDock deliberately does one narrow thing:
 
 ### Real device · macOS 26
 
-> Files named `mac-*`, macOS 26.6.2 · Apple Silicon, glass drawn by the system `NSGlassEffectView`. The cloud Mac has no HiDPI display, so these are 1x captures (pixel = pt), not upscaled. They predate the redrawn hang-up / reveal glyphs; the browser-mock shots below show the current UI.
+> Files named `mac-*`, Apple Silicon, glass drawn by the system `NSGlassEffectView`, 1x captures (1024 px wide). The image at the top is a real capture too: Settings › Agents with the Dock pill floating above it.
 
 <div align="center">
 
-| Idle · light | Idle · dark |
-|:--:|:--:|
-| <img src="docs/screenshots/mac-idle-light.png" width="420" /> | <img src="docs/screenshots/mac-idle-dark.png" width="420" /> |
-| **In call** | **Muted** |
-| <img src="docs/screenshots/mac-incall-light.png" width="420" /> | <img src="docs/screenshots/mac-muted-light.png" width="420" /> |
-| **Switching (3 s undo)** | **Grip hover ⇅** |
-| <img src="docs/screenshots/mac-switching-light.png" width="420" /> | <img src="docs/screenshots/mac-grip-hover-light.png" width="420" /> |
-| **Native context menu (shows current shortcuts)** | **Dot / pet / vertical** |
-| <img src="docs/screenshots/mac-menu-light.png" width="420" /> | <img src="docs/screenshots/mac-dot-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-pet-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-vertical-idle-light.png" height="260" /> &nbsp; <img src="docs/screenshots/mac-vertical-incall-light.png" height="260" /> |
+| Settings › Memory (EverOS) |
+|:--:|
+| <img src="docs/screenshots/mac-settings-memory-light.png" width="640" /> |
 
 </div>
 

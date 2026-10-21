@@ -15,10 +15,10 @@
 
 <br/>
 
-<img src="docs/screenshots/mac-hero-light.png" width="920" alt="AgentDock 空闲态胶囊：电源、麦克风、四位 agent、添加、方向把手" />
+<img src="docs/screenshots/mac-settings-agents-light.png" width="820" alt="AgentDock 设置 › Agent 与悬浮的 Dock 胶囊" />
 <br/>
 
-<p><sub>macOS 26 真机实拍 · 原生 NSGlassEffectView。胶囊从左到右：收起 · 系统闭麦 · 席位（dot / Grok Bot / Copilot / Muse）· 添加席位 · ⇅ 方向把手</sub></p>
+<p><sub>macOS 26 真机截图 · 设置窗和 Dock 胶囊都是系统 Liquid Glass（NSGlassEffectView）。胶囊从左到右：收起 · 系统闭麦 · 联系人（Grok Bot 里的三个 Bot · Muse · dot · Gemini · Claude · Antigravity · Cursor，后四个暂为待接入占位）· 添加 · ⇅ 方向把手</sub></p>
 
 </div>
 
@@ -100,21 +100,15 @@ AgentDock 做的事情很窄：
 
 ## 截图
 
-### macOS 26 真机实拍
+### macOS 26 真机
 
-> 文件名 `mac-*`，macOS 26.6.2 · Apple Silicon，玻璃由系统 `NSGlassEffectView` 绘制。云端 Mac 无 HiDPI 显示器，因此为 1x 实拍（像素 = pt），未做放大。真机图拍摄于挂断 / 查看图标重绘之前，最新界面见下方浏览器 mock。
+> 文件名 `mac-*`，Apple Silicon，玻璃由系统 `NSGlassEffectView` 绘制，1x 截图（1024 px 宽）。顶部大图同样是真机截图：设置 › Agent 和悬浮在上面的 Dock 胶囊。
 
 <div align="center">
 
-| 空闲 · 浅色 | 空闲 · 深色 |
-|:--:|:--:|
-| <img src="docs/screenshots/mac-idle-light.png" width="420" /> | <img src="docs/screenshots/mac-idle-dark.png" width="420" /> |
-| **通话中** | **闭麦** |
-| <img src="docs/screenshots/mac-incall-light.png" width="420" /> | <img src="docs/screenshots/mac-muted-light.png" width="420" /> |
-| **切换席位（3 秒可撤销）** | **把手悬停 ⇅** |
-| <img src="docs/screenshots/mac-switching-light.png" width="420" /> | <img src="docs/screenshots/mac-grip-hover-light.png" width="420" /> |
-| **右键原生菜单（标注当前快捷键）** | **小圆点 / 宠物 / 竖向** |
-| <img src="docs/screenshots/mac-menu-light.png" width="420" /> | <img src="docs/screenshots/mac-dot-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-pet-light.png" height="116" /> &nbsp; <img src="docs/screenshots/mac-vertical-idle-light.png" height="260" /> &nbsp; <img src="docs/screenshots/mac-vertical-incall-light.png" height="260" /> |
+| 设置 › 记忆（EverOS） |
+|:--:|
+| <img src="docs/screenshots/mac-settings-memory-light.png" width="640" /> |
 
 </div>
 
