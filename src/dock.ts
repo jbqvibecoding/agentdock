@@ -10,6 +10,8 @@ let state: DockState = { phase: { phase: "idle" }, muted: false, expanded: false
 let seats: SeatView[] = [];
 let settings: AppSettings | null = null;
 let hoverSeat: string | null = null;
+/** The last committed switch that pasted context into the seat now being called. */
+let carried: { to: string; lines: number } | null = null;
 const iconCache = new Map<string, string>();
 
 const SVG = {
@@ -211,7 +213,8 @@ async function render() {
     av.addEventListener("click", () => api.invoke("set_expanded", { expanded: false }));
     frag.append(av);
     const st = el("div", "status");
-    st.innerHTML = `<div class="name">${escapeHtml(s?.name ?? p.seat)}</div><div class="sub">${p.phase === "calling" ? escapeHtml(t("dock.calling")) : `${escapeHtml(s?.service ?? "")} · ${fmtTime(p.elapsed_secs)}`}</div>`;
+    const calling = carried?.to === p.seat ? `${t("dock.calling")} · ${t("dock.carried", { n: carried.lines })}` : t("dock.calling");
+    st.innerHTML = `<div class="name">${escapeHtml(s?.name ?? p.seat)}</div><div class="sub">${p.phase === "calling" ? escapeHtml(calling) : `${escapeHtml(s?.service ?? "")} · ${fmtTime(p.elapsed_secs)}`}</div>`;
     frag.append(st);
     const wave = el("canvas", "wave") as HTMLCanvasElement;
     if (vertical()) { wave.width = 68; wave.height = 168; } else { wave.width = 168; wave.height = 68; }
@@ -234,6 +237,16 @@ async function render() {
     undo.dataset.k = "undo";
     undo.addEventListener("click", () => api.invoke("undo_switch"));
     frag.append(undo);
+    // warm transfer: on by default, one click skips it for this switch (web seats have a composer)
+    if (settings?.warm_transfer !== false && to?.silent) {
+      const carry = el("button", `carry${p.carry ? " on" : ""}`, escapeHtml(t("dock.carry")));
+      carry.type = "button";
+      carry.dataset.k = "carry";
+      carry.setAttribute("aria-pressed", String(p.carry));
+      carry.title = t(p.carry ? "dock.carryOn" : "dock.carryOff", { name: to.name });
+      carry.addEventListener("click", () => api.invoke("set_carry", { carry: !p.carry }));
+      frag.append(carry);
+    }
     frag.append(micBtn);
     frag.append(button("red", SVG.hangup, t("dock.hangupAll"), () => api.invoke("hangup")));
     frag.append(el("div", "divider"));
@@ -429,13 +442,13 @@ const near = (s: Spring, target: number, eps: number) => Math.abs(s.x - target) 
 
 function lensTargetAt(x: number, y: number): HTMLElement | null {
   if (dock.dataset.form !== "bar" || dragging || resizing) return null;
-  const t = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>(".btn, .grip, .avatar, .undo");
+  const t = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>(".btn, .grip, .avatar, .undo, .carry");
   if (t && bar.contains(t)) return t;
   const d = dock.getBoundingClientRect();
   if (x < d.left || x > d.right || y < d.top || y > d.bottom) return null;
   const maxGap = 14 * currentScale();
   let best: HTMLElement | null = null, bestDist = maxGap;
-  for (const c of bar.querySelectorAll<HTMLElement>(".btn, .grip, .avatar, .undo")) {
+  for (const c of bar.querySelectorAll<HTMLElement>(".btn, .grip, .avatar, .undo, .carry")) {
     const r = c.getBoundingClientRect();
     const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
     const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
@@ -480,7 +493,7 @@ function lensFrame(now: number) {
   let goal: { l: number; r: number; t: number; b: number } | null = null;
   if (anchor) {
     const r = anchor.getBoundingClientRect();
-    const capsule = anchor.classList.contains("undo");
+    const capsule = anchor.matches(".undo, .carry");
     const side = Math.max(r.width, r.height);
     const w = capsule ? r.width + 6 : side, h = capsule ? r.height + 6 : side;
     const cx = r.left + r.width / 2 - d.left, cy = r.top + r.height / 2 - d.top;
@@ -711,7 +724,8 @@ async function boot() {
   lastSize = { w: 0, h: 0 };
   await render();
   booting = false;
-  api.on<DockState>("dock:state", (s) => { state = s; render(); });
+  api.on<DockState>("dock:state", (s) => { state = s; if (s.phase.phase !== "calling") carried = null; render(); });
+  api.on<{ to: string; lines: number }>("dock:handoff", (h) => { carried = h; render(); });
   api.on<SeatView[]>("seats:changed", (s) => { seats = s; iconCache.clear(); render(); });
   api.on<AppSettings>("settings:changed", (s) => { applySettings(s); render(); });
   // Demo mode in a plain browser: expose a tiny console API.

@@ -532,6 +532,7 @@ mod tests {
             from: "dot".into(),
             to: "copilot".into(),
             undo_secs_left: 3,
+            carry: true,
         };
         let mid = dial(&mut book, &in_call, &switching, T0 + 4_000);
         assert!(mid.is_empty(), "the undo window keeps the original session");
@@ -547,6 +548,7 @@ mod tests {
             from: "dot".into(),
             to: "copilot".into(),
             undo_secs_left: 0,
+            carry: true,
         };
         let calling_next = Phase::Calling {
             seat: "copilot".into(),

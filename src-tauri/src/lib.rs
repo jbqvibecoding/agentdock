@@ -1,5 +1,6 @@
 //! AgentDock core: wires the pure state machine, seats, drivers, mic and hotkeys into Tauri.
 
+pub mod calllog;
 pub mod drivers;
 pub mod everos;
 pub mod hotkeys;
@@ -40,6 +41,8 @@ pub struct AppState {
     pub dock_size: Mutex<(f64, f64)>,
     /// Open EverOS sessions, keyed by seat. Pure bookkeeping; HTTP happens off this lock.
     pub memory: Mutex<memory::CallBook>,
+    /// What was said on the live call, kept locally for a warm transfer. Never leaves the process.
+    pub calllog: Mutex<calllog::CallLog>,
     /// `EVEROS_API_KEY` + settings. Rebuilt when settings are saved. Missing key → inactive.
     pub everos: Mutex<everos::Client>,
     /// The connection to the user's Chrome, opened on the first web call that goes there.
@@ -120,6 +123,7 @@ fn dispatch<R: Runtime>(app: &AppHandle<R>, ev: Event) {
     let after = st.machine.lock().unwrap().state.phase.clone();
     emit_state(app, &st);
     memory_on_phase(app, &before, &after);
+    calllog_on_phase(app, &before, &after);
     let (driver_work, rest): (Vec<Effect>, Vec<Effect>) = effects.into_iter().partition(|fx| matches!(fx, Effect::DriverCall(_) | Effect::DriverHangup(_)));
     for fx in rest {
         apply_effect(app, fx);
@@ -244,25 +248,65 @@ async fn recall_and_inject<R: Runtime>(app: AppHandle<R>, client: everos::Client
         st.registry.get(&driver_id).map(|spec| spec.memory.composer.clone()).unwrap_or_default()
     };
     let script = drivers::inject_memory_script(&brief, &selectors);
-    // A Chrome tab only shows up once the call steps (which hold the Chrome line) are done.
+    inject_when_ready(app, recall.seat_id, script, "everos").await;
+}
+
+/// Run `script` in the seat's page as soon as there is one: its built-in webview, or its Chrome
+/// tab, which only shows up once the call steps (which hold the Chrome line) are done.
+async fn inject_when_ready<R: Runtime>(app: AppHandle<R>, seat_id: String, script: String, what: &'static str) {
     for _ in 0..200 {
-        if let Some(win) = app.get_webview_window(&web::window_label(&recall.seat_id)) {
+        if let Some(win) = app.get_webview_window(&web::window_label(&seat_id)) {
             if let Err(e) = win.eval(&script) {
-                tracing::warn!("everos inject failed (call continues): {e}");
+                tracing::warn!("{what} inject failed (call continues): {e}");
             }
             return;
         }
-        if app.state::<AppState>().chrome.has_tab(&recall.seat_id) {
-            let (app, seat, script) = (app.clone(), recall.seat_id.clone(), script.clone());
+        if app.state::<AppState>().chrome.has_tab(&seat_id) {
+            let (app, seat, script) = (app.clone(), seat_id.clone(), script.clone());
             let r = tokio::task::spawn_blocking(move || app.state::<AppState>().chrome.eval(&seat, "", &script, false)).await;
             if let Ok(Err(e)) = r {
-                tracing::warn!("everos inject failed (call continues): {e}");
+                tracing::warn!("{what} inject failed (call continues): {e}");
             }
             return;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    tracing::info!("everos recall for {} had no webview to inject into", recall.seat_id);
+    tracing::info!("{what} for {seat_id} had no webview to inject into");
+}
+
+/// Open and close the local call record with the phase. When a switch commits with carry on, paste
+/// the outgoing call's last turns into the next seat's composer (never sent). Web seats only: an
+/// app seat's call steps empty its message box before the voice button shows.
+fn calllog_on_phase<R: Runtime>(app: &AppHandle<R>, before: &Phase, after: &Phase) {
+    let st = app.state::<AppState>();
+    let Some(handoff) = st.calllog.lock().unwrap().on_phase(before, after) else { return };
+    if !st.settings.lock().unwrap().warm_transfer {
+        return;
+    }
+    let (from_name, composer) = {
+        let seats = st.seats.lock().unwrap();
+        let from_name = seats.get(&handoff.from).map(|s| s.name.clone()).unwrap_or_else(|| handoff.from.clone());
+        let composer = match seats.get(&handoff.to).map(|s| &s.driver) {
+            Some(DriverKind::Web { driver, .. }) => st.registry.get(driver).map(|spec| spec.memory.composer.clone()).unwrap_or_default(),
+            _ => {
+                tracing::info!("handoff {} → {}: not a web seat, nothing pasted", handoff.from, handoff.to);
+                return;
+            }
+        };
+        (from_name, composer)
+    };
+    let text = calllog::BriefText {
+        heading: i18n::tf("handoff.heading", &[("name", &from_name)]),
+        me: i18n::t("handoff.me"),
+        them: from_name,
+        turn: i18n::t("handoff.turn"),
+        ask: i18n::t("handoff.ask"),
+    };
+    let script = drivers::inject_text_script(&calllog::handoff_brief(&handoff.lines, &text), calllog::HANDOFF_MARKER, &composer);
+    tracing::info!("handoff {} → {}: {} lines", handoff.from, handoff.to, handoff.lines.len());
+    let _ = app.emit("dock:handoff", serde_json::json!({ "from": handoff.from, "to": handoff.to, "lines": handoff.lines.len() }));
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move { inject_when_ready(app, handoff.to, script, "handoff").await });
 }
 
 async fn write_batch(client: everos::Client, batch: memory::Persist) {
@@ -528,6 +572,12 @@ fn set_expanded(app: AppHandle, expanded: bool) {
 #[tauri::command]
 fn undo_switch(app: AppHandle) {
     dispatch(&app, Event::Undo);
+}
+
+/// The Dock's "carry the conversation" chip during a switch.
+#[tauri::command]
+fn set_carry(app: AppHandle, carry: bool) {
+    dispatch(&app, Event::SetCarry(carry));
 }
 
 /// The dock window resizes itself to the exact glass shape so the rest of the screen stays
@@ -975,19 +1025,21 @@ fn driver_error(window: tauri::Window, message: String) {
 }
 
 /// Caption lines scraped from a seat page. Ignored unless that page's window reports them and
-/// memory is on for an open call on this seat.
+/// there is an open call on this seat.
 #[tauri::command]
 fn memory_report(app: AppHandle, window: tauri::Window, seat_id: String, lines: Vec<memory::TranscriptLine>) {
     if window.label() != web::window_label(&seat_id) {
         tracing::warn!("memory report from unexpected window {}", window.label());
         return;
     }
-    memory_lines(&app, &seat_id, &lines);
+    caption_lines(&app, &seat_id, &lines);
 }
 
-/// New caption lines from a seat page (webview IPC or a Chrome tab's script value).
-fn memory_lines(app: &AppHandle, seat_id: &str, lines: &[memory::TranscriptLine]) {
+/// New caption lines from a seat page (webview IPC or a Chrome tab's script value): kept for a
+/// warm transfer, and written to EverOS when memory is on.
+fn caption_lines(app: &AppHandle, seat_id: &str, lines: &[memory::TranscriptLine]) {
     let st = app.state::<AppState>();
+    st.calllog.lock().unwrap().on_lines(seat_id, lines);
     let client = st.everos.lock().unwrap().clone();
     if !client.is_active() {
         return;
@@ -2206,6 +2258,7 @@ pub fn run() {
                 driver_lane: Mutex::new(()),
                 dock_size: Mutex::new(init_size),
                 memory: Mutex::new(memory::CallBook::default()),
+                calllog: Mutex::new(calllog::CallLog::default()),
                 everos: Mutex::new(everos_client),
                 chrome: Default::default(),
             });
@@ -2263,7 +2316,8 @@ pub fn run() {
                     let st = handle.state::<AppState>();
                     let active = st.machine.lock().unwrap().current_seat().map(str::to_string);
                     let phase_idle = matches!(st.machine.lock().unwrap().state.phase, Phase::Idle);
-                    let memory_on = st.everos.lock().unwrap().is_active();
+                    // Captions feed EverOS and the warm transfer; with both off, pages are not read.
+                    let captions_on = st.everos.lock().unwrap().is_active() || st.settings.lock().unwrap().warm_transfer;
                     let seats: Vec<Seat> = st.seats.lock().unwrap().seats.clone();
                     let logging_in: Vec<String> = st.logging_in.lock().unwrap().iter().cloned().collect();
                     // Mid call / hang-up nothing is settled: in a switch between two Bots of one
@@ -2280,7 +2334,7 @@ pub fn run() {
                             let _ = run_driver(&handle, &seat.id, DriverOp::Probe);
                         }
                         // Visible captions about every 2s while this seat is the live call.
-                        if memory_on && is_active && !phase_idle && n % 4 == 0 {
+                        if captions_on && is_active && !phase_idle && n % 4 == 0 {
                             if let DriverKind::Web { driver, .. } = &seat.driver {
                                 let selectors = st.registry.get(driver).map(|spec| spec.memory.transcript.clone()).unwrap_or_default();
                                 let script = drivers::transcript_script(&selectors, &seat.id);
@@ -2289,7 +2343,7 @@ pub fn run() {
                                 } else if st.chrome.has_tab(&seat.id) {
                                     let lines = st.chrome.eval(&seat.id, "", &script, false).ok().and_then(|v| serde_json::from_value::<Vec<memory::TranscriptLine>>(v).ok());
                                     if let Some(lines) = lines.filter(|l| !l.is_empty()) {
-                                        memory_lines(&handle, &seat.id, &lines);
+                                        caption_lines(&handle, &seat.id, &lines);
                                     }
                                 }
                             }
@@ -2300,7 +2354,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
+            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, set_carry, resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat, chrome_status, app_targets,
             driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,
             get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info, glass_scheme

@@ -611,6 +611,7 @@ async function renderMic() {
     row(t("mic.muteMode"), t("mic.muteModeSub"), seg<AppSettings["mute_mode"]>([["system", t("mute.system")], ["seat", t("mute.seat")]], settings.mute_mode, (v) => saveSettings({ mute_mode: v }))),
     row(t("mic.pauseMedia"), t("mic.pauseMediaSub"), toggle(settings.pause_media_in_call, (v) => saveSettings({ pause_media_in_call: v }))),
     row(t("mic.confirmSwitch"), t("mic.confirmSwitchSub"), toggle(settings.confirm_switch, (v) => saveSettings({ confirm_switch: v }))),
+    row(t("mic.warmTransfer"), t("mic.warmTransferSub"), toggle(settings.warm_transfer ?? true, (v) => saveSettings({ warm_transfer: v }))),
   );
   pageEl.replaceChildren(g, g2);
   try {

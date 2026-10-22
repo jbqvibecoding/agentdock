@@ -231,7 +231,8 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 
 .divider { width: 1px; height: calc(24px * var(--scale)); flex: none; margin: 0 calc(4px * var(--scale)); background: linear-gradient(180deg, transparent, var(--divider) 25%, var(--divider) 75%, transparent); }
 .wave { width: calc(84px * var(--scale)); height: calc(34px * var(--scale)); display: block; flex: none; color: var(--sym); }
-.undo { position: relative; height: calc(30px * var(--scale)); padding: 0 calc(12px * var(--scale)); border-radius: calc(15px * var(--scale)); border: 0; cursor: default; background: transparent; color: var(--fg); font: 600 calc(12px * var(--scale))/1 var(--font); font-variant-numeric: tabular-nums; box-shadow: inset 0 0 0 .75px var(--divider); }
+.undo, .carry { position: relative; height: calc(30px * var(--scale)); padding: 0 calc(12px * var(--scale)); border-radius: calc(15px * var(--scale)); border: 0; cursor: default; background: transparent; color: var(--fg); font: 600 calc(12px * var(--scale))/1 var(--font); font-variant-numeric: tabular-nums; box-shadow: inset 0 0 0 .75px var(--divider); }
+.carry:not(.on) { opacity: .45; text-decoration: line-through; }
 .avatar { position: relative; width: calc(38px * var(--scale)); height: calc(38px * var(--scale)); margin: 0 calc(3px * var(--scale)); border-radius: 50%; overflow: hidden; display: grid; place-items: center; flex: none; box-shadow: var(--avatar-ring); transition: transform 520ms var(--spring-css); }
 .avatar svg, .avatar img { width: 100%; height: 100%; display: block; object-fit: cover; transform: scale(1.12); }
 .avatar.is-hot { transform: scale(1.05); }
@@ -249,7 +250,7 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 #dock[data-orient="vertical"] .wave { width: calc(34px * var(--scale)); height: calc(84px * var(--scale)); }
 #dock[data-orient="vertical"] .status { writing-mode: vertical-rl; text-orientation: mixed; padding: calc(6px * var(--scale)) 0; justify-items: center; max-height: calc(128px * var(--scale)); }
 #dock[data-orient="vertical"] .status .name, #dock[data-orient="vertical"] .status .sub { max-height: calc(128px * var(--scale)); }
-#dock[data-orient="vertical"] .undo { writing-mode: vertical-rl; height: auto; width: calc(30px * var(--scale)); padding: calc(12px * var(--scale)) 0; }
+#dock[data-orient="vertical"] .undo, #dock[data-orient="vertical"] .carry { writing-mode: vertical-rl; height: auto; width: calc(30px * var(--scale)); padding: calc(12px * var(--scale)) 0; }
 
 /* ───── grip: the handle at the pill's end (tap = 横/竖, hold = move) ───── */
 .grip { position: relative; flex: none; width: calc(30px * var(--scale)); height: calc(30px * var(--scale)); display: grid; place-items: center; border-radius: 50%; cursor: grab; color: var(--sym); opacity: .6; transition: opacity 220ms ease; }

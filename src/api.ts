@@ -6,7 +6,7 @@ export type Phase =
   | { phase: "idle" }
   | { phase: "calling"; seat: string }
   | { phase: "in_call"; seat: string; elapsed_secs: number }
-  | { phase: "switching"; from: string; to: string; undo_secs_left: number }
+  | { phase: "switching"; from: string; to: string; undo_secs_left: number; carry: boolean }
   | { phase: "needs_human"; seat: string; reason: string };
 
 export interface DockState { phase: Phase; muted: boolean; expanded: boolean }
@@ -47,6 +47,8 @@ export interface AppSettings {
   default_form: DefaultForm; theme: Theme; snap: Snap; orientation: Orientation; dock_anchor: DockAnchor | null; auto_collapse_secs: number; collapse_mode: CollapseMode; show_names: "hover" | "always" | "never";
   reduce_motion: boolean; material_strength: number; dock_scale?: number; accent?: string | null; hotkeys: Hotkeys; mute_mode: "system" | "seat";
   pause_media_in_call: boolean; input_device: string | null; confirm_switch: boolean;
+  /** Paste the outgoing call's last turns into the next web seat when a switch commits. */
+  warm_transfer?: boolean;
   web_via_chrome: boolean;
   /** macOS: where AgentDock's own icon lives; the Dock icon opens settings. */
   app_icon?: "both" | "dock" | "menu_bar";
@@ -82,15 +84,16 @@ const mock = (() => {
   let settings: AppSettings = {
     default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5, dock_scale: 1, accent: null,
     hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
-    mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false, web_via_chrome: true, app_icon: "both", language: "system",
+    mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false, warm_transfer: true, web_via_chrome: true, app_icon: "both", language: "system",
     memory: { enabled: false, user_id: "", inject_context: true, top_k: 5 },
   };
   if (typeof window !== "undefined") (window as any).__mockSettings = settings;
-  let started = 0; let timer: number | undefined; let undoTimer: number | undefined;
+  let started = 0; let timer: number | undefined; let undoTimer: number | undefined; let connectTimer: number | undefined;
   const setState = (s: DockState) => { state = s; emit("dock:state", state); };
   const startCall = (seat: string) => {
     setState({ ...state, phase: { phase: "calling", seat }, expanded: true });
-    window.setTimeout(() => {
+    window.clearTimeout(connectTimer);
+    connectTimer = window.setTimeout(() => {
       started = Date.now();
       setState({ ...state, phase: { phase: "in_call", seat, elapsed_secs: 0 } });
       window.clearInterval(timer);
@@ -127,20 +130,27 @@ const mock = (() => {
       const p = state.phase;
       if ((p.phase === "in_call" || p.phase === "calling") && p.seat !== a.seatId) {
         const from = p.seat; let left = 3;
-        setState({ ...state, phase: { phase: "switching", from, to: a.seatId, undo_secs_left: left } });
+        setState({ ...state, phase: { phase: "switching", from, to: a.seatId, undo_secs_left: left, carry: true } });
         window.clearInterval(undoTimer);
         undoTimer = window.setInterval(() => {
           left -= 1;
           if (state.phase.phase !== "switching") { window.clearInterval(undoTimer); return; }
-          if (left <= 0) { window.clearInterval(undoTimer); startCall(a.seatId); } else setState({ ...state, phase: { ...state.phase, undo_secs_left: left } });
+          if (left <= 0) {
+            window.clearInterval(undoTimer);
+            const carry = state.phase.carry && settings.warm_transfer !== false && seats.find((s) => s.id === a.seatId)?.driver.kind === "web";
+            startCall(a.seatId);
+            // like the host: the new phase goes out first, then the handoff it carried
+            if (carry) { const h = { from, to: a.seatId, lines: 4 }; ((window as any).__mockHandoffs ??= []).push(h); emit("dock:handoff", h); }
+          } else setState({ ...state, phase: { ...state.phase, undo_secs_left: left } });
         }, 1000);
       } else if (p.phase === "idle" || p.phase === "needs_human") startCall(a.seatId);
     },
-    hangup: () => { window.clearInterval(timer); setState({ ...state, phase: { phase: "idle" } }); },
+    hangup: () => { window.clearInterval(timer); window.clearTimeout(connectTimer); setState({ ...state, phase: { phase: "idle" } }); },
     toggle_mute: () => setState({ ...state, muted: !state.muted }),
     set_muted: (a) => setState({ ...state, muted: a.muted }),
     toggle_expanded: () => setState({ ...state, expanded: !state.expanded }),
     set_expanded: (a) => setState({ ...state, expanded: a.expanded }),
+    set_carry: (a) => { if (state.phase.phase === "switching") setState({ ...state, phase: { ...state.phase, carry: a.carry } }); },
     undo_switch: () => { if (state.phase.phase === "switching") { window.clearInterval(undoTimer); setState({ ...state, phase: { phase: "in_call", seat: state.phase.from, elapsed_secs: Math.floor((Date.now() - started) / 1000) } }); } },
     resize_dock: () => undefined,
     drag_dock: (a) => { const w = window as any; w.__mockDrags = (w.__mockDrags || 0) + 1; w.__mockGrab = { x: a.offsetX, y: a.offsetY }; },

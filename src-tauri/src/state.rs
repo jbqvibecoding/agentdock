@@ -10,8 +10,9 @@ pub enum Phase {
     Idle,
     Calling { seat: String },
     InCall { seat: String, elapsed_secs: u64 },
-    /// Hanging up `from` and about to call `to`; cancellable until the deadline.
-    Switching { from: String, to: String, undo_secs_left: u64 },
+    /// Hanging up `from` and about to call `to`; cancellable until the deadline. `carry`: paste
+    /// what was said with `from` into `to` when the switch commits (see `calllog`).
+    Switching { from: String, to: String, undo_secs_left: u64, carry: bool },
     /// The driver hit a captcha / unknown dialog and needs the user to look.
     NeedsHuman { seat: String, reason: String },
 }
@@ -32,6 +33,8 @@ pub enum Event {
     ToggleExpanded,
     SetExpanded(bool),
     Undo,
+    /// Carry the conversation over on this switch, or not.
+    SetCarry(bool),
     /// From a driver probe: the seat reports it is (not) in a call.
     ProbeInCall { seat: String, in_call: bool },
     ProbeNeedsHuman { seat: String, reason: String },
@@ -115,20 +118,23 @@ impl Machine {
                     return fx;
                 }
                 // Switching keeps the mute state; the hangup is deferred until the undo window closes.
-                self.state.phase = Switching { from: cur, to: seat, undo_secs_left: UNDO_WINDOW.as_secs() };
+                self.state.phase = Switching { from: cur, to: seat, undo_secs_left: UNDO_WINDOW.as_secs(), carry: true };
                 self.switch_deadline = Some(now + UNDO_WINDOW);
             }
-            (Switching { from, to, .. }, Event::Call(seat)) => {
+            (Switching { from, to, carry, .. }, Event::Call(seat)) => {
                 if seat == from {
                     // Tapping the original seat again cancels the switch.
                     self.restore_in_call(from, now);
                 } else {
-                    self.state.phase = Switching { from, to: seat, undo_secs_left: UNDO_WINDOW.as_secs() };
+                    self.state.phase = Switching { from, to: seat, undo_secs_left: UNDO_WINDOW.as_secs(), carry };
                     self.switch_deadline = Some(now + UNDO_WINDOW);
                     let _ = to;
                 }
             }
             (Switching { from, .. }, Event::Undo) => self.restore_in_call(from, now),
+            (Switching { from, to, undo_secs_left, .. }, Event::SetCarry(carry)) => {
+                self.state.phase = Switching { from, to, undo_secs_left, carry };
+            }
 
             (Calling { seat }, Event::Hangup) | (InCall { seat, .. }, Event::Hangup) => {
                 self.to_idle();
@@ -169,7 +175,7 @@ impl Machine {
                     }
                 }
             }
-            (Switching { from, to, .. }, Event::Tick) => {
+            (Switching { from, to, carry, .. }, Event::Tick) => {
                 let deadline = self.switch_deadline.unwrap_or(now);
                 if now >= deadline {
                     self.state.phase = Calling { seat: to.clone() };
@@ -179,7 +185,7 @@ impl Machine {
                     fx.push(Effect::DriverCall(to));
                 } else {
                     let left = deadline.duration_since(now);
-                    self.state.phase = Switching { from, to, undo_secs_left: ((left.as_millis() + 999) / 1000) as u64 };
+                    self.state.phase = Switching { from, to, undo_secs_left: ((left.as_millis() + 999) / 1000) as u64, carry };
                 }
             }
             _ => {}
@@ -252,10 +258,30 @@ mod tests {
         connected(&mut m, "dot", t);
         m.handle_at(Event::Call("copilot".into()), t + Duration::from_secs(10));
         m.handle_at(Event::Tick, t + Duration::from_secs(11));
-        assert_eq!(m.state.phase, Phase::Switching { from: "dot".into(), to: "copilot".into(), undo_secs_left: 2 });
+        assert_eq!(m.state.phase, Phase::Switching { from: "dot".into(), to: "copilot".into(), undo_secs_left: 2, carry: true });
         let fx = m.handle_at(Event::Undo, t + Duration::from_secs(12));
         assert!(fx.is_empty(), "undo never touches drivers");
         assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "dot"));
+    }
+
+    #[test]
+    fn carry_is_on_by_default_and_can_be_turned_off_for_one_switch() {
+        let t = Instant::now();
+        let mut m = Machine::new();
+        connected(&mut m, "dot", t);
+        assert!(m.handle_at(Event::SetCarry(false), t).is_empty());
+        assert!(matches!(m.state.phase, Phase::InCall { .. }), "only a switch carries anything");
+        m.handle_at(Event::Call("copilot".into()), t + Duration::from_secs(1));
+        assert!(matches!(m.state.phase, Phase::Switching { carry: true, .. }));
+        m.handle_at(Event::SetCarry(false), t + Duration::from_secs(2));
+        m.handle_at(Event::Call("muse".into()), t + Duration::from_secs(2));
+        m.handle_at(Event::Tick, t + Duration::from_secs(3));
+        assert!(matches!(m.state.phase, Phase::Switching { ref to, carry: false, .. } if to == "muse"), "re-targeting keeps the choice");
+        m.handle_at(Event::Tick, t + Duration::from_secs(6));
+        assert_eq!(m.state.phase, Phase::Calling { seat: "muse".into() });
+        m.handle_at(Event::ProbeInCall { seat: "muse".into(), in_call: true }, t + Duration::from_secs(7));
+        m.handle_at(Event::Call("dot".into()), t + Duration::from_secs(8));
+        assert!(matches!(m.state.phase, Phase::Switching { carry: true, .. }), "the next switch starts carrying again");
     }
 
     #[test]

@@ -149,6 +149,10 @@ pub struct AppSettings {
     pub pause_media_in_call: bool,
     pub input_device: Option<String>,
     pub confirm_switch: bool,
+    /// Switching seats mid-call pastes the last turns of the outgoing call into the next web
+    /// seat's composer (never sent). The Dock can turn it off for one switch.
+    #[serde(default = "default_warm_transfer")]
+    pub warm_transfer: bool,
     /// Run web seats in the user's own Chrome (its logins and cookies) when Chrome's remote
     /// debugging is on; otherwise, or when off, use AgentDock's built-in webview.
     #[serde(default = "default_web_via_chrome")]
@@ -201,6 +205,9 @@ fn default_auto_collapse() -> u32 {
     8
 }
 fn default_web_via_chrome() -> bool {
+    true
+}
+fn default_warm_transfer() -> bool {
     true
 }
 fn default_dock_scale() -> f32 {
@@ -260,6 +267,7 @@ impl Default for AppSettings {
             pause_media_in_call: true,
             input_device: None,
             confirm_switch: false,
+            warm_transfer: default_warm_transfer(),
             web_via_chrome: default_web_via_chrome(),
             app_icon: AppIcon::Both,
             language: Language::System,
@@ -356,11 +364,13 @@ mod tests {
         v.as_object_mut().unwrap().remove("web_via_chrome");
         v.as_object_mut().unwrap().remove("app_icon");
         v.as_object_mut().unwrap().remove("language");
+        v.as_object_mut().unwrap().remove("warm_transfer");
         let s: AppSettings = serde_json::from_value(v).unwrap();
         assert_eq!(s, AppSettings::default());
         assert!(!s.memory.enabled);
         assert!(s.memory.inject_context);
         assert_eq!(s.memory.top_k, 5);
+        assert!(s.warm_transfer, "files from before warm transfer get it on");
     }
 
     #[test]

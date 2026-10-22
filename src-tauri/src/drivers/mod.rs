@@ -294,7 +294,14 @@ const DEFAULT_TRANSCRIPT: &[&str] = &[
 /// Paste a recalled brief into the composer. Does not press Send — a mis-click would start a
 /// separate text turn beside the voice call. Re-running is a no-op once the marker is present.
 pub fn inject_memory_script(text: &str, composer: &[String]) -> String {
+    inject_text_script(text, crate::everos::MEMORY_MARKER, composer)
+}
+
+/// Paste `text` (which must contain `marker`) above whatever is in the composer, once per marker,
+/// so a memory brief and a handoff brief can both land. Never presses Send.
+pub fn inject_text_script(text: &str, marker: &str, composer: &[String]) -> String {
     let text = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
+    let marker = serde_json::to_string(marker).unwrap_or_else(|_| "\"\"".into());
     let defaults = DEFAULT_COMPOSER
         .iter()
         .map(|s| (*s).to_string())
@@ -308,7 +315,7 @@ pub fn inject_memory_script(text: &str, composer: &[String]) -> String {
     format!(
         r#"(async () => {{
   const text = {text};
-  const marker = "[AgentDock memory]";
+  const marker = {marker};
   if (!text || !text.includes(marker)) return "empty";
   const sels = {sels};
   const find = (list) => {{ for (const s of list) {{ try {{
@@ -544,6 +551,10 @@ mod tests {
             !js.contains("</script>\"),"),
             "the closing tag stays inside a JSON string"
         );
+        assert!(js.contains(r#"const marker = "[AgentDock memory]";"#));
+        let handoff = inject_text_script("[AgentDock handoff]\nMe: hi", "[AgentDock handoff]", &["#prompt-textarea".into()]);
+        assert!(handoff.contains(r#"const marker = "[AgentDock handoff]";"#));
+        assert!(handoff.contains(r##"["#prompt-textarea"]"##));
         let scrape = transcript_script(&[], "dot\"); alert(1)");
         assert!(scrape.contains(r#""dot\"); alert(1)""#));
         assert!(scrape.contains("memory_report"));

@@ -44,6 +44,7 @@ AgentDock deliberately does one narrow thing:
 **Calling & switching**
 
 - Click a seat to call; click another seat during a call to switch (3 s undo)
+- Warm transfer: when a switch commits, the last few lines of the previous call are pasted into the next web seat's message box (never sent); tap *Bring context* while switching to skip it once, or turn it off in Settings › Microphone
 - One-click mute / unmute (input-device level), one-click hang up
 - After 15 s without a connection the pill enters *Needs you*, with one click to reveal that seat's page
 - `⌥1…⌥9` to call / switch to seat n
@@ -350,6 +351,7 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 
 - **No credentials.** Login happens on the real site page, by you. With Chrome, cookies stay in Chrome; with the embedded browser they stay in AgentDock's data directory (shared by all seats on macOS).
 - **No uploads by default.** No telemetry. Only after Memory is enabled *and* the process has `EVEROS_API_KEY` are call events and on-screen captions sent to EverOS (Cloud, or your own `EVEROS_BASE_URL`).
+- **Warm transfer** reads the same on-screen captions, keeps them in memory only and drops them when the call ends; on a switch it pastes them into the next seat's message box without sending, so whether they go anywhere is up to you.
 - **UI automation has limits.** None of the vendors expose a "call my agent" API, so everything goes through their UIs; redesigns require updating the driver JSON.
 - **With Chrome**, AgentDock uses Chrome's own remote-debugging connection (which you enable in `chrome://inspect` and allow in Chrome's prompt) and only drives the tabs it opened for its seats; it never reads Chrome's cookie store.
 - **Grok Bot's Bot list** is read from the app's local cache (the roster in `~/Library/Application Support/Grok Bot/sand-client-persistence`): Bot names and whether each is a group chat or hidden — no conversation content, nothing uploaded.

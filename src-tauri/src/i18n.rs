@@ -132,6 +132,16 @@ fn table(key: &str) -> Option<[&'static str; 4]> {
             "頁面需要你看一眼（驗證或未知彈窗）",
             "ページを確認してください（認証または予期しないダイアログ）",
         ],
+        // warm transfer: the brief pasted into the next seat's composer
+        "handoff.heading" => [
+            "刚才我在和 {name} 语音通话，最近几句是：",
+            "I was just on a voice call with {name}. The last few lines:",
+            "剛才我在和 {name} 語音通話，最近幾句是：",
+            "さっきまで {name} と音声通話していました。最後のやり取り：",
+        ],
+        "handoff.me" => ["我", "Me", "我", "私"],
+        "handoff.turn" => ["{who}：{text}", "{who}: {text}", "{who}：{text}", "{who}：{text}"],
+        "handoff.ask" => ["请接着这个话题继续帮我。", "Please pick up from here.", "請接著這個話題繼續幫我。", "この続きからお願いします。"],
         // why a target cannot be called (keys from a driver's roster `exclude`)
         "roster.group_chat" => [
             "「{target}」是群聊，群聊不能语音通话",
@@ -226,7 +236,7 @@ mod tests {
     fn every_key_has_four_non_empty_strings_with_the_same_placeholders() {
         let keys = [
             "call.needs_auth", "call.web_not_found", "call.target_not_found", "call.voice_not_found", "call.failed", "call.pending",
-            "probe.needs_human", "roster.group_chat", "roster.hidden", "app.not_installed", "app.needs_ax", "icon.bad_format",
+            "probe.needs_human", "handoff.heading", "handoff.me", "handoff.turn", "handoff.ask", "roster.group_chat", "roster.hidden", "app.not_installed", "app.needs_ax", "icon.bad_format",
             "icon.too_large", "chrome.lost", "chrome.no_tab", "chrome.refused", "chrome.not_enabled", "chrome.just_refused",
             "menu.expand", "menu.collapse", "menu.to_vertical", "menu.to_horizontal", "menu.form_dot", "menu.form_pet",
             "menu.zoom_in", "menu.zoom_out", "menu.zoom_reset", "menu.settings", "menu.quit", "menu.toggle_dock", "window.settings",
