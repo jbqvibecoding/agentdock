@@ -3,10 +3,12 @@
 pub mod calllog;
 pub mod drivers;
 pub mod everos;
+pub mod groups;
 pub mod hotkeys;
 pub mod i18n;
 pub mod memory;
 pub mod mic;
+pub mod roundtable;
 pub mod seats;
 pub mod settings;
 pub mod state;

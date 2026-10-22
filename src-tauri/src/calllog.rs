@@ -52,26 +52,16 @@ impl CallLog {
     /// with no open call are dropped.
     pub fn on_lines(&mut self, seat_id: &str, lines: &[TranscriptLine]) -> usize {
         let Some(call) = self.open.get_mut(seat_id) else { return 0 };
-        let mut added = 0;
-        for line in lines {
-            if line.role != "user" && line.role != "assistant" {
-                continue;
-            }
-            let content = line.content.trim();
-            if content.is_empty() || !call.seen.insert(format!("{}\n{content}", line.role)) {
-                continue;
-            }
-            // A bubble that is still being spoken comes back longer each scrape: keep the latest.
-            match call.lines.last_mut() {
-                Some(last) if last.role == line.role && content.starts_with(last.content.as_str()) => last.content = content.to_string(),
-                _ => call.lines.push(TranscriptLine { role: line.role.clone(), content: content.to_string() }),
-            }
-            added += 1;
-        }
+        let added = lines.iter().filter(|line| merge_line(&mut call.lines, &mut call.seen, line) != Merge::Skipped).count();
         if call.lines.len() > KEEP_LINES {
             call.lines.drain(..call.lines.len() - KEEP_LINES);
         }
         added
+    }
+
+    /// What was said on the seat's open call so far (a round-table started from a 1:1 call).
+    pub fn lines(&self, seat_id: &str) -> Vec<TranscriptLine> {
+        self.open.get(seat_id).map(|call| call.lines.clone()).unwrap_or_default()
     }
 
     /// Open a call when a seat starts dialling, close it when the seat leaves. A switch that
@@ -94,27 +84,64 @@ impl CallLog {
     }
 }
 
+/// What one caption line did to a transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Merge {
+    /// Not a user/assistant line, empty, or already seen.
+    Skipped,
+    /// The last line of the same role, still being spoken, came back longer.
+    Grew,
+    Added,
+}
+
+/// Add a scraped line to `lines`, deduped by role and text. A bubble that is still being spoken
+/// comes back longer each scrape: the latest version replaces the last line of the same role.
+pub(crate) fn merge_line(lines: &mut Vec<TranscriptLine>, seen: &mut HashSet<String>, line: &TranscriptLine) -> Merge {
+    if line.role != "user" && line.role != "assistant" {
+        return Merge::Skipped;
+    }
+    let content = line.content.trim();
+    if content.is_empty() || !seen.insert(format!("{}\n{content}", line.role)) {
+        return Merge::Skipped;
+    }
+    match lines.last_mut() {
+        Some(last) if last.role == line.role && content.starts_with(last.content.as_str()) => {
+            last.content = content.to_string();
+            Merge::Grew
+        }
+        _ => {
+            lines.push(TranscriptLine { role: line.role.clone(), content: content.to_string() });
+            Merge::Added
+        }
+    }
+}
+
+/// Marker, heading, the turns, a footer, within `max_chars`: the oldest turns go first.
+pub(crate) fn bounded_brief(marker: &str, heading: &str, mut turns: Vec<String>, footer: &str, max_chars: usize) -> String {
+    let frame = marker.chars().count() + heading.chars().count() + footer.chars().count() + 3;
+    while turns.len() > 1 && frame + turns.iter().map(|t| t.chars().count() + 1).sum::<usize>() > max_chars {
+        turns.remove(0);
+    }
+    let mut out = format!("{marker}\n{heading}\n");
+    for turn in &turns {
+        out.push_str(turn);
+        out.push('\n');
+    }
+    out.push_str(footer);
+    out
+}
+
 /// Marker, heading, the last turns, the ask. When it runs long the oldest turns go first.
 pub fn handoff_brief(lines: &[TranscriptLine], text: &BriefText) -> String {
     let tail = &lines[lines.len().saturating_sub(HANDOFF_TURNS)..];
-    let mut turns: Vec<String> = tail
+    let turns: Vec<String> = tail
         .iter()
         .map(|l| {
             let who = if l.role == "user" { &text.me } else { &text.them };
             text.turn.replace("{who}", who).replace("{text}", &truncate_chars(l.content.trim(), TURN_CHARS))
         })
         .collect();
-    let frame = HANDOFF_MARKER.chars().count() + text.heading.chars().count() + text.ask.chars().count() + 3;
-    while turns.len() > 1 && frame + turns.iter().map(|t| t.chars().count() + 1).sum::<usize>() > BRIEF_CHARS {
-        turns.remove(0);
-    }
-    let mut out = format!("{HANDOFF_MARKER}\n{}\n", text.heading);
-    for turn in &turns {
-        out.push_str(turn);
-        out.push('\n');
-    }
-    out.push_str(&text.ask);
-    out
+    bounded_brief(HANDOFF_MARKER, &text.heading, turns, &text.ask, BRIEF_CHARS)
 }
 
 #[cfg(test)]
@@ -166,6 +193,13 @@ mod tests {
         assert_eq!(handoff.lines.iter().map(|l| l.content.as_str()).collect::<Vec<_>>(), ["plan a trip to Kyoto", "Spring or autumn?", "autumn"]);
         assert_eq!(log.on_lines("copilot", &[line("user", "hi")]), 1, "the new seat has its own call");
         assert_eq!(log.on_lines("dot", &[line("user", "late")]), 0, "the old call is closed");
+    }
+
+    #[test]
+    fn the_open_calls_lines_can_seed_a_room() {
+        let log = live_dot();
+        assert_eq!(log.lines("dot").iter().map(|l| l.content.as_str()).collect::<Vec<_>>(), ["plan a trip to Kyoto", "Spring or autumn?"]);
+        assert!(log.lines("copilot").is_empty());
     }
 
     #[test]
