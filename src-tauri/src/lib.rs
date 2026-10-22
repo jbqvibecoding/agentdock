@@ -13,12 +13,12 @@ pub mod seats;
 pub mod settings;
 pub mod state;
 
-use drivers::{app::AppDriver, web, DriverError, ProbeResult, Registry};
+use drivers::{app::AppDriver, web, DriverError, ProbeResult, Registry, RelayOutcome, RelayPayload, RelayReport};
 use hotkeys::HotkeyAction;
 use seats::{DriverKind, Seat, SeatIcon, SeatStatus, SeatsConfig};
 use serde::{Deserialize, Serialize};
 use settings::AppSettings;
-use state::{DockState, Effect, Event, Machine, Phase};
+use state::{DockState, Effect, Event, MemberRef, Machine, Phase, RoomSpec};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -45,6 +45,16 @@ pub struct AppState {
     pub memory: Mutex<memory::CallBook>,
     /// What was said on the live call, kept locally for a warm transfer. Never leaves the process.
     pub calllog: Mutex<calllog::CallLog>,
+    /// Saved group contacts (`groups.json`).
+    pub groups: Mutex<groups::GroupsConfig>,
+    /// The open room's ledger: who said what, and what each member still has to be told.
+    pub table: Mutex<roundtable::Table>,
+    /// The relay note the next call to a seat sends (taken by its DriverCall).
+    pub relay_outbox: Mutex<HashMap<String, RelayPayload>>,
+    /// Relay notes on their way, by id → the seat they were sent to.
+    pub relay_inflight: Mutex<HashMap<String, String>>,
+    /// Recent relay reports by id (a test relay in a hidden webview waits for its own).
+    pub relay_results: Mutex<HashMap<String, RelayReport>>,
     /// `EVEROS_API_KEY` + settings. Rebuilt when settings are saved. Missing key → inactive.
     pub everos: Mutex<everos::Client>,
     /// The connection to the user's Chrome, opened on the first web call that goes there.
@@ -120,12 +130,17 @@ fn seat_views(st: &AppState) -> Vec<SeatView> {
 
 fn dispatch<R: Runtime>(app: &AppHandle<R>, ev: Event) {
     let st = app.state::<AppState>();
-    let before = st.machine.lock().unwrap().state.phase.clone();
-    let effects = st.machine.lock().unwrap().handle(ev);
-    let after = st.machine.lock().unwrap().state.phase.clone();
+    // One lock: before, the event and after belong together even when events race.
+    let (before, effects, after) = {
+        let mut m = st.machine.lock().unwrap();
+        let before = m.state.clone();
+        let effects = m.handle(ev);
+        (before, effects, m.state.clone())
+    };
     emit_state(app, &st);
-    memory_on_phase(app, &before, &after);
+    memory_on_phase(app, &before.phase, &after.phase);
     calllog_on_phase(app, &before, &after);
+    roundtable_on_state(app, &before, &after);
     let (driver_work, rest): (Vec<Effect>, Vec<Effect>) = effects.into_iter().partition(|fx| matches!(fx, Effect::DriverCall(_) | Effect::DriverHangup(_)));
     for fx in rest {
         apply_effect(app, fx);
@@ -160,6 +175,8 @@ fn run_driver_effects<R: Runtime>(app: &AppHandle<R>, effects: Vec<Effect>) {
 
 /// Place a call; a failure turns into "needs you" with a reason a person can act on.
 fn place_call<R: Runtime>(app: &AppHandle<R>, seat: String) {
+    // a room member waited for the previous floor to hang up: its dial clock starts now
+    dispatch(app, Event::DialStarted(seat.clone()));
     let Err(e) = run_driver(app, &seat, DriverOp::Call) else { return };
     tracing::warn!("call {seat} failed: {e}");
     let (name, service, web, target) = app.state::<AppState>().seats.lock().unwrap().get(&seat)
@@ -235,7 +252,8 @@ async fn recall_and_inject<R: Runtime>(app: AppHandle<R>, client: everos::Client
         }
     };
     tracing::info!("everos recall for {}: {} chars", recall.seat_id, brief.chars().count());
-    if brief.is_empty() || !client.status().inject_context {
+    // In a room the composer belongs to the relay note.
+    if brief.is_empty() || !client.status().inject_context || app.state::<AppState>().machine.lock().unwrap().state.room.is_some() {
         return;
     }
     let selectors = {
@@ -279,10 +297,11 @@ async fn inject_when_ready<R: Runtime>(app: AppHandle<R>, seat_id: String, scrip
 /// Open and close the local call record with the phase. When a switch commits with carry on, paste
 /// the outgoing call's last turns into the next seat's composer (never sent). Web seats only: an
 /// app seat's call steps empty its message box before the voice button shows.
-fn calllog_on_phase<R: Runtime>(app: &AppHandle<R>, before: &Phase, after: &Phase) {
+fn calllog_on_phase<R: Runtime>(app: &AppHandle<R>, before: &DockState, after: &DockState) {
     let st = app.state::<AppState>();
-    let Some(handoff) = st.calllog.lock().unwrap().on_phase(before, after) else { return };
-    if !st.settings.lock().unwrap().warm_transfer {
+    let Some(handoff) = st.calllog.lock().unwrap().on_phase(&before.phase, &after.phase) else { return };
+    // A room passes the floor with its own relay note (roundtable_on_state).
+    if !st.settings.lock().unwrap().warm_transfer || before.room.is_some() || after.room.is_some() {
         return;
     }
     let (from_name, composer) = {
@@ -309,6 +328,154 @@ fn calllog_on_phase<R: Runtime>(app: &AppHandle<R>, before: &Phase, after: &Phas
     let _ = app.emit("dock:handoff", serde_json::json!({ "from": handoff.from, "to": handoff.to, "lines": handoff.lines.len() }));
     let app = app.clone();
     tauri::async_runtime::spawn(async move { inject_when_ready(app, handoff.to, script, "handoff").await });
+}
+
+/// Follow the room: seed a promoted call, and prepare the relay note for whoever takes the floor.
+/// A note the seat's driver can send waits in `relay_outbox` for its DriverCall (which runs after
+/// this, on the driver lane); a web seat that cannot send gets it pasted, unsent.
+fn roundtable_on_state<R: Runtime>(app: &AppHandle<R>, before: &DockState, after: &DockState) {
+    let st = app.state::<AppState>();
+    let actions = st.table.lock().unwrap().on_state(before, after);
+    for action in actions {
+        match action {
+            roundtable::TableAction::Opened => {
+                let promoted = memory::memory_seat(&before.phase).filter(|s| before.room.is_none() && memory::memory_seat(&after.phase) == Some(*s));
+                if let Some(seat) = promoted {
+                    let lines = st.calllog.lock().unwrap().lines(seat);
+                    st.table.lock().unwrap().seed(seat, &lines);
+                }
+                tracing::info!("room opened");
+            }
+            roundtable::TableAction::Closed => {
+                st.relay_outbox.lock().unwrap().clear();
+                st.relay_inflight.lock().unwrap().clear();
+                tracing::info!("room closed");
+                let _ = app.emit("room:lines", Vec::<roundtable::Utterance>::new());
+            }
+            roundtable::TableAction::RelayPlanned(plan) => {
+                let text = relay_text(&st, after);
+                let brief = roundtable::relay_brief(&plan, |s| speaker_name(&st, s), &text);
+                let Some(seat) = plan.to.seat().map(str::to_string) else { continue };
+                let (spec, web) = {
+                    let seats = st.seats.lock().unwrap();
+                    match seats.get(&seat).map(|s| &s.driver) {
+                        Some(DriverKind::Web { driver, .. }) => (st.registry.get(driver).ok().cloned(), true),
+                        Some(DriverKind::App { driver, .. }) => (st.registry.get(driver).ok().cloned(), false),
+                        None => (None, false),
+                    }
+                };
+                let mode = match spec {
+                    Some(spec) if drivers::relay_capable(&spec) => {
+                        st.relay_outbox.lock().unwrap().insert(seat.clone(), RelayPayload { id: plan.id.clone(), text: brief });
+                        "send"
+                    }
+                    Some(spec) if web => {
+                        let marker = format!("{}{}]", roundtable::RELAY_MARKER_PREFIX, plan.id);
+                        let script = drivers::inject_text_script(&brief, &marker, &spec.memory.composer);
+                        st.table.lock().unwrap().relay_outcome(&plan.id, RelayOutcome::Pasted);
+                        let app = app.clone();
+                        let seat = seat.clone();
+                        tauri::async_runtime::spawn(async move { inject_when_ready(app, seat, script, "relay").await });
+                        "paste"
+                    }
+                    _ => {
+                        st.table.lock().unwrap().relay_outcome(&plan.id, RelayOutcome::NotSent);
+                        "none"
+                    }
+                };
+                tracing::info!("relay {} → {seat}: {} lines, {mode}", plan.id, plan.lines.len());
+                let _ = app.emit("room:relay", serde_json::json!({ "id": plan.id, "to": seat, "turn": plan.turn, "lines": plan.lines.len(), "mode": mode }));
+            }
+        }
+    }
+}
+
+/// The relay note's wording, with the room's roster.
+fn relay_text(st: &AppState, state: &DockState) -> roundtable::RelayText {
+    let names: Vec<String> = std::iter::once(i18n::t("rt.me"))
+        .chain(state.room.iter().flat_map(|r| r.members.iter().map(|m| speaker_name(st, &roundtable::Speaker::from(&m.who)))))
+        .collect();
+    roundtable::RelayText {
+        heading: i18n::tf("rt.heading", &[("names", &names.join("、"))]),
+        me: i18n::t("rt.me"),
+        turn: i18n::t("rt.turn"),
+        unheard: i18n::t("rt.unheard"),
+        guard: i18n::t("rt.guard"),
+        ask: i18n::t("rt.ask"),
+    }
+}
+
+fn speaker_name(st: &AppState, s: &roundtable::Speaker) -> String {
+    match s {
+        roundtable::Speaker::User => i18n::t("rt.me"),
+        roundtable::Speaker::Seat(id) => st.seats.lock().unwrap().get(id).map(|s| s.name.clone()).unwrap_or_else(|| id.clone()),
+        roundtable::Speaker::Remote(id) => id.clone(),
+    }
+}
+
+/// A relay note's fate, from a driver (app run report, Chrome eval value, webview IPC).
+fn relay_done<R: Runtime>(app: &AppHandle<R>, report: RelayReport) {
+    let st = app.state::<AppState>();
+    st.relay_inflight.lock().unwrap().remove(&report.id);
+    st.table.lock().unwrap().relay_outcome(&report.id, report.outcome);
+    {
+        let mut results = st.relay_results.lock().unwrap();
+        if results.len() > 32 {
+            results.clear();
+        }
+        results.insert(report.id.clone(), report.clone());
+    }
+    tracing::info!("relay {}: {:?} {}", report.id, report.outcome, report.why);
+    let _ = app.emit("room:relay_outcome", &report);
+}
+
+/// New caption utterances of the floor holder: shown in the room panel, and a member's name at the
+/// start of what the user said passes the floor (when the room allows it), capped like yobiru wakes.
+fn room_lines<R: Runtime>(app: &AppHandle<R>, touched: Vec<roundtable::Utterance>) {
+    if touched.is_empty() {
+        return;
+    }
+    let st = app.state::<AppState>();
+    let _ = app.emit("room:lines", &touched);
+    let (room, floor) = {
+        let m = st.machine.lock().unwrap();
+        (m.state.room.clone(), m.current_seat().map(|s| MemberRef::Seat(s.to_string())))
+    };
+    let Some(room) = room.filter(|r| r.addressed) else { return };
+    let names = room_member_names(&st, &room);
+    for u in touched.iter().filter(|u| u.speaker == roundtable::Speaker::User && !u.typed) {
+        let Some(to) = roundtable::addressed(&u.text, &names, floor.as_ref()) else { continue };
+        let mut table = st.table.lock().unwrap();
+        if !table.claim(u.seq) {
+            continue;
+        }
+        match table.name_pass_decision(std::time::Instant::now()) {
+            Ok(()) => {
+                drop(table);
+                if let Some(seat) = to.seat() {
+                    tracing::info!("name pass → {seat}");
+                    dispatch(app, Event::Call(seat.to_string()));
+                }
+            }
+            Err(why) => tracing::info!("name pass refused: {why}"),
+        }
+    }
+}
+
+/// Each member's names for a spoken pass: its seat name plus its aliases in the saved group.
+fn room_member_names(st: &AppState, room: &state::Room) -> Vec<(MemberRef, Vec<String>)> {
+    let groups = st.groups.lock().unwrap();
+    let group = room.group.as_deref().and_then(|g| groups.get(g));
+    room.members
+        .iter()
+        .map(|m| {
+            let mut names = vec![speaker_name(st, &roundtable::Speaker::from(&m.who))];
+            if let Some(gm) = group.and_then(|g| g.members.iter().find(|gm| gm.who == m.who)) {
+                names.extend(gm.aliases.iter().cloned());
+            }
+            (m.who.clone(), names)
+        })
+        .collect()
 }
 
 async fn write_batch(client: everos::Client, batch: memory::Persist) {
@@ -385,12 +552,15 @@ fn run_driver<R: Runtime>(app: &AppHandle<R>, seat_id: &str, op: DriverOp) -> Re
     match &seat.driver {
         DriverKind::Web { driver, url } => {
             let spec = st.registry.get(driver)?;
+            let relay = if matches!(op, DriverOp::Call) { take_relay(&st, seat_id) } else { None };
+            let call = drivers::bind_relay(&spec.call, relay.as_ref(), &spec.memory, true);
             if use_chrome(&st) {
-                return chrome_op(app, &st.chrome, seat_id, spec, spec.url.as_deref().unwrap_or(url), op);
+                return chrome_op(app, &st.chrome, seat_id, spec, spec.url.as_deref().unwrap_or(url), op, &call, relay.as_ref());
             }
             let win = web::ensure_webview(app, seat_id, spec)?;
             match op {
-                DriverOp::Call => web::run_steps(&win, &spec.call),
+                // the relay step reports back through `relay_report`
+                DriverOp::Call => web::run_steps(&win, &call),
                 DriverOp::Hangup => web::run_steps(&win, &spec.hangup),
                 DriverOp::Mute => web::run_steps(&win, &spec.mute),
                 DriverOp::Unmute => web::run_steps(&win, &spec.unmute),
@@ -408,7 +578,17 @@ fn run_driver<R: Runtime>(app: &AppHandle<R>, seat_id: &str, op: DriverOp) -> Re
             }
             let steps = |s: &[drivers::Step]| drivers::bind_target(s, seat.target.as_deref());
             let res = match op {
-                DriverOp::Call => AppDriver::place_call(spec, &steps(&spec.call)),
+                DriverOp::Call => {
+                    let relay = take_relay(&st, seat_id);
+                    let call = drivers::bind_relay(&steps(&spec.call), relay.as_ref(), &spec.memory, false);
+                    let mut report = drivers::app::RunReport::default();
+                    let res = AppDriver::place_call(spec, &call, &mut report);
+                    if let Some(p) = relay {
+                        // not reached means an earlier step failed: known not sent
+                        relay_done(app, report.relay.unwrap_or(RelayReport { id: p.id, outcome: RelayOutcome::NotSent, why: "not-reached".into() }));
+                    }
+                    res
+                }
                 DriverOp::Hangup => AppDriver::hang_up(spec, &steps(&spec.hangup)),
                 DriverOp::Mute => AppDriver::run_steps(spec, &steps(&spec.mute)),
                 DriverOp::Unmute => AppDriver::run_steps(spec, &steps(&spec.unmute)),
@@ -424,6 +604,13 @@ fn run_driver<R: Runtime>(app: &AppHandle<R>, seat_id: &str, op: DriverOp) -> Re
     }
 }
 
+/// The relay note waiting for this seat's call, now on its way.
+fn take_relay(st: &AppState, seat_id: &str) -> Option<RelayPayload> {
+    let payload = st.relay_outbox.lock().unwrap().remove(seat_id)?;
+    st.relay_inflight.lock().unwrap().insert(payload.id.clone(), seat_id.to_string());
+    Some(payload)
+}
+
 /// Web seats go to the user's Chrome when remote debugging is on there (and the setting allows),
 /// or once a Chrome connection exists; otherwise to AgentDock's own hidden webview.
 fn use_chrome(st: &AppState) -> bool {
@@ -433,9 +620,26 @@ fn use_chrome(st: &AppState) -> bool {
 /// The same driver scripts, run in the seat's own background tab in Chrome. Only a call opens the
 /// tab (and, the first time, the connection Chrome asks the user to allow); the rest use it if it
 /// exists. Hang up / mute wait for a running call script; a probe skips a beat instead.
-fn chrome_op<R: Runtime>(app: &AppHandle<R>, chrome: &drivers::chrome::Chrome, seat_id: &str, spec: &drivers::DriverSpec, url: &str, op: DriverOp) -> Result<(), DriverError> {
+/// A call with a relay note runs as two evals split after the note, so a note that takes a while to
+/// settle never pushes one eval past the connection's read timeout.
+#[allow(clippy::too_many_arguments)]
+fn chrome_op<R: Runtime>(app: &AppHandle<R>, chrome: &drivers::chrome::Chrome, seat_id: &str, spec: &drivers::DriverSpec, url: &str, op: DriverOp, call: &[drivers::Step], relay: Option<&RelayPayload>) -> Result<(), DriverError> {
     let steps = match op {
-        DriverOp::Call => return chrome.eval(seat_id, url, &drivers::steps_script(&spec.call), true).map(drop),
+        DriverOp::Call => {
+            let (head, tail) = drivers::split_at_relay(call);
+            let res = chrome.eval(seat_id, url, &drivers::steps_script(&head), true);
+            if let Some(p) = relay {
+                let report = |outcome, why: &str| RelayReport { id: p.id.clone(), outcome, why: why.into() };
+                relay_done(app, match &res {
+                    Ok(v) => drivers::relay_in(v).unwrap_or_else(|| report(RelayOutcome::NotSent, "no-report")),
+                    // a script error comes from a step before the note (its branch never throws)
+                    Err(DriverError::NotFound(_) | DriverError::Step(_)) => report(RelayOutcome::NotSent, "not-reached"),
+                    Err(_) => report(RelayOutcome::Uncertain, "chrome"),
+                });
+            }
+            res?;
+            return if tail.is_empty() { Ok(()) } else { chrome.eval(seat_id, url, &drivers::steps_script(&tail), false).map(drop) };
+        }
         DriverOp::Hangup => &spec.hangup,
         DriverOp::Mute => &spec.mute,
         DriverOp::Unmute => &spec.unmute,
@@ -576,10 +780,187 @@ fn undo_switch(app: AppHandle) {
     dispatch(&app, Event::Undo);
 }
 
-/// The Dock's "carry the conversation" chip during a switch.
+/// The Dock's "carry the conversation" chip during a switch. In a room, turning it on is the
+/// consent to send what was said to the other members.
 #[tauri::command]
 fn set_carry(app: AppHandle, carry: bool) {
     dispatch(&app, Event::SetCarry(carry));
+}
+
+// ───────────────────────── commands: rooms ─────────────────────────
+
+fn new_room_id() -> String {
+    format!("{:011x}", memory::now_ms())
+}
+
+/// Start a round-table: a saved group, or seats picked on the Dock (no consent to send yet).
+#[tauri::command]
+fn start_room(app: AppHandle, seat_ids: Option<Vec<String>>, group_id: Option<String>, first: Option<String>) -> CmdResult<()> {
+    let st = app.state::<AppState>();
+    let first = first.map(MemberRef::Seat);
+    let spec = match group_id {
+        Some(gid) => {
+            let groups = st.groups.lock().unwrap();
+            let g = groups.get(&gid).ok_or("unknown group")?;
+            RoomSpec { id: new_room_id(), name: Some(g.name.clone()), group: Some(g.id.clone()), members: g.members.iter().map(|m| m.who.clone()).collect(), relay: g.relay, addressed: g.addressed, first }
+        }
+        None => RoomSpec { id: new_room_id(), name: None, group: None, members: seat_ids.unwrap_or_default().into_iter().map(MemberRef::Seat).collect(), relay: false, addressed: false, first },
+    };
+    if spec.members.len() < 2 {
+        return Err(i18n::t("room.too_few"));
+    }
+    dispatch(&app, Event::RoomOpen(spec));
+    Ok(())
+}
+
+/// 拉群 during a call, or add someone to the room.
+#[tauri::command]
+fn room_add(app: AppHandle, seat_id: String) {
+    dispatch(&app, Event::RoomAdd { who: MemberRef::Seat(seat_id), room_id: new_room_id() });
+}
+
+#[tauri::command]
+fn room_drop(app: AppHandle, seat_id: String) {
+    dispatch(&app, Event::RoomDrop(MemberRef::Seat(seat_id)));
+}
+
+#[tauri::command]
+fn floor_next(app: AppHandle) {
+    dispatch(&app, Event::FloorNext);
+}
+
+#[tauri::command]
+fn release_floor(app: AppHandle) {
+    dispatch(&app, Event::ReleaseFloor);
+}
+
+/// A line typed (or dictated) in the room panel: the others hear it in their next relay note.
+#[tauri::command]
+fn room_say(app: AppHandle, text: String) -> CmdResult<()> {
+    let u = app.state::<AppState>().table.lock().unwrap().on_typed(&text).ok_or("no room")?;
+    let _ = app.emit("room:lines", vec![u]);
+    Ok(())
+}
+
+#[tauri::command]
+fn room_ledger(st: tauri::State<AppState>) -> Vec<roundtable::Utterance> {
+    st.table.lock().unwrap().ledger().to_vec()
+}
+
+#[tauri::command]
+fn get_groups(st: tauri::State<AppState>) -> Vec<groups::GroupContact> {
+    st.groups.lock().unwrap().groups.clone()
+}
+
+/// Errors are i18n keys (`grp.err.*`) for the settings window to show.
+#[tauri::command]
+fn save_groups(app: AppHandle, groups: Vec<groups::GroupContact>) -> CmdResult<()> {
+    for g in &groups {
+        groups::validate(g).map_err(|e| format!("grp.err.{e}"))?;
+    }
+    let st = app.state::<AppState>();
+    let cfg = groups::GroupsConfig { groups };
+    cfg.save(&groups::groups_path(&st.config_dir)).map_err(err)?;
+    *st.groups.lock().unwrap() = cfg.clone();
+    let _ = app.emit("groups:changed", &cfg.groups);
+    Ok(())
+}
+
+/// Before dialling a room: per member, what is done, what is missing, and who has to act.
+#[tauri::command]
+fn room_preflight(st: tauri::State<AppState>, seat_ids: Vec<String>, relay: bool) -> Vec<groups::CheckRow> {
+    let seats = st.seats.lock().unwrap();
+    seat_ids
+        .into_iter()
+        .flat_map(|id| {
+            let who = MemberRef::Seat(id.clone());
+            let Some(s) = seats.get(&id) else { return groups::preflight(&who, &groups::MemberFacts { placeholder: true, ..Default::default() }, relay) };
+            let (driver, app_kind, installed) = match &s.driver {
+                DriverKind::Web { driver, .. } => (driver, false, true),
+                DriverKind::App { driver, bundle_id } => (driver, true, AppDriver::is_installed(bundle_id)),
+            };
+            let spec = st.registry.get(driver).ok();
+            let facts = groups::MemberFacts {
+                app: app_kind,
+                enabled: s.enabled,
+                installed,
+                placeholder: spec.map_or(true, |d| d.pending),
+                needs_sign_in: !app_kind && s.status == SeatStatus::NeedsAuth,
+                ax_trusted: app_kind && AppDriver::is_ax_trusted(),
+                relay_capable: spec.is_some_and(drivers::relay_capable),
+                captions: !app_kind || spec.is_some_and(|d| !d.memory.transcript.is_empty()),
+                remote_problem: None,
+            };
+            groups::preflight(&who, &facts, relay)
+        })
+        .collect()
+}
+
+/// A relay step's report from inside a hidden seat webview.
+#[tauri::command]
+fn relay_report(app: AppHandle, window: tauri::Window, report: RelayReport) {
+    let seat = app.state::<AppState>().relay_inflight.lock().unwrap().get(&report.id).cloned();
+    match seat {
+        Some(seat) if window.label() == web::window_label(&seat) => relay_done(&app, report),
+        _ => tracing::warn!("relay report {} from unexpected window {}", report.id, window.label()),
+    }
+}
+
+/// Settings › 测试转述: run a seat's call steps up to its relay step with a marker-only note, so
+/// nothing is dialled, and say whether the note went out.
+#[tauri::command]
+async fn test_relay(app: AppHandle, seat_id: String) -> CmdResult<RelayReport> {
+    let id = roundtable::relay_id(&new_room_id(), 0);
+    let text = format!("{}{}]\n{}", roundtable::RELAY_MARKER_PREFIX, id, i18n::t("rt.test"));
+    let payload = RelayPayload { id: id.clone(), text };
+    let app2 = app.clone();
+    let direct = tauri::async_runtime::spawn_blocking(move || -> CmdResult<Option<RelayReport>> {
+        let st = app2.state::<AppState>();
+        let _lane = st.driver_lane.lock().unwrap_or_else(|e| e.into_inner());
+        let seat = st.seats.lock().unwrap().get(&seat_id).cloned().ok_or("unknown seat")?;
+        let not_capable = || i18n::t("relay.not_capable");
+        match &seat.driver {
+            DriverKind::Web { driver, url } => {
+                let spec = st.registry.get(driver).map_err(err)?;
+                if !drivers::relay_capable(spec) {
+                    return Err(not_capable());
+                }
+                let (head, _) = drivers::split_at_relay(&drivers::bind_relay(&spec.call, Some(&payload), &spec.memory, true));
+                st.relay_inflight.lock().unwrap().insert(payload.id.clone(), seat_id.clone());
+                if use_chrome(&st) {
+                    let v = st.chrome.eval(&seat_id, spec.url.as_deref().unwrap_or(url), &drivers::steps_script(&head), true).map_err(err)?;
+                    return Ok(drivers::relay_in(&v));
+                }
+                let win = web::ensure_webview(&app2, &seat_id, spec).map_err(err)?;
+                web::run_steps(&win, &head).map_err(err)?;
+                Ok(None)
+            }
+            DriverKind::App { driver, .. } => {
+                let spec = st.registry.get(driver).map_err(err)?;
+                if !drivers::relay_capable(spec) {
+                    return Err(not_capable());
+                }
+                let steps = drivers::bind_relay(&drivers::bind_target(&spec.call, seat.target.as_deref()), Some(&payload), &spec.memory, false);
+                let (head, _) = drivers::split_at_relay(&steps);
+                let mut report = drivers::app::RunReport::default();
+                AppDriver::run_steps_reporting(spec, &head, &mut report).map_err(err)?;
+                Ok(report.relay)
+            }
+        }
+    })
+    .await
+    .map_err(err)??;
+    if let Some(r) = direct {
+        return Ok(r);
+    }
+    // a hidden webview reports through `relay_report`: wait for it
+    for _ in 0..200 {
+        if let Some(r) = app.state::<AppState>().relay_results.lock().unwrap().remove(&id) {
+            return Ok(r);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(i18n::t("relay.no_report"))
 }
 
 /// The dock window resizes itself to the exact glass shape so the rest of the screen stays
@@ -1041,14 +1422,18 @@ fn memory_report(app: AppHandle, window: tauri::Window, seat_id: String, lines: 
 /// warm transfer, and written to EverOS when memory is on.
 fn caption_lines(app: &AppHandle, seat_id: &str, lines: &[memory::TranscriptLine]) {
     let st = app.state::<AppState>();
-    st.calllog.lock().unwrap().on_lines(seat_id, lines);
+    let touched = st.table.lock().unwrap().on_lines(seat_id, lines);
+    // A relay note in the chat is not something anyone said: keep it out of CallLog and EverOS.
+    let lines: Vec<memory::TranscriptLine> = lines.iter().filter(|l| !l.content.contains(roundtable::RELAY_MARKER_PREFIX)).cloned().collect();
+    st.calllog.lock().unwrap().on_lines(seat_id, &lines);
+    room_lines(app, touched);
     let client = st.everos.lock().unwrap().clone();
     if !client.is_active() {
         return;
     }
     let batch = {
         let mut book = st.memory.lock().unwrap();
-        book.on_lines(seat_id, lines, memory::now_ms())
+        book.on_lines(seat_id, &lines, memory::now_ms())
     };
     if let Some(batch) = batch {
         tauri::async_runtime::spawn(async move { write_batch(client, batch).await });
@@ -2219,6 +2604,11 @@ pub fn run() {
             let mut seats = SeatsConfig::load(&seats::seats_path(&config_dir));
             refresh_app_status(&mut seats.seats, &registry);
             let _ = seats.save(&seats::seats_path(&config_dir));
+            let mut groups_cfg = groups::GroupsConfig::load(&groups::groups_path(&config_dir));
+            groups_cfg.retain_known(|m| match m {
+                MemberRef::Seat(id) => seats.get(id).is_some(),
+                MemberRef::Remote(_) => true,
+            });
             let mut settings = AppSettings::load(&settings::settings_path(&config_dir));
             i18n::set(settings.language);
             let env = everos::MemoryEnv::from_env();
@@ -2261,6 +2651,11 @@ pub fn run() {
                 dock_size: Mutex::new(init_size),
                 memory: Mutex::new(memory::CallBook::default()),
                 calllog: Mutex::new(calllog::CallLog::default()),
+                groups: Mutex::new(groups_cfg),
+                table: Mutex::new(roundtable::Table::default()),
+                relay_outbox: Mutex::new(HashMap::new()),
+                relay_inflight: Mutex::new(HashMap::new()),
+                relay_results: Mutex::new(HashMap::new()),
                 everos: Mutex::new(everos_client),
                 chrome: Default::default(),
             });
@@ -2319,7 +2714,8 @@ pub fn run() {
                     let active = st.machine.lock().unwrap().current_seat().map(str::to_string);
                     let phase_idle = matches!(st.machine.lock().unwrap().state.phase, Phase::Idle);
                     // Captions feed EverOS and the warm transfer; with both off, pages are not read.
-                    let captions_on = st.everos.lock().unwrap().is_active() || st.settings.lock().unwrap().warm_transfer;
+                    let room_open = st.machine.lock().unwrap().state.room.is_some();
+                    let captions_on = room_open || st.everos.lock().unwrap().is_active() || st.settings.lock().unwrap().warm_transfer;
                     let seats: Vec<Seat> = st.seats.lock().unwrap().seats.clone();
                     let logging_in: Vec<String> = st.logging_in.lock().unwrap().iter().cloned().collect();
                     // Mid call / hang-up nothing is settled: in a switch between two Bots of one
@@ -2337,6 +2733,17 @@ pub fn run() {
                         }
                         // Visible captions about every 2s while this seat is the live call.
                         if captions_on && is_active && !phase_idle && n % 4 == 0 {
+                            // An app floor holder in a room: read its newest bubbles off the AX tree
+                            // (needs the driver's `memory.transcript` selectors), never mid driver work.
+                            if let DriverKind::App { driver, .. } = &seat.driver {
+                                if room_open && !drivers_busy && n % 8 == 0 {
+                                    if let Some(spec) = st.registry.get(driver).ok().filter(|s| !s.memory.transcript.is_empty()) {
+                                        if let Ok(lines) = AppDriver::transcript(spec) {
+                                            caption_lines(&handle, &seat.id, &lines);
+                                        }
+                                    }
+                                }
+                            }
                             if let DriverKind::Web { driver, .. } = &seat.driver {
                                 let selectors = st.registry.get(driver).map(|spec| spec.memory.transcript.clone()).unwrap_or_default();
                                 let script = drivers::transcript_script(&selectors, &seat.id);
@@ -2356,7 +2763,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, set_carry, resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
+            get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, set_carry,
+            start_room, room_add, room_drop, floor_next, release_floor, room_say, room_ledger, get_groups, save_groups, room_preflight, relay_report, test_relay,
+            resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat, chrome_status, app_targets,
             driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,
             get_settings, save_settings, hotkey_conflicts, open_settings, quit, host_info, glass_scheme

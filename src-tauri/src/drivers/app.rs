@@ -8,7 +8,10 @@
 //! (Chromium puts `aria-label` in the description, text in the value): `[text]` is an exact match,
 //! `[~part]` a label containing `part`, `[@text]` an element whose first text inside is `text`.
 
-use super::{DriverError, DriverSpec, ProbeResult, Step};
+use super::{DriverError, DriverSpec, ProbeResult, RelayReport, Step};
+#[cfg(target_os = "macos")]
+use super::RelayOutcome;
+use crate::memory::TranscriptLine;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Title {
@@ -141,6 +144,33 @@ enum Mode {
 #[derive(Debug, Default)]
 pub struct AppDriver;
 
+/// What a step run did besides succeeding or failing: a relay note's fate is known even when a
+/// later step (the voice button) fails.
+#[derive(Debug, Default)]
+pub struct RunReport {
+    pub relay: Option<RelayReport>,
+}
+
+/// Newest message bubbles read per transcript scrape.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const TRANSCRIPT_MAX: usize = 12;
+
+/// A bubble's role from its DOM classes (Chromium exposes them as `AXDOMClassList`): one side's
+/// hints and not the other's, else unknown, and unknown text never becomes a turn.
+pub fn role_from_classes(classes: &[String]) -> Option<&'static str> {
+    let has = |hints: &[&str]| classes.iter().any(|c| {
+        let c = c.to_ascii_lowercase();
+        hints.iter().any(|h| c.split(|ch: char| !ch.is_ascii_alphanumeric()).any(|part| part == *h))
+    });
+    let user = has(&["user", "human", "self", "outgoing", "me"]);
+    let bot = has(&["assistant", "bot", "agent", "ai", "incoming", "model"]);
+    match (user, bot) {
+        (true, false) => Some("user"),
+        (false, true) => Some("assistant"),
+        _ => None,
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -202,25 +232,30 @@ impl AppDriver {
     }
 
     pub fn run_steps(spec: &DriverSpec, steps: &[Step]) -> Result<(), DriverError> {
-        Self::run(spec, steps, Mode::Plain)
+        Self::run(spec, steps, Mode::Plain, &mut RunReport::default())
+    }
+
+    /// Plain steps whose relay outcome the caller wants (Settings › 测试转述).
+    pub fn run_steps_reporting(spec: &DriverSpec, steps: &[Step], report: &mut RunReport) -> Result<(), DriverError> {
+        Self::run(spec, steps, Mode::Plain, report)
     }
 
     /// Call steps. Most apps hold one call at a time: if a control is missing while the app still
     /// shows a call (not hung up yet, or started outside AgentDock), that call is ended first.
     #[cfg(target_os = "macos")]
-    pub fn place_call(spec: &DriverSpec, steps: &[Step]) -> Result<(), DriverError> {
-        Self::run(spec, steps, Mode::Call)
+    pub fn place_call(spec: &DriverSpec, steps: &[Step], report: &mut RunReport) -> Result<(), DriverError> {
+        Self::run(spec, steps, Mode::Call, report)
     }
 
     /// Hang-up steps, then a (bounded) wait until the call controls are gone, so a call placed
     /// right after, in a switch, finds the app ready for it.
     #[cfg(target_os = "macos")]
     pub fn hang_up(spec: &DriverSpec, steps: &[Step]) -> Result<(), DriverError> {
-        Self::run(spec, steps, Mode::Hangup)
+        Self::run(spec, steps, Mode::Hangup, &mut RunReport::default())
     }
 
     #[cfg(target_os = "macos")]
-    fn run(spec: &DriverSpec, steps: &[Step], mode: Mode) -> Result<(), DriverError> {
+    fn run(spec: &DriverSpec, steps: &[Step], mode: Mode, report: &mut RunReport) -> Result<(), DriverError> {
         let bundle = Self::resolve_bundle_id(spec.bundle_id.as_deref().ok_or(DriverError::Unsupported)?);
         if !Self::is_ax_trusted() {
             return Err(DriverError::NeedsAuth);
@@ -258,12 +293,72 @@ impl AppDriver {
                     run_osascript(&format!("tell application \"System Events\" to keystroke \"{}\"", key.replace('"', "\\\"")))?;
                 }
                 Step::Goto { .. } => {}
+                Step::Relay { id, text, composer, send, busy, settle_ms } if !id.is_empty() => {
+                    let (outcome, why) = Self::relay(&app, text, &parse_all(composer)?, &parse_all(send)?, &parse_all(busy)?, *settle_ms);
+                    tracing::info!("{}: relay {id} {outcome:?} {why}", spec.id);
+                    report.relay = Some(RelayReport { id: id.clone(), outcome, why: why.into() });
+                }
+                Step::Relay { .. } => {}
             }
         }
         if mode == Mode::Hangup {
             ax::wait_gone(&app, &in_call, HANGUP_WAIT);
         }
         Ok(())
+    }
+
+    /// Put the note in the composer and press Send. Sent only once the busy control (Stop) has
+    /// appeared and gone again, or the composer emptied; `wait_gone` alone would return at once,
+    /// before the app has even shown that it is answering.
+    #[cfg(target_os = "macos")]
+    fn relay(app: &ax::Cf, text: &str, composer: &[AxSelector], send: &[AxSelector], busy: &[AxSelector], settle_ms: u64) -> (RelayOutcome, &'static str) {
+        let Some(box_el) = ax::wait_for(app, composer, CLICK_WAIT) else { return (RelayOutcome::NotSent, "no-composer") };
+        if !ax::set_value(&box_el, text) {
+            return (RelayOutcome::NotSent, "set-value");
+        }
+        if send.is_empty() {
+            return (RelayOutcome::Pasted, "");
+        }
+        let Some(send_el) = ax::wait_for(app, send, std::time::Duration::from_secs(2)) else {
+            ax::set_value(&box_el, "");
+            return (RelayOutcome::NotSent, "no-send");
+        };
+        if !ax::press(&send_el) {
+            return (RelayOutcome::Uncertain, "press");
+        }
+        let settle = std::time::Duration::from_millis(settle_ms.max(1000));
+        if !busy.is_empty() && ax::wait_for(app, busy, settle.min(std::time::Duration::from_secs(3))).is_some() {
+            return if ax::wait_gone(app, busy, settle) { (RelayOutcome::Sent, "") } else { (RelayOutcome::Uncertain, "settle-timeout") };
+        }
+        let marker = text.lines().next().unwrap_or(text);
+        match ax::value(&box_el) {
+            Some(v) if v.contains(marker) => (RelayOutcome::Uncertain, "still-in-composer"),
+            _ => (RelayOutcome::Sent, ""),
+        }
+    }
+
+    /// The newest message bubbles of the app's open chat, oldest first, with roles read off their
+    /// DOM classes. Needs `memory.transcript` selectors for the bubbles.
+    #[cfg(target_os = "macos")]
+    pub fn transcript(spec: &DriverSpec) -> Result<Vec<TranscriptLine>, DriverError> {
+        let sels = parse_all(&spec.memory.transcript)?;
+        if sels.is_empty() {
+            return Ok(Vec::new());
+        }
+        let bundle = Self::resolve_bundle_id(spec.bundle_id.as_deref().ok_or(DriverError::Unsupported)?);
+        if !Self::is_ax_trusted() {
+            return Err(DriverError::NeedsAuth);
+        }
+        let Some(pid) = ax::pid_of(bundle) else { return Ok(Vec::new()) };
+        Ok(ax::texts(&ax::app(pid), &sels, TRANSCRIPT_MAX)
+            .into_iter()
+            .filter_map(|(classes, content)| role_from_classes(&classes).map(|role| TranscriptLine { role: role.into(), content }))
+            .collect())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn transcript(_spec: &DriverSpec) -> Result<Vec<TranscriptLine>, DriverError> {
+        Err(DriverError::Unsupported)
     }
 
     /// End a call the app is still showing: press its hang-up control and wait for the call
@@ -286,12 +381,12 @@ impl AppDriver {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn run(_spec: &DriverSpec, _steps: &[Step], _mode: Mode) -> Result<(), DriverError> {
+    fn run(_spec: &DriverSpec, _steps: &[Step], _mode: Mode, _report: &mut RunReport) -> Result<(), DriverError> {
         Err(DriverError::Unsupported)
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn place_call(_spec: &DriverSpec, _steps: &[Step]) -> Result<(), DriverError> {
+    pub fn place_call(_spec: &DriverSpec, _steps: &[Step], _report: &mut RunReport) -> Result<(), DriverError> {
         Err(DriverError::Unsupported)
     }
 
@@ -538,11 +633,21 @@ mod ax {
         !windows(app).is_empty()
     }
 
-    /// Walk every window depth-first. With `both_ends`, two frontiers alternate: one from the top
-    /// of the document (sidebar, header, call bar) and one from the bottom (composer), so a long
-    /// chat history in the middle, which can outgrow the node budget, is reached last.
-    /// `visit` gets each node's matched selector group and index, and returns `true` to stop.
-    fn walk(app: &Cf, groups: &[Vec<AxSelector>], both_ends: bool, mut visit: impl FnMut(&Cf, usize, usize) -> bool) {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Order {
+        /// Document order.
+        Forward,
+        /// Two frontiers alternate: one from the top of the document (sidebar, header, call bar)
+        /// and one from the bottom (composer), so a long chat history in the middle, which can
+        /// outgrow the node budget, is reached last.
+        BothEnds,
+        /// Last child first: the newest messages of a chat before its history.
+        Backward,
+    }
+
+    /// Walk every window depth-first in `order`. `visit` gets each node's matched selector group
+    /// and index, and returns `true` to stop.
+    fn walk(app: &Cf, groups: &[Vec<AxSelector>], order: Order, mut visit: impl FnMut(&Cf, usize, usize) -> bool) {
         let attrs = NSArray::from_retained_slice(&[
             key("AXRole"), key("AXTitle"), key("AXDescription"), key("AXHelp"), key("AXValue"), key("AXDOMClassList"), key("AXChildren"),
         ]);
@@ -577,6 +682,10 @@ mod ax {
                             let kids = as_elements(get(6));
                             if from_back {
                                 queue.extend(kids);
+                            } else if order == Order::Backward {
+                                for k in kids {
+                                    queue.push_front(k);
+                                }
                             } else {
                                 for k in kids.into_iter().rev() {
                                     queue.push_front(k);
@@ -586,14 +695,14 @@ mod ax {
                     }
                 }
             }
-            from_back = both_ends && !from_back;
+            from_back = order == Order::BothEnds && !from_back;
         }
     }
 
     /// First element matching any selector, preferring earlier selectors.
     pub fn find(app: &Cf, sels: &[AxSelector]) -> Option<Cf> {
         let mut best: Option<(usize, Cf)> = None;
-        walk(app, std::slice::from_ref(&sels.to_vec()), true, |el, _, i| {
+        walk(app, std::slice::from_ref(&sels.to_vec()), Order::BothEnds, |el, _, i| {
             if best.as_ref().map_or(true, |(b, _)| i < *b) {
                 best = Some((i, Cf(unsafe { CFRetain(el.0) })));
             }
@@ -606,7 +715,7 @@ mod ax {
     /// (in call) is found: that answer is what the call state needs, and it comes cheap mid-call.
     pub fn scan(app: &Cf, groups: &[Vec<AxSelector>]) -> Vec<bool> {
         let mut found = vec![false; groups.len()];
-        walk(app, groups, true, |_, g, _| {
+        walk(app, groups, Order::BothEnds, |_, g, _| {
             found[g] = true;
             found[0]
         });
@@ -617,7 +726,7 @@ mod ax {
     /// order, without duplicates.
     pub fn list(app: &Cf, sels: &[AxSelector]) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
-        walk(app, std::slice::from_ref(&sels.to_vec()), false, |el, _, _| {
+        walk(app, std::slice::from_ref(&sels.to_vec()), Order::Forward, |el, _, _| {
             if let Some(t) = first_text(el).filter(|t| !names.contains(t)) {
                 names.push(t);
             }
@@ -626,10 +735,56 @@ mod ax {
         names
     }
 
-    /// Wait (bounded) until nothing matches `sels` any more.
-    pub fn wait_gone(app: &Cf, sels: &[AxSelector], timeout: std::time::Duration) {
+    /// Every static text inside `el`, in reading order, joined (a message bubble's words).
+    fn all_text(el: &Cf) -> String {
+        let mut stack = children(el);
+        stack.reverse();
+        let mut parts: Vec<String> = Vec::new();
+        for _ in 0..400 {
+            let Some(c) = stack.pop() else { break };
+            if string_attr(&c, "AXRole").as_deref() == Some("AXStaticText") {
+                if let Some(t) = string_attr(&c, "AXValue").or_else(|| string_attr(&c, "AXTitle")).filter(|t| !t.trim().is_empty()) {
+                    parts.push(t.trim().to_string());
+                }
+                continue;
+            }
+            let mut kids = children(&c);
+            kids.reverse();
+            stack.extend(kids);
+        }
+        crate::everos::truncate_chars(&parts.join(" "), 4000)
+    }
+
+    /// The newest `max` elements matching `sels` (message bubbles), oldest first, each with its
+    /// DOM classes and text. A bubble nested in an already collected one is skipped.
+    pub fn texts(app: &Cf, sels: &[AxSelector], max: usize) -> Vec<(Vec<String>, String)> {
+        let mut out: Vec<(Vec<String>, String)> = Vec::new();
+        walk(app, std::slice::from_ref(&sels.to_vec()), Order::Backward, |el, _, _| {
+            let text = all_text(el);
+            if !text.is_empty() && !out.iter().any(|(_, t)| t.contains(&text)) {
+                let classes = attr(el, "AXDOMClassList").map(|v| unsafe { as_strings(v.0) }).unwrap_or_default();
+                out.push((classes, text));
+            }
+            out.len() >= max
+        });
+        out.reverse();
+        out
+    }
+
+    pub fn value(el: &Cf) -> Option<String> {
+        string_attr(el, "AXValue")
+    }
+
+    /// Wait (bounded) until nothing matches `sels` any more; `true` once it is gone.
+    pub fn wait_gone(app: &Cf, sels: &[AxSelector], timeout: std::time::Duration) -> bool {
         let t0 = std::time::Instant::now();
-        while !sels.is_empty() && t0.elapsed() < timeout && find(app, sels).is_some() {
+        loop {
+            if sels.is_empty() || find(app, sels).is_none() {
+                return true;
+            }
+            if t0.elapsed() >= timeout {
+                return false;
+            }
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
     }
@@ -776,6 +931,17 @@ mod tests {
         assert_eq!(callable, ["Analytics", "可乐"], "group chats and hidden Bots are left out");
         assert_eq!(entries.iter().find(|e| e.name == "图片创作").unwrap().blocked.as_deref(), Some("group_chat"));
         assert!(read_roster(&spec, &dir.path().join("missing")).is_none());
+    }
+
+    #[test]
+    fn bubble_roles_come_from_whole_class_words_and_ambiguity_means_unknown() {
+        let c = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(role_from_classes(&c(&["message", "message-user"])), Some("user"));
+        assert_eq!(role_from_classes(&c(&["msg", "from-assistant"])), Some("assistant"));
+        assert_eq!(role_from_classes(&c(&["bubble", "bot"])), Some("assistant"));
+        assert_eq!(role_from_classes(&c(&["username-label"])), None, "a word part is not a role");
+        assert_eq!(role_from_classes(&c(&["user", "bot"])), None, "both sides: unknown");
+        assert_eq!(role_from_classes(&c(&["bubble"])), None);
     }
 
     #[test]

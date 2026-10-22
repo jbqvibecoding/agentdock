@@ -36,7 +36,57 @@ pub enum Step {
     Clear {
         selectors: Vec<String>,
     },
+    /// Send a round-table relay note into the chat before the voice button (see `roundtable`).
+    /// A driver writes a bare `{"op":"relay"}` where it belongs in `call`; for one call the host
+    /// fills in the note and the driver's `memory` selectors (`bind_relay`), or drops the step.
+    /// It never fails the call: its outcome is reported instead.
+    Relay {
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        composer: Vec<String>,
+        #[serde(default)]
+        send: Vec<String>,
+        #[serde(default)]
+        busy: Vec<String>,
+        #[serde(default)]
+        settle_ms: u64,
+    },
 }
+
+/// What happened to a relay note, as the driver saw it (see `roundtable` for what follows).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelayOutcome {
+    /// Known not to have been sent (no composer or send button).
+    NotSent,
+    /// Pasted into the composer unsent: the driver cannot send.
+    Pasted,
+    Sent,
+    /// Send was pressed but did not settle: it may or may not have gone out.
+    Uncertain,
+}
+
+/// A relay step's report: `{ id, outcome, why }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelayReport {
+    pub id: String,
+    pub outcome: RelayOutcome,
+    #[serde(default)]
+    pub why: String,
+}
+
+/// One call's note, handed to `bind_relay`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayPayload {
+    pub id: String,
+    pub text: String,
+}
+
+/// Settle time for a sent note when the driver gives none.
+pub const RELAY_SETTLE_MS: u64 = 12_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeSpec {
@@ -123,13 +173,22 @@ pub fn uses_target(steps: &[Step]) -> bool {
     })
 }
 
-/// Where a web seat keeps its composer and its visible transcript. Both lists are tried in order.
+/// Where a seat keeps its composer, its send / busy controls and its visible transcript. Lists are
+/// tried in order. Web seats use CSS selectors; app seats AX selectors (`AXRole.class[Title]`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct MemorySelectors {
     #[serde(default)]
     pub composer: Vec<String>,
     #[serde(default)]
     pub transcript: Vec<String>,
+    /// The send button for a relay note. Empty: notes are pasted, never sent.
+    #[serde(default)]
+    pub send: Vec<String>,
+    /// Shown while the bot answers a sent note (a Stop button); its coming and going is "settled".
+    #[serde(default)]
+    pub busy: Vec<String>,
+    #[serde(default)]
+    pub settle_ms: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +453,45 @@ pub fn transcript_script(selectors: &[String], seat_id: &str) -> String {
     )
 }
 
+/// Whether the driver can send relay notes: its call steps have a `relay` step and it knows the
+/// send button. Otherwise a note is only pasted.
+pub fn relay_capable(spec: &DriverSpec) -> bool {
+    spec.call.iter().any(|s| matches!(s, Step::Relay { .. })) && !spec.memory.send.is_empty()
+}
+
+/// Fill the `relay` step for this call, or drop it when there is nothing to send.
+pub fn bind_relay(steps: &[Step], payload: Option<&RelayPayload>, mem: &MemorySelectors, web: bool) -> Vec<Step> {
+    steps
+        .iter()
+        .filter_map(|step| match (step, payload) {
+            (Step::Relay { .. }, None) => None,
+            (Step::Relay { .. }, Some(p)) => Some(Step::Relay {
+                id: p.id.clone(),
+                text: p.text.clone(),
+                composer: if mem.composer.is_empty() && web { DEFAULT_COMPOSER.iter().map(|s| s.to_string()).collect() } else { mem.composer.clone() },
+                send: mem.send.clone(),
+                busy: mem.busy.clone(),
+                settle_ms: if mem.settle_ms == 0 { RELAY_SETTLE_MS } else { mem.settle_ms },
+            }),
+            _ => Some(step.clone()),
+        })
+        .collect()
+}
+
+/// Split call steps after the `relay` step, so a slow-settling note and the rest of the call run
+/// as two Chrome evals, each well inside the connection's read timeout.
+pub fn split_at_relay(steps: &[Step]) -> (Vec<Step>, Vec<Step>) {
+    match steps.iter().position(|s| matches!(s, Step::Relay { .. })) {
+        Some(i) => (steps[..=i].to_vec(), steps[i + 1..].to_vec()),
+        None => (steps.to_vec(), Vec::new()),
+    }
+}
+
+/// The relay report in a step script's value (`{ok, relay}`), if it ran one.
+pub fn relay_in(value: &serde_json::Value) -> Option<RelayReport> {
+    serde_json::from_value(value.get("relay")?.clone()).ok()
+}
+
 /// Fill a seat's `target` (e.g. which Bot inside Grok Bot) into `{target}` in step selectors.
 /// Without a target, steps that mention `{target}` are dropped, along with a `sleep` right after.
 pub fn bind_target(steps: &[Step], target: Option<&str>) -> Vec<Step> {
@@ -420,7 +518,8 @@ pub fn bind_target(steps: &[Step], target: Option<&str>) -> Vec<Step> {
     out
 }
 
-/// JS that runs a step list sequentially inside the page.
+/// JS that runs a step list sequentially inside the page. The value is `'ok'`, or
+/// `{{ok:'ok', relay}}` when a relay step ran (also reported through `relay_report` in a webview).
 pub fn steps_script(steps: &[Step]) -> String {
     let steps_json = serde_json::to_string(steps).unwrap();
     format!(
@@ -433,6 +532,46 @@ pub fn steps_script(steps: &[Step]) -> String {
       if (el) return el; }} catch (_) {{}} }} return null; }};
   const waitFor = async (sels, ms) => {{ const t0 = Date.now();
     while (Date.now() - t0 < ms) {{ const el = find(sels); if (el) return el; await sleep(100); }} return null; }};
+  const waitGone = async (sels, ms) => {{ const t0 = Date.now();
+    while (Date.now() - t0 < ms) {{ if (!find(sels)) return true; await sleep(150); }} return false; }};
+  const textOf = (el) => ("value" in el ? el.value : el.innerText) || "";
+  const setText = (el, text) => {{
+    if ("value" in el) {{
+      const proto = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value");
+      if (proto && proto.set) proto.set.call(el, text); else el.value = text;
+      el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+    }} else {{
+      el.focus();
+      const sel = window.getSelection(); const range = document.createRange();
+      range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range);
+      document.execCommand(text ? "insertText" : "delete", false, text);
+    }}
+  }};
+  // Never throws: the call goes on, and the outcome says whether the note went out.
+  const relayNote = async (st) => {{
+    const out = {{ id: st.id, outcome: "not_sent", why: "" }};
+    const marker = "[AgentDock round-table " + st.id + "]";
+    try {{
+      const box = await waitFor(st.composer, 4000);
+      if (!box) {{ out.why = "no-composer"; return out; }}
+      setText(box, st.text);
+      if (!st.send.length) {{ out.outcome = "pasted"; return out; }}
+      const send = await waitFor(st.send, 2000);
+      if (!send) {{ setText(box, ""); out.why = "no-send"; return out; }}
+      send.click();
+      out.outcome = "uncertain";
+      const settle = st.settle_ms || 12000;
+      if (st.busy.length && await waitFor(st.busy, Math.min(3000, settle))) {{
+        if (await waitGone(st.busy, settle)) out.outcome = "sent"; else out.why = "settle-timeout";
+      }} else if (!textOf(box).includes(marker)) {{
+        out.outcome = "sent";
+      }} else {{
+        out.why = "still-in-composer";
+      }}
+    }} catch (e) {{ out.why = String(e).slice(0, 200); }}
+    return out;
+  }};
+  let relay = null;
   for (const st of steps) {{
     if (st.op === 'click') {{ const el = await waitFor(st.selectors, 4000); if (!el) throw new Error('not found: ' + st.selectors.join(' | ')); el.click(); }}
     else if (st.op === 'wait_for') {{ if (!(await waitFor(st.selectors, st.timeout_ms))) throw new Error('timeout: ' + st.selectors.join(' | ')); }}
@@ -441,8 +580,9 @@ pub fn steps_script(steps: &[Step]) -> String {
     else if (st.op === 'key') {{ const t = document.activeElement || document.body;
       t.dispatchEvent(new KeyboardEvent('keydown', {{ key: st.key, bubbles: true }})); t.dispatchEvent(new KeyboardEvent('keyup', {{ key: st.key, bubbles: true }})); }}
     else if (st.op === 'clear') {{ const el = find(st.selectors); if (el) {{ if ('value' in el) el.value = ''; else el.textContent = ''; el.dispatchEvent(new Event('input', {{ bubbles: true }})); }} }}
+    else if (st.op === 'relay') {{ relay = await relayNote(st); window.__TAURI_INTERNALS__?.invoke('relay_report', {{ report: relay }}); }}
   }}
-  return 'ok';
+  return relay ? {{ ok: 'ok', relay }} : 'ok';
 }})().catch(e => {{ window.__TAURI_INTERNALS__?.invoke('driver_error', {{ message: String(e) }}); throw e; }})"#
     )
 }
@@ -540,6 +680,59 @@ mod tests {
         let plain = bind_target(&steps, None);
         assert_eq!(plain, steps[2..].to_vec(), "no target: the select step and its pause are skipped");
         assert_eq!(bind_target(&steps, Some("  ")), plain);
+    }
+
+    fn relay_step() -> Step {
+        Step::Relay { id: String::new(), text: String::new(), composer: vec![], send: vec![], busy: vec![], settle_ms: 0 }
+    }
+
+    #[test]
+    fn a_bare_relay_op_parses_and_relay_drivers_know_their_send_button() {
+        let step: Step = serde_json::from_str(r#"{"op":"relay"}"#).unwrap();
+        assert_eq!(step, relay_step());
+        let r = Registry::bundled();
+        for id in r.ids() {
+            let spec = r.get(id).unwrap();
+            if spec.call.iter().any(|s| matches!(s, Step::Relay { .. })) {
+                assert!(relay_capable(spec), "{id} has a relay step but no send selectors");
+                assert!(!spec.memory.composer.is_empty() || spec.url.is_some(), "{id} needs a composer");
+            }
+        }
+    }
+
+    #[test]
+    fn relay_is_filled_for_one_call_or_dropped_and_split_after_it() {
+        let steps = vec![Step::Sleep { ms: 800 }, relay_step(), Step::Click { selectors: vec!["#voice".into()] }];
+        let mem = MemorySelectors { send: vec!["#send".into()], busy: vec!["#stop".into()], ..Default::default() };
+        assert_eq!(bind_relay(&steps, None, &mem, true), vec![steps[0].clone(), steps[2].clone()], "nothing to send: no step");
+        let note = RelayPayload { id: "rt-a1b2c3d4-2".into(), text: "[AgentDock round-table rt-a1b2c3d4-2]\nhi".into() };
+        let bound = bind_relay(&steps, Some(&note), &mem, true);
+        match &bound[1] {
+            Step::Relay { id, composer, send, settle_ms, .. } => {
+                assert_eq!(id, "rt-a1b2c3d4-2");
+                assert_eq!(composer[0], "#prompt-textarea", "web seats fall back to the generic composer");
+                assert_eq!(send, &vec!["#send".to_string()]);
+                assert_eq!(*settle_ms, RELAY_SETTLE_MS);
+            }
+            other => panic!("{other:?}"),
+        }
+        let (head, tail) = split_at_relay(&bound);
+        assert_eq!((head.len(), tail.len()), (2, 1));
+        assert_eq!(split_at_relay(&steps[..1]).1, vec![], "no relay: one part");
+    }
+
+    #[test]
+    fn the_relay_branch_never_throws_and_escapes_the_note() {
+        let note = RelayPayload { id: "rt-a1b2c3d4-2".into(), text: "她说 \"hi\" </script>\n`${x}`".into() };
+        let mem = MemorySelectors { send: vec!["#send".into()], ..Default::default() };
+        let js = steps_script(&bind_relay(&[relay_step()], Some(&note), &mem, true));
+        assert!(js.contains(r#""text":"她说 \"hi\" </script>\n`${x}`""#), "the note stays inside a JSON string");
+        assert!(js.contains("relay_report"));
+        assert!(js.contains("relayNote = async"));
+        let report: RelayReport = serde_json::from_str(r#"{"id":"rt-a1b2c3d4-2","outcome":"uncertain","why":"settle-timeout"}"#).unwrap();
+        assert_eq!(report.outcome, RelayOutcome::Uncertain);
+        assert_eq!(relay_in(&serde_json::json!({"ok":"ok","relay":{"id":"x","outcome":"sent"}})).map(|r| r.outcome), Some(RelayOutcome::Sent));
+        assert_eq!(relay_in(&serde_json::json!("ok")), None);
     }
 
     #[test]

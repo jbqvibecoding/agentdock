@@ -1,13 +1,15 @@
 {
   "id": "copilot-voice",
   "display_name": "Copilot Voice",
-  "version": 1,
+  "version": 2,
   "verified": false,
   "url": "https://copilot.microsoft.com/",
   "bundle_id": null,
   "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   "call": [
     { "op": "wait_for", "selectors": ["button[aria-label*='Voice' i]", "button[title*='Voice' i]", "button[data-testid*='voice' i]", "button[aria-label*='语音' i]"], "timeout_ms": 8000 },
+    { "op": "relay" },
+    { "op": "wait_for", "selectors": ["button[aria-label*='Voice' i]", "button[title*='Voice' i]", "button[data-testid*='voice' i]", "button[aria-label*='语音' i]"], "timeout_ms": 4000 },
     { "op": "click", "selectors": ["button[aria-label*='Voice' i]", "button[title*='Voice' i]", "button[data-testid*='voice' i]", "button[aria-label*='语音' i]"] }
   ],
   "hangup": [
@@ -19,6 +21,12 @@
   "unmute": [
     { "op": "click", "selectors": ["button[aria-label*='Unmute' i]", "button[aria-label*='取消静音' i]"] }
   ],
+  "memory": {
+    "composer": ["textarea#userInput", "textarea[placeholder]", "textarea"],
+    "send": ["button[aria-label*='Submit' i]", "button[aria-label*='Send' i]", "button[title*='Submit' i]", "button[aria-label*='发送' i]"],
+    "busy": ["button[aria-label*='Stop' i]", "button[aria-label*='停止' i]"],
+    "settle_ms": 12000
+  },
   "probe": {
     "in_call": ["button[aria-label*='End' i]", "button[aria-label*='Exit voice' i]", "[data-testid*='voice-active' i]", "[aria-label*='Listening' i]"],
     "muted": ["button[aria-label*='Unmute' i]"],

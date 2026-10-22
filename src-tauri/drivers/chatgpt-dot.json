@@ -1,7 +1,7 @@
 {
   "id": "chatgpt-dot",
   "display_name": "ChatGPT dot",
-  "version": 1,
+  "version": 2,
   "verified": false,
   "url": "https://chatgpt.com/",
   "bundle_id": null,
@@ -10,6 +10,8 @@
     { "op": "wait_for", "selectors": ["button[aria-label*='dot' i]", "a[href*='/dots']", "a[href*='/dot/']", "[data-testid*='dot' i]"], "timeout_ms": 8000 },
     { "op": "click", "selectors": ["a[href*='/dots']", "a[href*='/dot/']", "button[aria-label*='dot' i]", "[data-testid*='dot' i]"] },
     { "op": "sleep", "ms": 800 },
+    { "op": "relay" },
+    { "op": "clear", "selectors": ["#prompt-textarea", "div[contenteditable='true']", "textarea"] },
     { "op": "click", "selectors": ["button[aria-label*='Call' i]", "button[aria-label*='Voice' i]", "button[data-testid*='voice' i]", "button[aria-label*='语音' i]", "button[aria-label*='通话' i]"] }
   ],
   "hangup": [
@@ -21,6 +23,12 @@
   "unmute": [
     { "op": "click", "selectors": ["button[aria-label='Unmute' i]", "button[aria-label*='Unmute microphone' i]", "button[aria-label*='取消静音' i]"] }
   ],
+  "memory": {
+    "composer": ["#prompt-textarea", "div[contenteditable='true']", "textarea"],
+    "send": ["button[data-testid='send-button']", "button[aria-label*='Send' i]", "button[aria-label*='发送' i]"],
+    "busy": ["button[data-testid='stop-button']", "button[aria-label*='Stop' i]", "button[aria-label*='停止' i]"],
+    "settle_ms": 12000
+  },
   "probe": {
     "in_call": ["button[aria-label*='End' i]", "button[aria-label*='Hang up' i]", "[data-testid*='voice-mode' i]", "button[aria-label*='结束' i]"],
     "muted": ["button[aria-label='Unmute' i]", "button[aria-label*='取消静音' i]"],

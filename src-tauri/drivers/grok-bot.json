@@ -1,7 +1,7 @@
 {
   "id": "grok-bot",
   "display_name": "Grok Bot",
-  "version": 4,
+  "version": 5,
   "verified": false,
   "url": null,
   "bundle_id": "com.anysphere.sand",
@@ -21,6 +21,7 @@
   "call": [
     { "op": "click", "selectors": ["AXButton.sand-agent-item[@{target}]", "AXCheckBox.sand-agent-item[@{target}]", "AXButton[{target}]", "AXCheckBox[{target}]", "AXButton.sand-agent-item[~{target}]"] },
     { "op": "sleep", "ms": 1200 },
+    { "op": "relay" },
     { "op": "clear", "selectors": ["AXTextArea", "AXTextField"] },
     { "op": "click", "selectors": ["AXButton[发起语音聊天]", "AXButton[發起語音聊天]", "AXButton[Start voice chat]", "AXButton[音声チャットを開始]"] }
   ],
@@ -33,6 +34,13 @@
   "unmute": [
     { "op": "click", "selectors": ["AXCheckBox[取消静音]", "AXCheckBox[取消靜音]", "AXCheckBox[Unmute]", "AXButton[取消静音]", "AXButton[取消靜音]", "AXButton[Unmute]"] }
   ],
+  "memory": {
+    "composer": ["AXTextArea", "AXTextField"],
+    "send": ["AXButton[发送]", "AXButton[發送]", "AXButton[Send]", "AXButton[送信]", "AXButton[~发送]", "AXButton[~Send]"],
+    "busy": ["AXButton[停止]", "AXButton[Stop]", "AXButton[~停止]", "AXButton[~Stop]"],
+    "settle_ms": 15000,
+    "transcript": []
+  },
   "probe": {
     "in_call": ["AXButton[挂断]", "AXButton[掛斷]", "AXButton[Hang up]", "AXButton[通話を終了]"],
     "muted": ["AXCheckBox[取消静音]", "AXCheckBox[取消靜音]", "AXCheckBox[Unmute]"],

@@ -75,13 +75,7 @@ pub enum RelayState {
 }
 
 /// What the driver reports after trying to send a note.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelayOutcome {
-    NotSent,
-    Pasted,
-    Sent,
-    Uncertain,
-}
+pub use crate::drivers::RelayOutcome;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayPlan {
@@ -149,6 +143,8 @@ pub struct Table {
     relays: HashMap<String, RelayRecord>,
     planned_turns: HashSet<u64>,
     name_passes: VecDeque<Instant>,
+    /// Utterances already acted on as a spoken pass (a growing bubble is seen again).
+    claimed: HashSet<u64>,
 }
 
 /// What the floor holder's live seat is, if any (a pending switch keeps the outgoing seat).
@@ -385,6 +381,11 @@ impl Table {
             self.ledger.drain(..self.ledger.len() - KEEP_UTTERANCES);
         }
         u
+    }
+
+    /// `true` the first time an utterance is acted on as a spoken pass.
+    pub fn claim(&mut self, seq: u64) -> bool {
+        self.claimed.insert(seq)
     }
 
     /// A pass heard in captions (a member's name at the start of the user's sentence) goes
