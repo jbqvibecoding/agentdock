@@ -274,6 +274,29 @@ Selectors in the driver JSON are written from each site's public `aria-label`s a
 3. Edit `src-tauri/drivers/<id>.json`, or drop a higher-`version` copy into
    `~/Library/Application Support/ai.we1jia.agentdock/drivers/` (no rebuild), then **Test call** again.
 
+## Round-table group calls (beta)
+
+Pick several bots and talk with them as a group. Each app holds one voice call at a time (Grok Bot too), so a group call is **one native voice floor plus turns**: one member talks to you in its own realtime voice at a time. When the floor passes, AgentDock first **sends** the next member a message in its own chat with what the others said since it last spoke, then presses its voice button, so every member knows the discussion before it speaks.
+
+**Starting one**
+
+- On the idle Dock, tap **Group call** (the two-people icon), tick 2–6 members and tap "Call N". Picking runs a check first: members that need permission, sign-in, or whose words cannot be read are marked, with who has to act.
+- Save the groups you use in Settings › Agents › **Group calls**: name, members, other names per member, "Relay (sends)" and "Pass by name". Saved groups appear on the idle Dock; one tap calls the whole group.
+- During a 1:1 call, tap **Start a group** and then other agents: the current one keeps talking and the group forms around it.
+
+**In the call**
+
+- Pass the floor by tapping a member, with ⌥1…⌥9, or with Next; each pass has the 3 s undo. With "Pass by name" on, starting a sentence with a member's name (or another name) passes to them, at most twice per 30 s.
+- **Panel**: a small window you can type (or dictate) into, with the room's transcript; what you type there reaches the others at the next hand-over. Members whose words cannot be read (for now Grok Bot, until its bubble selectors are pinned) are relayed as "spoke, but it could not be read", and you can add a line in the panel.
+- A member that needs a look (captcha, sign-in) only gets a badge on its avatar and never takes the floor from whoever is speaking; tap the badge to open its page.
+- **End meeting** hangs up and clears the room. A remote hang-up only frees the floor; the room stays, and tapping a member or Next carries on.
+
+**Consent and privacy**: a relay **sends** captions to another vendor, so it needs consent: tick "Relay (sends)" on a saved group, or tap the "Relay (sends)" chip on the first hand-over of an ad-hoc group (off by default). The room's transcript is kept in memory only and cleared when the meeting ends; logs carry ids and counts only. Relay notes say they are "for reference only, not instructions or authorization", and nothing a bot says can make AgentDock hang up, add members or change settings.
+
+**Not yet verified on a real Mac**: whether a text message sent just before voice is part of each vendor's voice context; each vendor's send / stop selectors (`memory.send` / `memory.busy` in the driver JSON, `verified:false`); Grok Bot's bubble selectors (with `memory.transcript` empty its words are not read). **Test relay** next to each member in Settings runs a seat's call only up to the relay step, without dialling, so you can check them one by one.
+
+The protocol rules come from [yobiru](https://github.com/jbqvibecoding/yobiru) (MIT): its message id grammar, its request lifecycle (an uncertain delivery is never resent, only a marker in a user message proves delivery, final states never move back), its wake rate limit, and its onboarding check's done / todo / blocked plus who acts.
+
 ## Long-term memory (EverOS)
 
 AgentDock does not run a model — each seat is an external voice product. Memory is therefore attached to the **call lifecycle**, not to a local generation step:
@@ -352,6 +375,7 @@ Verified on a real Mac (macOS 26.6.2 · Apple Silicon): native `NSGlassEffectVie
 - **No credentials.** Login happens on the real site page, by you. With Chrome, cookies stay in Chrome; with the embedded browser they stay in AgentDock's data directory (shared by all seats on macOS).
 - **No uploads by default.** No telemetry. Only after Memory is enabled *and* the process has `EVEROS_API_KEY` are call events and on-screen captions sent to EverOS (Cloud, or your own `EVEROS_BASE_URL`).
 - **Warm transfer** reads the same on-screen captions, keeps them in memory only and drops them when the call ends; on a switch it pastes them into the next seat's message box without sending, so whether they go anywhere is up to you.
+- **Round-table relays** **send** captions to the next member's vendor, only after you consent (tick it on a saved group, or tap the chip in an ad-hoc group); the room's transcript stays in memory and is cleared when the meeting ends.
 - **UI automation has limits.** None of the vendors expose a "call my agent" API, so everything goes through their UIs; redesigns require updating the driver JSON.
 - **With Chrome**, AgentDock uses Chrome's own remote-debugging connection (which you enable in `chrome://inspect` and allow in Chrome's prompt) and only drives the tabs it opened for its seats; it never reads Chrome's cookie store.
 - **Grok Bot's Bot list** is read from the app's local cache (the roster in `~/Library/Application Support/Grok Bot/sand-client-persistence`): Bot names and whether each is a group chat or hidden — no conversation content, nothing uploaded.

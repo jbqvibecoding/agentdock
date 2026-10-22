@@ -259,3 +259,29 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 .grip.is-hot svg { transform: scale(1.1); }
 .grip.is-pressed svg { transform: scale(.84); transition-duration: 130ms; }
 #dock.dragging .grip { opacity: 1; }
+
+/* ───── round-table (群聊): one voice floor, members around it ───── */
+.room-av svg { width: 62%; height: 62%; transform: none; color: var(--sym); }
+.seat.member[data-floor="live"] .mark { box-shadow: 0 0 0 2px var(--green), var(--avatar-ring); }
+.seat.member[data-trouble] .badge, .seat.pick[data-pre="todo"] .badge { display: block; }
+.seat.pick.blocked .mark { filter: grayscale(1); opacity: .35; }
+.seat.picked .mark { box-shadow: 0 0 0 2px var(--sym), var(--avatar-ring); }
+.seat.picked::after, .seat.addable::after {
+  position: absolute; right: calc(4px * var(--scale)); top: calc(4px * var(--scale)); z-index: 2;
+  width: calc(14px * var(--scale)); height: calc(14px * var(--scale)); border-radius: 50%;
+  display: grid; place-items: center; font: 700 calc(10px * var(--scale))/1 var(--font); color: #fff; background: var(--sym);
+  box-shadow: 0 0 0 calc(1.5px * var(--scale)) rgba(255, 255, 255, .95);
+}
+.seat.picked::after { content: "✓"; }
+.seat.addable::after { content: "+"; }
+.seat.addable .mark { opacity: .72; }
+.btn.on { color: var(--sym); }
+.btn.on::before { content: ""; position: absolute; inset: calc(7px * var(--scale)); border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--sym-faint); }
+.undo.callgroup { color: var(--sym); box-shadow: inset 0 0 0 1.25px var(--sym); font-weight: 700; }
+.group-contact .mark.stack { position: relative; background: transparent; box-shadow: none; overflow: visible; }
+.group-contact .mark.stack::after { display: none; }
+.group-contact .gm { position: absolute; width: 72%; height: 72%; border-radius: 50%; overflow: hidden; box-shadow: var(--avatar-ring), 0 0 0 1.5px rgba(255, 255, 255, .9); }
+.group-contact .gm:first-child { left: 0; top: 0; }
+.group-contact .gm:last-child:not(:first-child) { right: 0; bottom: 0; }
+.group-contact .gm svg, .group-contact .gm img { width: 100%; height: 100%; display: block; object-fit: cover; transform: scale(1.12); }
+#dock[data-orient="vertical"] .undo.callgroup { writing-mode: vertical-rl; height: auto; width: calc(30px * var(--scale)); padding: calc(12px * var(--scale)) 0; }

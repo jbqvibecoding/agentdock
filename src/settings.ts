@@ -1,4 +1,4 @@
-import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type ChromeStatus, type DriverInfo, type HostInfo, type MemoryStatus, type Seat, type SeatView } from "./api";
+import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type CheckRow, type ChromeStatus, type DriverInfo, type GroupContact, type HostInfo, type MemberRef, type MemoryStatus, type RelayReport, type Seat, type SeatView } from "./api";
 import { iconFor } from "./brand";
 import { lang, LANGUAGES, resolveLang, setLang, t, translateDom, type LangSetting, type MsgKey } from "./i18n";
 
@@ -402,8 +402,140 @@ async function renderSeats() {
   help.innerHTML = `<summary>${esc(t("help.summary"))}</summary><ul>${tips.map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>`;
   const parts: HTMLElement[] = [list];
   if (addOpen) parts.push(await addPanel());
-  parts.push(await chromeGroup(), help);
+  parts.push(await groupsPanel(), await chromeGroup(), help);
   pageEl.replaceChildren(...parts);
+}
+
+// ───────────── 群聊: saved group contacts ─────────────
+const GROUP_SVG = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="7" r="2.6"/><path d="M2.8 15.5a4.7 4.7 0 0 1 9.4 0"/><circle cx="13.8" cy="7.6" r="2.2"/><path d="M13.4 11.4a4.2 4.2 0 0 1 4.1 4.1"/></svg>`;
+let groups: GroupContact[] = [];
+/** The group being edited, as a draft; a new one has an id that is not in `groups` yet. */
+let draft: GroupContact | null = null;
+let draftRows = new Map<string, CheckRow[]>();
+/** Last 测试转述 result per member, shown under its row. */
+const relayTests: Record<string, string> = {};
+const memberName = (who: MemberRef) => (who.kind === "seat" ? seats.find((s) => s.id === who.id)?.name : undefined) ?? who.id;
+
+/** Errors come back as `grp.err.*` keys. */
+async function saveGroups(next: GroupContact[]): Promise<boolean> {
+  try {
+    await api.invoke("save_groups", { groups: next });
+    groups = next;
+    return true;
+  } catch (e) {
+    const k = String(e).replace(/^Error:\s*/, "");
+    toast(k.startsWith("grp.err.") ? t(k as MsgKey) : k);
+    return false;
+  }
+}
+
+async function refreshDraftPreflight() {
+  if (!draft) return;
+  const seatIds = draft.members.filter((m) => m.who.kind === "seat").map((m) => m.who.id);
+  draftRows = new Map();
+  try {
+    for (const r of (await api.invoke<CheckRow[]>("room_preflight", { seatIds, relay: draft.relay })) ?? []) draftRows.set(r.who.id, [...(draftRows.get(r.who.id) ?? []), r]);
+  } catch { /* shown as unknown */ }
+}
+
+async function groupsPanel(): Promise<HTMLDivElement> {
+  const g = el("div", "group groups");
+  g.append(el("div", "group__title", esc(t("grp.title"))));
+  if (!groups.length && !draft) g.append(el("p", "note", esc(t("grp.none"))));
+  for (const c of groups) {
+    if (draft?.id === c.id) { g.append(groupEditor()); continue; }
+    const r = el("div", "row group-row");
+    r.dataset.id = c.id;
+    r.append(el("div", "avatar plus", GROUP_SVG));
+    const flags = [c.relay ? t("grp.relay") : "", c.addressed ? t("grp.addressed") : ""].filter(Boolean).join(" · ");
+    r.append(el("div", "row__text", `<div class="row__name">${esc(c.name)}</div><div class="row__sub">${esc(c.members.map((m) => memberName(m.who)).join("、"))}${flags ? ` · ${esc(flags)}` : ""}</div>`));
+    const acts = el("div", "actions");
+    const call = el("button", "btn sm tint", esc(t("grp.call"))) as HTMLButtonElement;
+    call.type = "button";
+    call.addEventListener("click", () => void api.invoke("start_room", { groupId: c.id }).catch((e) => toast(String(e))));
+    const edit = el("button", "btn sm grp-edit", esc(t("grp.edit"))) as HTMLButtonElement;
+    edit.type = "button";
+    edit.addEventListener("click", async () => { draft = structuredClone(c); await refreshDraftPreflight(); void renderSeats(); });
+    const del = el("button", "btn sm danger", esc(t("grp.delete"))) as HTMLButtonElement;
+    del.type = "button";
+    del.addEventListener("click", async () => { if (await saveGroups(groups.filter((x) => x.id !== c.id))) void renderSeats(); });
+    acts.append(call, edit, del);
+    r.append(acts);
+    g.append(r);
+  }
+  if (draft && !groups.some((x) => x.id === draft!.id)) g.append(groupEditor());
+  if (!draft) {
+    const add = el("button", "row add-toggle grp-new", `<span class="avatar plus">${PLUS_SVG}</span><span class="row__name">${esc(t("grp.new"))}</span>`) as HTMLButtonElement;
+    add.type = "button";
+    add.addEventListener("click", () => {
+      draft = { id: `g-${Date.now().toString(36)}`, name: "", members: [], relay: false, addressed: true };
+      draftRows = new Map();
+      void renderSeats();
+    });
+    g.append(add);
+  }
+  return g;
+}
+
+/** The draft holds every value, so a re-render (a test result, a member chip) never loses typing. */
+function groupEditor(): HTMLDivElement {
+  const d = draft!;
+  const box = el("div", "group-editor");
+  const name = el("input", "grp-name") as HTMLInputElement;
+  name.type = "text"; name.value = d.name; name.placeholder = t("grp.namePh");
+  name.addEventListener("input", () => { d.name = name.value; });
+  box.append(row(esc(t("grp.name")), "", name));
+  box.append(row(esc(t("grp.members")), "", []));
+  const chips = el("div", "chips member-chips");
+  for (const s of seats.filter((x) => x.enabled && x.status !== "pending")) {
+    const on = d.members.some((m) => m.who.kind === "seat" && m.who.id === s.id);
+    const c = el("button", `btn sm${on ? " tint" : ""}`, esc(on ? `✓ ${s.name}` : s.name)) as HTMLButtonElement;
+    c.type = "button"; c.dataset.seat = s.id;
+    c.addEventListener("click", async () => {
+      if (on) d.members = d.members.filter((m) => m.who.id !== s.id);
+      else if (d.members.length < 6) d.members.push({ who: { kind: "seat", id: s.id }, aliases: [] });
+      await refreshDraftPreflight();
+      void renderSeats();
+    });
+    chips.append(c);
+  }
+  box.append(chips);
+  for (const m of d.members) {
+    const nm = memberName(m.who);
+    const alias = el("input", "grp-alias") as HTMLInputElement;
+    alias.type = "text"; alias.value = (m.aliases ?? []).join(", "); alias.placeholder = t("grp.aliasesPh");
+    alias.addEventListener("input", () => { m.aliases = alias.value.split(/[,，、]/).map((x) => x.trim()).filter(Boolean); });
+    const issues = (draftRows.get(m.who.id) ?? []).filter((r) => r.status !== "done").map((r) => t(`pre.${r.check}` as MsgKey));
+    const sub = relayTests[m.who.id] ?? (issues.length ? issues.join(" · ") : t("pre.ready"));
+    const test = el("button", "btn sm", esc(t("grp.test"))) as HTMLButtonElement;
+    test.type = "button";
+    test.addEventListener("click", async () => {
+      relayTests[m.who.id] = t("grp.testing");
+      void renderSeats();
+      try {
+        const r = await api.invoke<RelayReport>("test_relay", { seatId: m.who.id });
+        relayTests[m.who.id] = t("grp.testResult", { name: nm, result: t(`relay.${r.outcome}` as MsgKey) + (r.why ? ` (${r.why})` : "") });
+      } catch (e) { relayTests[m.who.id] = String(e); }
+      if (page === "seats") void renderSeats();
+    });
+    box.append(row(esc(t("grp.aliases", { name: nm })), esc(sub), [alias, test]));
+  }
+  box.append(row(esc(t("grp.relay")), esc(t("grp.relaySub")), toggle(d.relay, async (v) => { d.relay = v; await refreshDraftPreflight(); void renderSeats(); })));
+  box.append(row(esc(t("grp.addressed")), esc(t("grp.addressedSub")), toggle(d.addressed, (v) => { d.addressed = v; })));
+  const actions = el("div", "editor-actions");
+  const cancel = el("button", "btn", esc(t("grp.cancel"))) as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => { draft = null; void renderSeats(); });
+  const save = el("button", "btn primary grp-save", esc(t("grp.save"))) as HTMLButtonElement;
+  save.type = "button";
+  save.addEventListener("click", async () => {
+    const clean: GroupContact = { ...d, name: d.name.trim() };
+    const next = groups.some((x) => x.id === clean.id) ? groups.map((x) => (x.id === clean.id ? clean : x)) : [...groups, clean];
+    if (await saveGroups(next)) { draft = null; toast(t("grp.saved")); void renderSeats(); }
+  });
+  actions.append(cancel, save);
+  box.append(actions);
+  return box;
 }
 
 const PLUS_SVG = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>`;
@@ -695,13 +827,17 @@ async function boot() {
   void api.on<number>("settings:radius", setRadius);
   $("#ver").textContent = host.version;
   settings = await api.invoke<AppSettings>("get_settings"); applySettingsLocally();
-  [seats, drivers] = await Promise.all([api.invoke<SeatView[]>("get_seats"), api.invoke<DriverInfo[]>("list_drivers")]);
+  [seats, drivers, groups] = await Promise.all([api.invoke<SeatView[]>("get_seats"), api.invoke<DriverInfo[]>("list_drivers"), api.invoke<GroupContact[]>("get_groups").then((g) => g ?? [])]);
   const initial = (new URLSearchParams(location.search).get("page") as PageId) || "seats";
   await show(TITLES[initial] ? initial : "seats");
   api.on<SeatView[]>("seats:changed", (s) => {
     seats = s;
     if (sorting || interacting()) { deferredSeats = true; return; }
     if (page === "seats" || page === "hotkeys") show(page);
+  });
+  api.on<GroupContact[]>("groups:changed", (g) => {
+    groups = g;
+    if (page === "seats" && !draft && !interacting()) void renderSeats();
   });
   api.on<AppSettings>("settings:changed", (s) => {
     const before = lang();

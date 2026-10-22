@@ -9,7 +9,25 @@ export type Phase =
   | { phase: "switching"; from: string; to: string; undo_secs_left: number; carry: boolean }
   | { phase: "needs_human"; seat: string; reason: string };
 
-export interface DockState { phase: Phase; muted: boolean; expanded: boolean }
+/** A group member: a seat on this Mac, or (later) an agent on another machine over yobiru. */
+export type MemberRef = { kind: "seat" | "remote"; id: string };
+export interface Member { who: MemberRef; trouble?: string | null }
+/** A round-table group call: one voice floor (the phase's seat); the others are briefed by text. */
+export interface Room {
+  id: string; name: string | null; group: string | null; members: Member[]; turn: number;
+  /** Consent to SEND what others said into the next floor holder's chat. */ relay: boolean;
+  /** A member's name at the start of a sentence passes the floor. */ addressed: boolean;
+  last: MemberRef | null;
+}
+export interface DockState { phase: Phase; muted: boolean; expanded: boolean; room?: Room | null }
+
+export type Speaker = { kind: "user" } | { kind: "seat" | "remote"; id: string };
+export interface Utterance { seq: number; turn: number; speaker: Speaker; text: string; typed: boolean; unheard: boolean }
+export interface GroupMember { who: MemberRef; aliases?: string[] }
+export interface GroupContact { id: string; name: string; members: GroupMember[]; relay: boolean; addressed: boolean }
+export interface CheckRow { who: MemberRef; check: string; status: "done" | "todo" | "blocked"; actor: "you" | "app" | "remote" }
+export type RelayOutcome = "not_sent" | "pasted" | "sent" | "uncertain";
+export interface RelayReport { id: string; outcome: RelayOutcome; why?: string }
 
 export type DriverKind =
   | { kind: "web"; url: string; driver: string }
@@ -27,7 +45,10 @@ export interface Seat {
   /** What to pick inside the service before calling, e.g. one Bot in Grok Bot. */
   target?: string | null;
 }
-export interface SeatView extends Seat { probe: ProbeResult | null; driver_verified: boolean; silent: boolean }
+export interface SeatView extends Seat {
+  probe: ProbeResult | null; driver_verified: boolean; silent: boolean;
+  /** The driver can send a round-table relay note (otherwise it is pasted, or not at all). */ relay?: boolean;
+}
 
 export type DefaultForm = "dot" | "capsule" | "expanded" | "pet";
 export type Theme = "system" | "light" | "dark";
@@ -75,9 +96,9 @@ const mock = (() => {
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const emit = (ev: string, payload: unknown) => listeners.get(ev)?.forEach((f) => f(payload));
   const seats: SeatView[] = [
-    { id: "dot", name: "dot", service: "ChatGPT dot", driver: { kind: "web", url: "https://chatgpt.com/", driver: "chatgpt-dot" }, icon: { kind: "builtin", key: "dot" }, enabled: true, status: "connected", account: "weijia", probe: null, driver_verified: false, silent: true },
-    { id: "grok-bot", name: "Grok Bot", service: "Grok Bot", driver: { kind: "app", bundle_id: "com.anysphere.sand", driver: "grok-bot" }, icon: { kind: "builtin", key: "grok-bot" }, enabled: true, status: "needs_auth", account: null, probe: null, driver_verified: false, silent: false },
-    { id: "copilot", name: "Copilot", service: "Copilot Voice", driver: { kind: "web", url: "https://copilot.microsoft.com/", driver: "copilot-voice" }, icon: { kind: "builtin", key: "copilot" }, enabled: true, status: "needs_auth", account: null, probe: null, driver_verified: false, silent: true },
+    { id: "dot", name: "dot", service: "ChatGPT dot", driver: { kind: "web", url: "https://chatgpt.com/", driver: "chatgpt-dot" }, icon: { kind: "builtin", key: "dot" }, enabled: true, status: "connected", account: "weijia", probe: null, driver_verified: false, silent: true, relay: true },
+    { id: "grok-bot", name: "Grok Bot", service: "Grok Bot", driver: { kind: "app", bundle_id: "com.anysphere.sand", driver: "grok-bot" }, icon: { kind: "builtin", key: "grok-bot" }, enabled: true, status: "needs_auth", account: null, probe: null, driver_verified: false, silent: false, relay: true },
+    { id: "copilot", name: "Copilot", service: "Copilot Voice", driver: { kind: "web", url: "https://copilot.microsoft.com/", driver: "copilot-voice" }, icon: { kind: "builtin", key: "copilot" }, enabled: true, status: "needs_auth", account: null, probe: null, driver_verified: false, silent: true, relay: true },
     { id: "devin", name: "Devin", service: "Devin", driver: { kind: "web", url: "https://app.devin.ai/", driver: "devin-voice" }, icon: { kind: "builtin", key: "devin" }, enabled: false, status: "unknown", account: null, probe: null, driver_verified: false, silent: true },
     { id: "muse", name: "Muse", service: "Meta Muse", driver: { kind: "web", url: "https://muse.ai/", driver: "muse-voice" }, icon: { kind: "builtin", key: "muse" }, enabled: false, status: "pending", account: null, probe: null, driver_verified: false, silent: true },
   ];
@@ -90,7 +111,19 @@ const mock = (() => {
   if (typeof window !== "undefined") (window as any).__mockSettings = settings;
   let started = 0; let timer: number | undefined; let undoTimer: number | undefined; let connectTimer: number | undefined;
   const setState = (s: DockState) => { state = s; emit("dock:state", state); };
+  // round-table: the room rides on the state like in Rust (state.rs Room); relays are recorded
+  let groups: GroupContact[] = [{ id: "g-demo", name: "产品评审", members: [{ who: { kind: "seat", id: "dot" } }, { who: { kind: "seat", id: "grok-bot" }, aliases: ["格罗克"] }, { who: { kind: "seat", id: "copilot" } }], relay: true, addressed: true }];
+  let ledger: Utterance[] = [];
+  const W = () => window as any;
+  const seatRef = (id: string): MemberRef => ({ kind: "seat", id });
+  const takeFloor = (seat: string) => {
+    const r = state.room;
+    if (!r) return;
+    if (!r.members.some((m) => m.who.id === seat) && r.members.length < 6) r.members.push({ who: seatRef(seat) });
+    r.turn += 1; r.last = seatRef(seat);
+  };
   const startCall = (seat: string) => {
+    takeFloor(seat);
     setState({ ...state, phase: { phase: "calling", seat }, expanded: true });
     window.clearTimeout(connectTimer);
     connectTimer = window.setTimeout(() => {
@@ -130,27 +163,91 @@ const mock = (() => {
       const p = state.phase;
       if ((p.phase === "in_call" || p.phase === "calling") && p.seat !== a.seatId) {
         const from = p.seat; let left = 3;
-        setState({ ...state, phase: { phase: "switching", from, to: a.seatId, undo_secs_left: left, carry: true } });
+        if (state.room && !state.room.members.some((m) => m.who.id === a.seatId) && state.room.members.length >= 6) return;
+        setState({ ...state, phase: { phase: "switching", from, to: a.seatId, undo_secs_left: left, carry: state.room ? state.room.relay : true } });
         window.clearInterval(undoTimer);
         undoTimer = window.setInterval(() => {
           left -= 1;
           if (state.phase.phase !== "switching") { window.clearInterval(undoTimer); return; }
           if (left <= 0) {
             window.clearInterval(undoTimer);
-            const carry = state.phase.carry && settings.warm_transfer !== false && seats.find((s) => s.id === a.seatId)?.driver.kind === "web";
+            const room = !!state.room;
+            const carry = state.phase.carry && (room || (settings.warm_transfer !== false && seats.find((s) => s.id === a.seatId)?.driver.kind === "web"));
             startCall(a.seatId);
-            // like the host: the new phase goes out first, then the handoff it carried
-            if (carry) { const h = { from, to: a.seatId, lines: 4 }; ((window as any).__mockHandoffs ??= []).push(h); emit("dock:handoff", h); }
+            // like the host: the new phase goes out first, then the note (room) or handoff (1:1) it carried
+            if (carry && room) {
+              const r = { id: `rt-${state.room!.id.slice(0, 8)}-${state.room!.turn}`, to: a.seatId, turn: state.room!.turn, lines: 3, mode: "send" };
+              (W().__mockRelays ??= []).push(r); emit("room:relay", r);
+              window.setTimeout(() => emit("room:relay_outcome", { id: r.id, outcome: "sent", why: "" }), 400);
+            } else if (carry) { const h = { from, to: a.seatId, lines: 4 }; (W().__mockHandoffs ??= []).push(h); emit("dock:handoff", h); }
           } else setState({ ...state, phase: { ...state.phase, undo_secs_left: left } });
         }, 1000);
       } else if (p.phase === "idle" || p.phase === "needs_human") startCall(a.seatId);
     },
-    hangup: () => { window.clearInterval(timer); window.clearTimeout(connectTimer); setState({ ...state, phase: { phase: "idle" } }); },
+    hangup: () => { window.clearInterval(timer); window.clearTimeout(connectTimer); window.clearInterval(undoTimer); ledger = []; setState({ ...state, phase: { phase: "idle" }, room: null }); },
+    start_room: (a) => {
+      const g = a.groupId ? groups.find((x) => x.id === a.groupId) : null;
+      const members: MemberRef[] = g ? g.members.map((m) => m.who) : (a.seatIds ?? []).map(seatRef);
+      if (members.length < 2) throw new Error("群聊至少要两位");
+      state = { ...state, room: { id: "a1b2c3d4e5f", name: g?.name ?? null, group: g?.id ?? null, members: members.map((who) => ({ who })), turn: 0, relay: g?.relay ?? false, addressed: g?.addressed ?? false, last: null } };
+      startCall(a.first ?? members[0].id);
+    },
+    room_add: (a) => {
+      const p = state.phase;
+      if (state.room) { if (!state.room.members.some((m) => m.who.id === a.seatId)) state.room.members.push({ who: seatRef(a.seatId) }); }
+      else if ((p.phase === "in_call" || p.phase === "calling") && p.seat !== a.seatId) {
+        state = { ...state, room: { id: "adhoc00000", name: null, group: null, members: [{ who: seatRef(p.seat) }, { who: seatRef(a.seatId) }], turn: 1, relay: false, addressed: false, last: seatRef(p.seat) } };
+      }
+      setState({ ...state });
+    },
+    room_drop: (a) => {
+      const room = state.room;
+      if (!room) return;
+      room.members = room.members.filter((m) => m.who.id !== a.seatId);
+      const p = state.phase;
+      if ((p.phase === "in_call" || p.phase === "calling") && p.seat === a.seatId) { window.clearInterval(timer); state = { ...state, phase: { phase: "idle" } }; }
+      if (room.members.length < 2) state = { ...state, room: null };
+      setState({ ...state });
+    },
+    floor_next: () => {
+      const r = state.room; if (!r) return;
+      const p = state.phase;
+      const cur = p.phase === "idle" ? r.last?.id : p.phase === "switching" ? p.to : p.seat;
+      const i = r.members.findIndex((m) => m.who.id === cur);
+      for (let k = 1; k <= r.members.length; k++) {
+        const m = r.members[(i + k + r.members.length) % r.members.length];
+        if (!m.trouble && m.who.kind === "seat" && m.who.id !== cur) { void cmds.call_seat({ seatId: m.who.id }); return; }
+      }
+    },
+    release_floor: () => { if (!state.room) return; window.clearInterval(timer); window.clearTimeout(connectTimer); setState({ ...state, phase: { phase: "idle" } }); },
+    room_say: (a) => { if (!state.room) throw new Error("no room"); const u: Utterance = { seq: ledger.length, turn: state.room.turn, speaker: { kind: "user" }, text: a.text, typed: true, unheard: false }; ledger.push(u); (W().__mockRoomSays ??= []).push(a.text); emit("room:lines", [u]); },
+    room_ledger: () => ledger,
+    get_groups: () => groups,
+    save_groups: (a) => {
+      for (const g of a.groups as GroupContact[]) {
+        if (!g.name.trim() || g.name !== g.name.trim()) throw new Error("grp.err.empty");
+        if (g.members.length < 2 || g.members.length > 6) throw new Error("grp.err.members");
+      }
+      groups = a.groups; W().__mockGroups = groups; emit("groups:changed", groups);
+    },
+    room_preflight: (a) => (a.seatIds as string[]).flatMap((id) => {
+      const s = seats.find((x) => x.id === id);
+      const who = seatRef(id);
+      if (!s || s.status === "pending") return [{ who, check: "placeholder", status: "blocked", actor: "app" }];
+      const rows: CheckRow[] = [];
+      if (s.status === "needs_auth") rows.push({ who, check: s.driver.kind === "app" ? "accessibility" : "sign_in", status: "todo", actor: "you" });
+      if (s.driver.kind === "app") rows.push({ who, check: "no_captions", status: "todo", actor: "app" });
+      return rows.length ? rows : [{ who, check: "ready", status: "done", actor: "you" }];
+    }),
+    test_relay: (a) => new Promise((r) => setTimeout(() => r({ id: "rt-test0000-0", outcome: a.seatId === "grok-bot" ? "uncertain" : "sent", why: "" }), 600)),
+    open_room_panel: () => window.open("/room.html", "_blank"),
+    // test hook: a member's page needs a look (a badge, the floor stays)
+    mock_member_trouble: (a) => { const m = state.room?.members.find((x) => x.who.id === a.seatId); if (m) { m.trouble = a.reason ?? "captcha"; setState({ ...state }); } },
     toggle_mute: () => setState({ ...state, muted: !state.muted }),
     set_muted: (a) => setState({ ...state, muted: a.muted }),
     toggle_expanded: () => setState({ ...state, expanded: !state.expanded }),
     set_expanded: (a) => setState({ ...state, expanded: a.expanded }),
-    set_carry: (a) => { if (state.phase.phase === "switching") setState({ ...state, phase: { ...state.phase, carry: a.carry } }); },
+    set_carry: (a) => { if (state.phase.phase === "switching") { if (a.carry && state.room) state.room.relay = true; setState({ ...state, phase: { ...state.phase, carry: a.carry } }); } },
     undo_switch: () => { if (state.phase.phase === "switching") { window.clearInterval(undoTimer); setState({ ...state, phase: { phase: "in_call", seat: state.phase.from, elapsed_secs: Math.floor((Date.now() - started) / 1000) } }); } },
     resize_dock: () => undefined,
     drag_dock: (a) => { const w = window as any; w.__mockDrags = (w.__mockDrags || 0) + 1; w.__mockGrab = { x: a.offsetX, y: a.offsetY }; },

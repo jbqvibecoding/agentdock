@@ -1,6 +1,6 @@
-import { api, applyTheme, fmtTime, validAccent, type AppSettings, type DockState, type HostInfo, type SeatView } from "./api";
+import { api, applyTheme, fmtTime, validAccent, type AppSettings, type CheckRow, type DockState, type GroupContact, type HostInfo, type RelayOutcome, type RelayReport, type SeatView } from "./api";
 import { iconFor, tintFor } from "./brand";
-import { resolveLang, setLang, t } from "./i18n";
+import { resolveLang, setLang, t, type MsgKey } from "./i18n";
 
 const dock = document.getElementById("dock") as HTMLDivElement;
 const bar = document.getElementById("bar") as HTMLDivElement;
@@ -12,6 +12,16 @@ let settings: AppSettings | null = null;
 let hoverSeat: string | null = null;
 /** The last committed switch that pasted context into the seat now being called. */
 let carried: { to: string; lines: number } | null = null;
+// round-table
+/** Picking seats on the idle pill for a group call, with each seat's preflight rows. */
+let picking = false;
+const picked: string[] = [];
+let preflight = new Map<string, CheckRow[]>();
+/** 拉群 / 加人: tapping a seat adds it to the room instead of passing the floor. */
+let adding = false;
+let groups: GroupContact[] = [];
+/** The relay note for the seat being dialled in a room, and what became of it. */
+let relayInfo: { id: string; to: string; lines: number; mode: string; outcome?: RelayOutcome } | null = null;
 const iconCache = new Map<string, string>();
 
 const SVG = {
@@ -22,6 +32,10 @@ const SVG = {
   hangup: `<svg viewBox="3 5 18 14" fill="currentColor"><path d="M12 8.4c3.4 0 6.5 1.3 8.6 3.5.8.8.8 2.1 0 3l-1.3 1.3a2 2 0 0 1-2.5.3l-1.4-.9a1.9 1.9 0 0 1-.9-1.8l.1-1c-1.7-.5-3.5-.5-5.2 0l.1 1c.1.7-.3 1.4-.9 1.8l-1.4.9a2 2 0 0 1-2.5-.3l-1.3-1.3c-.8-.9-.8-2.2 0-3C5.5 9.7 8.6 8.4 12 8.4z"/></svg>`,
   eye: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4.75c-3.4 0-6.1 2.3-7.4 4.5a1.4 1.4 0 0 0 0 1.5c1.3 2.2 4 4.5 7.4 4.5s6.1-2.3 7.4-4.5a1.4 1.4 0 0 0 0-1.5C16.1 7.05 13.4 4.75 10 4.75z"/><circle cx="10" cy="10" r="2.6"/></svg>`,
   plus: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg>`,
+  group: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="7" r="2.6"/><path d="M2.8 15.5a4.7 4.7 0 0 1 9.4 0"/><circle cx="13.8" cy="7.6" r="2.2"/><path d="M13.4 11.4a4.2 4.2 0 0 1 4.1 4.1"/></svg>`,
+  next: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h10.5M10.5 5.5 15 10l-4.5 4.5"/></svg>`,
+  panel: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 5.5h12M4 10h12M4 14.5h8"/></svg>`,
+  addPerson: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="2.8"/><path d="M2.8 16a5.2 5.2 0 0 1 10.4 0M15.5 6.5v5M13 9h5"/></svg>`,
 };
 
 // Collapsed glyphs: an SF-style waveform (bars breathe; in a call they talk), or mic.slash when muted.
@@ -114,8 +128,9 @@ function button(cls: string, svg: string, label: string, onClick: () => void): H
   return b;
 }
 
-async function seatButton(s: SeatView, small: boolean, active: boolean): Promise<HTMLButtonElement> {
+async function seatButton(s: SeatView, small: boolean, active: boolean, onTap?: () => void): Promise<HTMLButtonElement> {
   const b = button(`seat${small ? " sm" : ""}${active ? " active" : ""}${s.enabled ? "" : " disabled"}`, "", s.name, () => {
+    if (onTap) { onTap(); return; }
     // pending = on the Dock as a placeholder; there is nothing to dial yet
     if (!s.enabled || s.status === "pending") return;
     api.invoke("call_seat", { seatId: s.id });
@@ -195,16 +210,28 @@ async function render() {
   micBtn.id = "mic";
   micBtn.dataset.k = "mic";
 
-  if (p.phase === "idle") {
+  if (state.room) {
+    await renderRoom(frag, micBtn);
+  } else if (p.phase === "idle") {
     frag.append(button("ghost", SVG.collapse, t("dock.collapse"), () => api.invoke("set_expanded", { expanded: false })));
     frag.append(micBtn);
     statusEl = el("div", "status idle");
     frag.append(statusEl);
     frag.append(el("div", "divider"));
-    for (const s of seats.filter((s) => s.enabled || s.status === "pending")) frag.append(await seatButton(s, false, false));
-    frag.append(button("ghost add", SVG.plus, t("dock.addAgent"), () => api.invoke("open_settings")));
+    for (const s of seats.filter((s) => s.enabled || s.status === "pending")) frag.append(picking ? await pickButton(s) : await seatButton(s, false, false));
+    if (picking && picked.length >= 2) {
+      const call = el("button", "undo callgroup", escapeHtml(t("room.callN", { n: picked.length })));
+      call.type = "button";
+      call.dataset.k = "callgroup";
+      call.addEventListener("click", () => void startPicked());
+      frag.append(call);
+    }
+    if (!picking) for (const g of groups) frag.append(await groupButton(g));
+    frag.append(button(`ghost group-toggle${picking ? " on" : ""}`, SVG.group, t(picking ? "room.pickCancel" : "room.pick"), () => void togglePicking()));
+    if (!picking) frag.append(button("ghost add", SVG.plus, t("dock.addAgent"), () => api.invoke("open_settings")));
     frag.append(grip());
     renderStatusTextInto(statusEl);
+    if (picking) statusEl.innerHTML = `<div class="name">${escapeHtml(t("room.picking"))}</div><div class="sub">${escapeHtml(t("room.pickedN", { n: picked.length }))}</div>`;
   } else if (p.phase === "calling" || p.phase === "in_call") {
     const s = seatById(p.seat);
     const av = el("div", "avatar", s ? await seatIcon(s) : "");
@@ -221,10 +248,12 @@ async function render() {
     frag.append(wave);
     waveCanvas = wave;
     frag.append(micBtn);
-    frag.append(button("red", SVG.hangup, t("dock.hangup"), () => api.invoke("hangup")));
     const others = enabledSeats().filter((x) => x.id !== p.seat);
+    // 拉群: the other seats join this call as a room instead of taking it over
+    if (others.length) frag.append(button(`ghost addgroup${adding ? " on" : ""}`, SVG.addPerson, t(adding ? "room.addDone" : "room.pull"), () => { adding = !adding; void render(); }));
+    frag.append(button("red", SVG.hangup, t("dock.hangup"), () => api.invoke("hangup")));
     if (others.length) frag.append(el("div", "divider"));
-    for (const o of others) frag.append(await seatButton(o, true, false));
+    for (const o of others) frag.append(adding ? await addableButton(o) : await seatButton(o, true, false));
   } else if (p.phase === "switching") {
     const to = seatById(p.to), from = seatById(p.from);
     const av = el("div", "avatar", to ? await seatIcon(to) : "");
@@ -277,6 +306,153 @@ async function render() {
 }
 
 function renderStatusTextInto(e: HTMLDivElement) { statusEl = e; renderStatusText(); }
+
+// ───────── round-table: one voice floor, the others briefed by a note when they take it ─────────
+const troubleText = (tr: string) => tr === "dial_timeout" ? t("room.troubleDial") : tr;
+const roomTitle = () => state.room?.name ?? t("room.adhoc", { n: state.room?.members.length ?? 0 });
+
+/** What the Dock says about the note sent to the seat being dialled. */
+function relayLine(seat: string): string | null {
+  const r = relayInfo;
+  if (!r || r.to !== seat) return null;
+  const n = { n: r.lines };
+  if (r.mode === "paste" || r.outcome === "pasted") return t("room.relayPasted", n);
+  if (r.mode === "none") return t("room.relayNone");
+  switch (r.outcome) {
+    case "sent": return t("room.relayed", n);
+    case "uncertain": return t("room.relayUncertain");
+    case "not_sent": return t("room.relayNotSent");
+    default: return t("room.relaying", n);
+  }
+}
+
+async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
+  const room = state.room!;
+  const p = state.phase;
+  const floor = currentSeatId();
+  const floorSeat = floor ? seatById(floor) : null;
+  const av = el("div", "avatar room-av", floorSeat ? await seatIcon(floorSeat) : SVG.group);
+  av.dataset.k = "avatar";
+  av.title = t("dock.collapse");
+  av.addEventListener("click", () => api.invoke("set_expanded", { expanded: false }));
+  frag.append(av);
+  const name = floorSeat?.name ?? floor ?? "";
+  const sub = p.phase === "idle" ? t("room.noFloor")
+    : p.phase === "calling" ? [t("room.calling", { name }), relayLine(p.seat)].filter(Boolean).join(" · ")
+    : p.phase === "in_call" ? t("room.speaking", { name, time: fmtTime(p.elapsed_secs) })
+    : p.phase === "switching" ? t("room.passTo", { name: seatById(p.to)?.name ?? p.to })
+    : `${t("dock.needsYou")} · ${p.reason === "call_timeout" ? t("dock.callTimeout") : p.reason}`;
+  const st = el("div", "status");
+  st.innerHTML = `<div class="name">${escapeHtml(roomTitle())}</div><div class="sub">${escapeHtml(sub)}${state.muted ? ` · ${escapeHtml(t("dock.muted"))}` : ""}</div>`;
+  st.title = sub;
+  frag.append(st);
+  if (p.phase === "in_call" || p.phase === "calling") {
+    const wave = el("canvas", "wave") as HTMLCanvasElement;
+    if (vertical()) { wave.width = 68; wave.height = 168; } else { wave.width = 168; wave.height = 68; }
+    frag.append(wave);
+    waveCanvas = wave;
+  }
+  if (p.phase === "switching") {
+    const undo = el("button", "undo", escapeHtml(t("dock.undo", { n: p.undo_secs_left })));
+    undo.type = "button";
+    undo.dataset.k = "undo";
+    undo.addEventListener("click", () => api.invoke("undo_switch"));
+    frag.append(undo);
+    const to = seatById(p.to);
+    if (to?.relay || to?.silent) {
+      // sending what was said to another vendor needs consent: off until tapped in an ad-hoc room
+      const chip = el("button", `carry${p.carry ? " on" : ""}`, escapeHtml(t(to.relay ? "room.relayChip" : "room.relayChipPaste")));
+      chip.type = "button";
+      chip.dataset.k = "carry";
+      chip.setAttribute("aria-pressed", String(p.carry));
+      chip.title = t(to.relay ? "room.relaySend" : "room.relayPaste", { name: to.name }) + (room.relay ? "" : ` · ${t("room.relayConsent")}`);
+      chip.addEventListener("click", () => api.invoke("set_carry", { carry: !p.carry }));
+      frag.append(chip);
+    }
+  }
+  if (p.phase === "needs_human") frag.append(button("", SVG.eye, t("dock.showPage"), () => api.invoke("show_seat", { seatId: p.seat, visible: true })));
+  frag.append(micBtn);
+  frag.append(button("next", SVG.next, t("room.next"), () => api.invoke("floor_next")));
+  frag.append(button("panel", SVG.panel, t("room.panel"), () => api.invoke("open_room_panel")));
+  frag.append(button(`ghost addgroup${adding ? " on" : ""}`, SVG.addPerson, t(adding ? "room.addDone" : "room.add"), () => { adding = !adding; void render(); }));
+  frag.append(button("red", SVG.hangup, t("room.end"), () => api.invoke("hangup")));
+  frag.append(el("div", "divider"));
+  for (const m of room.members) {
+    const s = m.who.kind === "seat" ? seatById(m.who.id) : undefined;
+    if (!s) continue;
+    const live = m.who.id === floor;
+    const b = await seatButton(s, true, live || (p.phase === "switching" && m.who.id === p.to), () => {
+      // a member with a badge needs a look at its page; any other tap passes the floor
+      if (m.trouble) void api.invoke("show_seat", { seatId: s.id, visible: true });
+      else void api.invoke("call_seat", { seatId: s.id });
+    });
+    b.classList.add("member");
+    b.dataset.floor = live ? "live" : "seated";
+    if (m.trouble) { b.dataset.trouble = "1"; b.title = `${s.name} · ${troubleText(m.trouble)}`; }
+    frag.append(b);
+  }
+  if (adding) for (const s of enabledSeats().filter((x) => !room.members.some((m) => m.who.id === x.id))) frag.append(await addableButton(s));
+}
+
+/** A seat that joins the room (or turns a 1:1 call into one) when tapped. */
+async function addableButton(s: SeatView): Promise<HTMLButtonElement> {
+  const b = await seatButton(s, true, false, () => { void api.invoke("room_add", { seatId: s.id }); });
+  b.classList.add("addable");
+  b.title = t("room.addOne", { name: s.name });
+  b.dataset.k = `add:${s.id}`;
+  return b;
+}
+
+/** Idle pill in picking mode: a tap ticks a seat; a blocked one says why instead. */
+async function pickButton(s: SeatView): Promise<HTMLButtonElement> {
+  const rows = preflight.get(s.id) ?? [];
+  const blocked = s.status === "pending" || !s.enabled || rows.some((r) => r.status === "blocked");
+  const b = await seatButton(s, false, picked.includes(s.id), () => {
+    if (blocked) return;
+    const i = picked.indexOf(s.id);
+    if (i >= 0) picked.splice(i, 1); else if (picked.length < 6) picked.push(s.id);
+    void render();
+  });
+  b.classList.add("pick");
+  if (picked.includes(s.id)) b.classList.add("picked");
+  if (blocked) b.classList.add("blocked");
+  const issues = rows.filter((r) => r.status !== "done").map((r) => t(`pre.${r.check}` as MsgKey));
+  if (issues.length) { b.dataset.pre = blocked ? "blocked" : "todo"; b.title = `${s.name} · ${issues.join(" · ")}`; }
+  return b;
+}
+
+async function togglePicking() {
+  picking = !picking;
+  picked.length = 0;
+  if (picking) {
+    const ids = seats.filter((s) => s.enabled).map((s) => s.id);
+    try {
+      const rows = await api.invoke<CheckRow[]>("room_preflight", { seatIds: ids, relay: false });
+      preflight = new Map();
+      for (const r of rows ?? []) preflight.set(r.who.id, [...(preflight.get(r.who.id) ?? []), r]);
+    } catch { preflight = new Map(); }
+  }
+  void render();
+}
+
+async function startPicked() {
+  const seatIds = [...picked];
+  picking = false;
+  picked.length = 0;
+  try { await api.invoke("start_room", { seatIds }); } catch (e) { uiLog("warn", `start_room: ${e}`); void render(); }
+}
+
+/** A saved group on the idle pill: its first members' marks stacked; a tap calls the group. */
+async function groupButton(g: GroupContact): Promise<HTMLButtonElement> {
+  const marks = await Promise.all(g.members.slice(0, 2).map(async (m) => {
+    const s = m.who.kind === "seat" ? seatById(m.who.id) : undefined;
+    return `<span class="gm">${s ? await seatIcon(s) : SVG.group}</span>`;
+  }));
+  const b = button("seat group-contact", `<div class="mark stack">${marks.join("")}</div>`, g.name, () => { void api.invoke("start_room", { groupId: g.id }); });
+  b.dataset.k = `group:${g.id}`;
+  b.title = `${g.name} · ${t("room.adhoc", { n: g.members.length })}`;
+  return b;
+}
 
 // ───────── waveform: real mic level when available, otherwise a gentle idle motion ─────────
 let waveCanvas: HTMLCanvasElement | null = null;
@@ -343,7 +519,8 @@ dock.addEventListener("mouseleave", () => { if (hoverSeat) { hoverSeat = null; r
 window.addEventListener("blur", () => { if (hoverSeat) { hoverSeat = null; renderStatusText(); } });
 dock.addEventListener("contextmenu", (e) => { e.preventDefault(); api.invoke("dock_menu"); });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.expanded && state.phase.phase === "idle") api.invoke("set_expanded", { expanded: false });
+  if (e.key === "Escape" && picking) { void togglePicking(); return; }
+  if (e.key === "Escape" && state.expanded && state.phase.phase === "idle" && !state.room) api.invoke("set_expanded", { expanded: false });
 });
 
 // ───────── grip: the grabber at the pill's end — tap flips 横向/竖向, hold-and-drag moves the Dock ─────────
@@ -721,10 +898,20 @@ async function boot() {
   applySettings(await api.invoke<AppSettings>("get_settings"));
   seats = await api.invoke<SeatView[]>("get_seats");
   state = await api.invoke<DockState>("get_state");
+  groups = (await api.invoke<GroupContact[]>("get_groups")) ?? [];
   lastSize = { w: 0, h: 0 };
   await render();
   booting = false;
-  api.on<DockState>("dock:state", (s) => { state = s; if (s.phase.phase !== "calling") carried = null; render(); });
+  api.on<DockState>("dock:state", (s) => {
+    state = s;
+    if (s.phase.phase !== "calling") { carried = null; relayInfo = null; }
+    if (!s.room && s.phase.phase === "idle") adding = false;
+    if (s.room) picking = false;
+    render();
+  });
+  api.on<GroupContact[]>("groups:changed", (g) => { groups = g; render(); });
+  api.on<{ id: string; to: string; lines: number; mode: string }>("room:relay", (r) => { relayInfo = r; render(); });
+  api.on<RelayReport>("room:relay_outcome", (r) => { if (relayInfo?.id === r.id) { relayInfo.outcome = r.outcome; render(); } });
   api.on<{ to: string; lines: number }>("dock:handoff", (h) => { carried = h; render(); });
   api.on<SeatView[]>("seats:changed", (s) => { seats = s; iconCache.clear(); render(); });
   api.on<AppSettings>("settings:changed", (s) => { applySettings(s); render(); });

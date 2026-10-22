@@ -17,6 +17,7 @@ export default defineConfig(async () => ({
       input: {
         dock: resolve(import.meta.dirname, "index.html"),
         settings: resolve(import.meta.dirname, "settings.html"),
+        room: resolve(import.meta.dirname, "room.html"),
       },
     },
   },

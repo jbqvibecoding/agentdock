@@ -256,6 +256,7 @@ fn table(key: &str) -> Option<[&'static str; 4]> {
         "menu.quit" => ["退出 AgentDock", "Quit AgentDock", "結束 AgentDock", "AgentDock を終了"],
         "menu.toggle_dock" => ["显示 / 隐藏 Dock", "Show / Hide Dock", "顯示 / 隱藏 Dock", "Dock を表示 / 非表示"],
         "window.settings" => ["AgentDock 设置", "AgentDock Settings", "AgentDock 設定", "AgentDock 設定"],
+        "window.room" => ["AgentDock 群聊", "AgentDock Group Call", "AgentDock 群組通話", "AgentDock グループ通話"],
         "menu.language" => ["语言", "Language", "語言", "言語"],
         "menu.lang_system" => ["跟随系统", "Follow system", "跟隨系統", "システムに合わせる"],
         _ => return None,
@@ -286,7 +287,7 @@ mod tests {
             "rt.unheard", "rt.guard", "rt.ask", "rt.test", "room.too_few", "relay.not_capable", "relay.no_report", "roster.group_chat", "roster.hidden", "app.not_installed", "app.needs_ax", "icon.bad_format",
             "icon.too_large", "chrome.lost", "chrome.no_tab", "chrome.refused", "chrome.not_enabled", "chrome.just_refused",
             "menu.expand", "menu.collapse", "menu.to_vertical", "menu.to_horizontal", "menu.form_dot", "menu.form_pet",
-            "menu.zoom_in", "menu.zoom_out", "menu.zoom_reset", "menu.settings", "menu.quit", "menu.toggle_dock", "window.settings",
+            "menu.zoom_in", "menu.zoom_out", "menu.zoom_reset", "menu.settings", "menu.quit", "menu.toggle_dock", "window.settings", "window.room",
             "menu.language", "menu.lang_system",
         ];
         let holes = |s: &str| {

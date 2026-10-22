@@ -49,6 +49,20 @@
         "visible": false,
         "center": true,
         "shadow": true
+      },
+      {
+        "label": "room",
+        "title": "AgentDock 群聊",
+        "url": "room.html",
+        "width": 380,
+        "height": 520,
+        "minWidth": 300,
+        "minHeight": 360,
+        "resizable": true,
+        "decorations": true,
+        "alwaysOnTop": true,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

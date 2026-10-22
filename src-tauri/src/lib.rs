@@ -68,6 +68,8 @@ pub struct SeatView {
     pub probe: Option<ProbeResult>,
     pub driver_verified: bool,
     pub silent: bool,
+    /// The driver can send a round-table relay note (otherwise it is pasted, or not at all).
+    pub relay: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -123,6 +125,7 @@ fn seat_views(st: &AppState) -> Vec<SeatView> {
                 probe: probes.get(&s.id).cloned(),
                 driver_verified: st.registry.get(driver_id).map(|d| d.verified).unwrap_or(false),
                 silent: matches!(s.driver, DriverKind::Web { .. }),
+                relay: st.registry.get(driver_id).is_ok_and(drivers::relay_capable),
             }
         })
         .collect()
@@ -845,6 +848,14 @@ fn room_say(app: AppHandle, text: String) -> CmdResult<()> {
 #[tauri::command]
 fn room_ledger(st: tauri::State<AppState>) -> Vec<roundtable::Utterance> {
     st.table.lock().unwrap().ledger().to_vec()
+}
+
+/// The room panel: the transcript so far, and a box to type (or dictate) into. Unlike the Dock it
+/// takes focus.
+#[tauri::command]
+fn open_room_panel(app: AppHandle) -> CmdResult<()> {
+    let win = app.get_webview_window("room").ok_or("no room window")?;
+    win.show().and_then(|_| win.set_focus()).map_err(err)
 }
 
 #[tauri::command]
@@ -2533,6 +2544,9 @@ fn apply_language(app: &AppHandle, language: settings::Language) {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.set_title(&i18n::t("window.settings"));
     }
+    if let Some(w) = app.get_webview_window("room") {
+        let _ = w.set_title(&i18n::t("window.room"));
+    }
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
@@ -2681,18 +2695,23 @@ pub fn run() {
                 liquid_glass::set_corner_radius(init_size.0.min(init_size.1) / 2.0);
                 let _ = position_dock(&dock, init_size.0, init_size.1, snap, anchor);
             }
-            if let Some(w) = &settings_win {
-                let app2 = app.handle().clone();
-                w.on_window_event(move |ev| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
-                        api.prevent_close();
-                        if let Some(w) = app2.get_webview_window("settings") { let _ = w.hide(); }
-                    }
-                });
+            // closing the settings or room window only hides it: both are reopened from the Dock
+            for label in ["settings", "room"] {
+                if let Some(w) = app.get_webview_window(label) {
+                    let app2 = app.handle().clone();
+                    w.on_window_event(move |ev| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+                            api.prevent_close();
+                            if let Some(w) = app2.get_webview_window(label) { let _ = w.hide(); }
+                        }
+                    });
+                }
             }
             build_tray(app.handle())?;
-            if let Some(w) = app.get_webview_window("settings") {
-                let _ = w.set_title(&i18n::t("window.settings"));
+            for (label, key) in [("settings", "window.settings"), ("room", "window.room")] {
+                if let Some(w) = app.get_webview_window(label) {
+                    let _ = w.set_title(&i18n::t(key));
+                }
             }
             let icon_mode = app.state::<AppState>().settings.lock().unwrap().app_icon;
             apply_app_icon(app.handle(), icon_mode);
@@ -2764,7 +2783,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, set_carry,
-            start_room, room_add, room_drop, floor_next, release_floor, room_say, room_ledger, get_groups, save_groups, room_preflight, relay_report, test_relay,
+            start_room, room_add, room_drop, floor_next, release_floor, room_say, room_ledger, open_room_panel, get_groups, save_groups, room_preflight, relay_report, test_relay,
             resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat, chrome_status, app_targets,
             driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,

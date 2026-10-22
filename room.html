@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title data-i18n="room.window">AgentDock 群聊</title>
+    <link rel="stylesheet" href="/src/room.css" />
+    <script type="module" src="/src/room.ts" defer></script>
+  </head>
+  <body>
+    <header class="head">
+      <div class="head__name" id="room-name"></div>
+      <div class="head__sub" id="room-sub"></div>
+    </header>
+    <main class="lines" id="lines" aria-live="polite"></main>
+    <form class="say" id="say">
+      <textarea id="say-text" rows="2" data-i18n-placeholder="room.placeholder"></textarea>
+      <button type="submit" class="say__send" id="say-send" data-i18n="room.send">发送到群里</button>
+    </form>
+    <p class="hint" id="hint" data-i18n="room.hint"></p>
+  </body>
+</html>
