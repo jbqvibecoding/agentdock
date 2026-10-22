@@ -650,6 +650,7 @@ async function renderHotkeys() {
     row(t("hk.hangup"), "", keyChip(h.hangup, c(h.hangup), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, hangup: v } }).then(renderHotkeys))),
     row(t("hk.orientation"), "", keyChip(h.orientation, c(h.orientation), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, orientation: v } }).then(renderHotkeys))),
     row(t("hk.form"), t("hk.formSub"), keyChip(h.form, c(h.form), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, form: v } }).then(renderHotkeys))),
+    row(t("hk.discussion"), t("hk.discussionSub"), keyChip(h.discussion ?? "Alt+D", c(h.discussion ?? "Alt+D"), (v) => saveSettings({ hotkeys: { ...settings.hotkeys, discussion: v } }).then(renderHotkeys))),
   );
   const seatMod = el("select") as HTMLSelectElement;
   for (const m of ["Alt", "Control", "Super", "Control+Alt", "Super+Shift"]) seatMod.append(new Option(`${m.split("+").map(pretty).join("")} + 1…9`, m, false, m === h.seat_modifier));

@@ -169,6 +169,13 @@ fn table(key: &str) -> Option<[&'static str; 4]> {
             "我馬上用語音接通你。現在請只回覆「好的」。",
             "このあと音声でつなぎます。いまは「了解」とだけ返信してください。",
         ],
+        // free discussion: the bots take turns by themselves, so the note says how a turn ends
+        "rt.ask_disc" => [
+            "我马上用语音接通你，这是自由讨论：请回应其他人的观点，三句话、三十秒以内；想让谁接着说，就在最后一句点他的名字；如果我插话，先回答我。现在请只回复「好的」。",
+            "I'm about to connect to you by voice for a free discussion: respond to the others' points in three sentences, about thirty seconds; to hand over to someone, name them in your last sentence; if I cut in, answer me first. For now, reply only \u{201c}OK\u{201d}.",
+            "我馬上用語音接通你，這是自由討論：請回應其他人的觀點，三句話、三十秒以內；想讓誰接著說，就在最後一句點他的名字；如果我插話，先回答我。現在請只回覆「好的」。",
+            "このあと音声でつなぎます。フリートークです。ほかの参加者の意見に 3 文・30 秒ほどで応えてください。次に話してほしい人がいれば、最後の文でその名前を呼んでください。私が割り込んだら先に私に答えてください。いまは「了解」とだけ返信してください。",
+        ],
         "rt.test" => [
             "AgentDock 测试转述：这条消息只用来确认能发送，请只回复「好的」。",
             "AgentDock relay test: this message only checks that sending works. Reply only \u{201c}OK\u{201d}.",
@@ -284,7 +291,7 @@ mod tests {
         let keys = [
             "call.needs_auth", "call.web_not_found", "call.target_not_found", "call.voice_not_found", "call.failed", "call.pending",
             "probe.needs_human", "handoff.heading", "handoff.me", "handoff.turn", "handoff.ask", "rt.heading", "rt.me", "rt.turn",
-            "rt.unheard", "rt.guard", "rt.ask", "rt.test", "room.too_few", "relay.not_capable", "relay.no_report", "roster.group_chat", "roster.hidden", "app.not_installed", "app.needs_ax", "icon.bad_format",
+            "rt.unheard", "rt.guard", "rt.ask", "rt.ask_disc", "rt.test", "room.too_few", "relay.not_capable", "relay.no_report", "roster.group_chat", "roster.hidden", "app.not_installed", "app.needs_ax", "icon.bad_format",
             "icon.too_large", "chrome.lost", "chrome.no_tab", "chrome.refused", "chrome.not_enabled", "chrome.just_refused",
             "menu.expand", "menu.collapse", "menu.to_vertical", "menu.to_horizontal", "menu.form_dot", "menu.form_pet",
             "menu.zoom_in", "menu.zoom_out", "menu.zoom_reset", "menu.settings", "menu.quit", "menu.toggle_dock", "window.settings", "window.room",

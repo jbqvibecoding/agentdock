@@ -18,6 +18,18 @@ export interface Room {
   /** Consent to SEND what others said into the next floor holder's chat. */ relay: boolean;
   /** A member's name at the start of a sentence passes the floor. */ addressed: boolean;
   last: MemberRef | null;
+  mode?: RoomMode;
+  /** Free discussion's state while `mode` is "discussion". */ disc?: Discussion | null;
+}
+export type RoomMode = "moderated" | "discussion";
+/** Why an automatic pass happened (discussion.rs PassOrigin). */
+export type PassOrigin = "quiet" | "named" | "cap" | "timed" | "no_start" | "left_call";
+export type PauseWhy = "user" | "spoken" | "budget" | "time_cap" | "trouble";
+export interface Discussion {
+  run: { state: "running" } | { state: "paused"; why: PauseWhy };
+  round_robin: boolean; hops_budget: number; hops_left: number; named_streak: number; skips_in_row: number;
+  /** Set while the pending switch is an automatic one. */ pending?: PassOrigin | null;
+  previous?: [string, boolean] | null;
 }
 export interface DockState { phase: Phase; muted: boolean; expanded: boolean; room?: Room | null }
 
@@ -56,7 +68,7 @@ export type Snap = "free" | "top_center" | "bottom_center" | "top_left" | "top_r
 export type Orientation = "horizontal" | "vertical";
 export type CollapseMode = "auto" | "pinned_expanded" | "pinned_collapsed";
 export interface DockAnchor { x: number; y: number }
-export interface Hotkeys { toggle: string; mute: string; hangup: string; orientation: string; form: string; seat_modifier: string; push_to_talk: boolean }
+export interface Hotkeys { toggle: string; mute: string; hangup: string; orientation: string; form: string; discussion?: string; seat_modifier: string; push_to_talk: boolean }
 export interface MemorySettings {
   enabled: boolean; user_id: string; inject_context: boolean; top_k: number;
 }
@@ -104,7 +116,7 @@ const mock = (() => {
   ];
   let settings: AppSettings = {
     default_form: "dot", theme: "system", snap: "top_center", orientation: "horizontal", dock_anchor: null, auto_collapse_secs: 8, collapse_mode: "auto", show_names: "hover", reduce_motion: false, material_strength: 0.5, dock_scale: 1, accent: null,
-    hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", seat_modifier: "Alt", push_to_talk: false },
+    hotkeys: { toggle: "Alt+Space", mute: "Alt+M", hangup: "Alt+Escape", orientation: "Alt+O", form: "Alt+P", discussion: "Alt+D", seat_modifier: "Alt", push_to_talk: false },
     mute_mode: "system", pause_media_in_call: true, input_device: null, confirm_switch: false, warm_transfer: true, web_via_chrome: true, app_icon: "both", language: "system",
     memory: { enabled: false, user_id: "", inject_context: true, top_k: 5 },
   };
@@ -131,7 +143,18 @@ const mock = (() => {
       setState({ ...state, phase: { phase: "in_call", seat, elapsed_secs: 0 } });
       window.clearInterval(timer);
       timer = window.setInterval(() => {
-        if (state.phase.phase === "in_call") setState({ ...state, phase: { ...state.phase, elapsed_secs: Math.floor((Date.now() - started) / 1000) } });
+        if (state.phase.phase !== "in_call") return;
+        const elapsed = Math.floor((Date.now() - started) / 1000);
+        setState({ ...state, phase: { ...state.phase, elapsed_secs: elapsed } });
+        const r = state.room, d = r?.disc;
+        if (!r || !d || d.run.state !== "running" || elapsed < (W().__mockTurnSecs ?? 8)) return;
+        if (d.hops_left === 0) { d.run = { state: "paused", why: "budget" }; setState({ ...state }); return; }
+        const seatsIn = r.members.filter((m) => m.who.kind === "seat" && !m.trouble);
+        const i = seatsIn.findIndex((m) => m.who.id === seat);
+        const to = seatsIn[(i + 1) % seatsIn.length]?.who.id;
+        if (!to || to === seat) return;
+        d.pending = "quiet";
+        cmds.call_seat({ seatId: to, auto: true });
       }, 1000);
     }, 1200);
   };
@@ -161,6 +184,8 @@ const mock = (() => {
     },
     call_seat: (a) => {
       const p = state.phase;
+      const d = state.room?.disc;
+      if (d && !a.auto) { d.pending = null; d.hops_left = d.hops_budget; }
       if ((p.phase === "in_call" || p.phase === "calling") && p.seat !== a.seatId) {
         const from = p.seat; let left = 3;
         if (state.room && !state.room.members.some((m) => m.who.id === a.seatId) && state.room.members.length >= 6) return;
@@ -171,6 +196,11 @@ const mock = (() => {
           if (state.phase.phase !== "switching") { window.clearInterval(undoTimer); return; }
           if (left <= 0) {
             window.clearInterval(undoTimer);
+            const d = state.room?.disc;
+            if (d) {
+              if (d.pending) { d.hops_left = Math.max(0, d.hops_left - 1); d.previous = [from, d.pending === "named"]; }
+              d.pending = null;
+            }
             const room = !!state.room;
             const carry = state.phase.carry && (room || (settings.warm_transfer !== false && seats.find((s) => s.id === a.seatId)?.driver.kind === "web"));
             startCall(a.seatId);
@@ -219,7 +249,36 @@ const mock = (() => {
         if (!m.trouble && m.who.kind === "seat" && m.who.id !== cur) { void cmds.call_seat({ seatId: m.who.id }); return; }
       }
     },
-    release_floor: () => { if (!state.room) return; window.clearInterval(timer); window.clearTimeout(connectTimer); setState({ ...state, phase: { phase: "idle" } }); },
+    release_floor: () => {
+      if (!state.room) return;
+      if (state.room.disc) { state.room.disc.pending = null; state.room.disc.run = { state: "paused", why: "user" }; }
+      window.clearInterval(timer); window.clearTimeout(connectTimer); setState({ ...state, phase: { phase: "idle" } });
+    },
+    // free discussion: like state.rs, a discussion needs the room's consent to send (or gives it)
+    set_room_mode: (a) => {
+      const r = state.room; if (!r) return;
+      if (a.mode === "discussion") {
+        if (!r.relay && !a.consent) return;
+        const n = r.members.filter((m) => m.who.kind === "seat").length;
+        const budget = Math.min(8, Math.max(2, 2 * (n - 1)));
+        r.relay = true; r.mode = "discussion";
+        r.disc = { run: { state: "running" }, round_robin: false, hops_budget: budget, hops_left: budget, named_streak: 0, skips_in_row: 0, pending: null, previous: null };
+      } else { r.mode = "moderated"; r.disc = null; }
+      setState({ ...state });
+    },
+    discussion_pause: () => { const d = state.room?.disc; if (!d) return; d.run = { state: "paused", why: "user" }; if (state.phase.phase === "switching" && d.pending) cmds.undo_switch({}); else setState({ ...state }); },
+    discussion_resume: () => { const d = state.room?.disc; if (!d) return; d.run = { state: "running" }; d.hops_left = d.hops_budget; setState({ ...state }); },
+    floor_extend: () => { W().__mockExtends = (W().__mockExtends ?? 0) + 1; emit("room:countdown", null); },
+    room_vad: (a) => { (W().__mockVad ??= []).push(a.active); },
+    // test hooks: the user's words on the floor holder's page (spoken commands), and any host event
+    mock_user_says: (a) => {
+      const d = state.room?.disc; if (!d) return;
+      const text = String(a.text).trim().toLowerCase();
+      if (/^(停一下|暂停|等一下|等等|打住|停|stop|wait|pause|ストップ)/.test(text)) { d.run = { state: "paused", why: "spoken" }; if (state.phase.phase === "switching" && d.pending) cmds.undo_switch({}); else setState({ ...state }); }
+      else if (/^(下一位|下一个|换人|next)/.test(text)) cmds.floor_next({});
+      else { d.hops_left = d.hops_budget; if (d.run.state === "paused" && (d.run.why === "budget" || d.run.why === "trouble")) d.run = { state: "running" }; setState({ ...state }); }
+    },
+    mock_emit: (a) => emit(a.event, a.payload),
     room_say: (a) => { if (!state.room) throw new Error("no room"); const u: Utterance = { seq: ledger.length, turn: state.room.turn, speaker: { kind: "user" }, text: a.text, typed: true, unheard: false }; ledger.push(u); (W().__mockRoomSays ??= []).push(a.text); emit("room:lines", [u]); },
     room_ledger: () => ledger,
     get_groups: () => groups,
@@ -248,7 +307,7 @@ const mock = (() => {
     toggle_expanded: () => setState({ ...state, expanded: !state.expanded }),
     set_expanded: (a) => setState({ ...state, expanded: a.expanded }),
     set_carry: (a) => { if (state.phase.phase === "switching") { if (a.carry && state.room) state.room.relay = true; setState({ ...state, phase: { ...state.phase, carry: a.carry } }); } },
-    undo_switch: () => { if (state.phase.phase === "switching") { window.clearInterval(undoTimer); setState({ ...state, phase: { phase: "in_call", seat: state.phase.from, elapsed_secs: Math.floor((Date.now() - started) / 1000) } }); } },
+    undo_switch: () => { if (state.phase.phase === "switching") { window.clearInterval(undoTimer); if (state.room?.disc) state.room.disc.pending = null; setState({ ...state, phase: { phase: "in_call", seat: state.phase.from, elapsed_secs: Math.floor((Date.now() - started) / 1000) } }); } },
     resize_dock: () => undefined,
     drag_dock: (a) => { const w = window as any; w.__mockDrags = (w.__mockDrags || 0) + 1; w.__mockGrab = { x: a.offsetX, y: a.offsetY }; },
     remember_dock_position: () => { (window as any).__mockAnchored = true; settings = { ...settings, snap: "free" }; (window as any).__mockSettings = settings; emit("settings:changed", settings); },
@@ -267,7 +326,7 @@ const mock = (() => {
     set_seat_icon: (a) => { const s = seats.find((x) => x.id === a.seatId); if (s) { s.icon = { kind: "custom", path: `data:${a.fileName}` }; (s as any)._data = a.dataBase64; emit("seats:changed", seats); } return "icons/x"; },
     reset_seat_icon: (a) => { const s = seats.find((x) => x.id === a.seatId); if (s) { s.icon = { kind: "builtin", key: s.id }; emit("seats:changed", seats); } },
     seat_icon_data: (a) => { const s: any = seats.find((x) => x.id === a.seatId); return s?._data ? `data:image/png;base64,${s._data}` : null; },
-    hotkey_conflicts: (a) => { const h = a.settings.hotkeys; const all = [h.toggle, h.mute, h.hangup, h.orientation, h.form].map((k: string) => k.toLowerCase()); return all.filter((k: string, i: number) => all.indexOf(k) !== i); },
+    hotkey_conflicts: (a) => { const h = a.settings.hotkeys; const all = [h.toggle, h.mute, h.hangup, h.orientation, h.form, h.discussion ?? "Alt+D"].map((k: string) => k.toLowerCase()); return all.filter((k: string, i: number) => all.indexOf(k) !== i); },
     open_settings: () => window.open("/settings.html", "_blank"),
     quit: () => undefined,
     // ?os=macos previews the macOS-only rows (screenshots)

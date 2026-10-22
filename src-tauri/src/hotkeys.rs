@@ -11,6 +11,7 @@ pub enum HotkeyAction {
     Hangup,
     Orientation,
     Form,
+    Discussion,
     Seat { index: usize },
 }
 
@@ -22,6 +23,7 @@ pub fn bindings(settings: &AppSettings, enabled_seats: usize) -> Vec<(String, Ho
         (settings.hotkeys.hangup.clone(), HotkeyAction::Hangup),
         (settings.hotkeys.orientation.clone(), HotkeyAction::Orientation),
         (settings.hotkeys.form.clone(), HotkeyAction::Form),
+        (settings.hotkeys.discussion.clone(), HotkeyAction::Discussion),
     ];
     for i in 1..=enabled_seats.min(9) {
         if let Some(k) = settings.seat_hotkey(i) {
@@ -47,12 +49,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registers_five_globals_plus_one_per_seat() {
+    fn registers_six_globals_plus_one_per_seat() {
         let b = bindings(&AppSettings::default(), 3);
-        assert_eq!(b.len(), 8);
+        assert_eq!(b.len(), 9);
         assert_eq!(b[3], ("Alt+O".to_string(), HotkeyAction::Orientation));
-        assert_eq!(b[5], ("Alt+1".to_string(), HotkeyAction::Seat { index: 1 }));
-        assert_eq!(bindings(&AppSettings::default(), 12).len(), 14, "seat hotkeys cap at 9");
+        assert_eq!(b[5], ("Alt+D".to_string(), HotkeyAction::Discussion));
+        assert_eq!(b[6], ("Alt+1".to_string(), HotkeyAction::Seat { index: 1 }));
+        assert_eq!(bindings(&AppSettings::default(), 12).len(), 15, "seat hotkeys cap at 9");
     }
 
     #[test]

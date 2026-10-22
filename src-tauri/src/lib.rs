@@ -1,6 +1,7 @@
 //! AgentDock core: wires the pure state machine, seats, drivers, mic and hotkeys into Tauri.
 
 pub mod calllog;
+pub mod discussion;
 pub mod drivers;
 pub mod everos;
 pub mod groups;
@@ -18,11 +19,11 @@ use hotkeys::HotkeyAction;
 use seats::{DriverKind, Seat, SeatIcon, SeatStatus, SeatsConfig};
 use serde::{Deserialize, Serialize};
 use settings::AppSettings;
-use state::{DockState, Effect, Event, MemberRef, Machine, Phase, RoomSpec};
+use state::{DiscussionRun, DockState, Effect, Event, MemberRef, Machine, PauseWhy, Phase, RoomSpec};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -55,6 +56,8 @@ pub struct AppState {
     pub relay_inflight: Mutex<HashMap<String, String>>,
     /// Recent relay reports by id (a test relay in a hidden webview waits for its own).
     pub relay_results: Mutex<HashMap<String, RelayReport>>,
+    /// Free discussion: when the floor holder is done, and who goes next.
+    pub discussion: Mutex<discussion::Tracker>,
     /// `EVEROS_API_KEY` + settings. Rebuilt when settings are saved. Missing key → inactive.
     pub everos: Mutex<everos::Client>,
     /// The connection to the user's Chrome, opened on the first web call that goes there.
@@ -144,6 +147,7 @@ fn dispatch<R: Runtime>(app: &AppHandle<R>, ev: Event) {
     memory_on_phase(app, &before.phase, &after.phase);
     calllog_on_phase(app, &before, &after);
     roundtable_on_state(app, &before, &after);
+    st.discussion.lock().unwrap().follow(&before, &after, Instant::now());
     let (driver_work, rest): (Vec<Effect>, Vec<Effect>) = effects.into_iter().partition(|fx| matches!(fx, Effect::DriverCall(_) | Effect::DriverHangup(_)));
     for fx in rest {
         apply_effect(app, fx);
@@ -404,7 +408,7 @@ fn relay_text(st: &AppState, state: &DockState) -> roundtable::RelayText {
         turn: i18n::t("rt.turn"),
         unheard: i18n::t("rt.unheard"),
         guard: i18n::t("rt.guard"),
-        ask: i18n::t("rt.ask"),
+        ask: i18n::t(if state.room.as_ref().is_some_and(|r| r.mode == state::RoomMode::Discussion) { "rt.ask_disc" } else { "rt.ask" }),
     }
 }
 
@@ -479,6 +483,57 @@ fn room_member_names(st: &AppState, room: &state::Room) -> Vec<(MemberRef, Vec<S
             (m.who.clone(), names)
         })
         .collect()
+}
+
+/// Free discussion, every half second: end the floor holder's turn when its clock says so and
+/// ask for the pass, hold an automatic switch while the outgoing bot is still heard, and keep the
+/// Dock's countdown and 请讲 hint current. The state machine decides whether a pass happens.
+fn discussion_poll<R: Runtime>(app: &AppHandle<R>) {
+    let st = app.state::<AppState>();
+    let state = st.machine.lock().unwrap().state.clone();
+    let Some(room) = state.room.as_ref().filter(|r| r.disc.is_some()) else { return };
+    let names: Vec<(String, Vec<String>)> = room_member_names(&st, room).into_iter().filter_map(|(who, names)| who.seat().map(|s| (s.to_string(), names))).collect();
+    let acts = st.discussion.lock().unwrap().poll(&state, &names, Instant::now());
+    for act in acts {
+        match act {
+            discussion::Act::Pass { to, turn, origin } => {
+                tracing::info!("discussion: turn {turn} done ({origin:?}) → {to}");
+                dispatch(app, Event::AutoPass { to, turn, origin });
+            }
+            discussion::Act::Hold => dispatch(app, Event::FloorBusy),
+            discussion::Act::Countdown(secs) => {
+                let _ = app.emit("room:countdown", secs);
+            }
+            discussion::Act::Nudge(seat) => {
+                let _ = app.emit("room:nudge", seat);
+            }
+        }
+    }
+}
+
+/// What the user newly said to the floor holder in a discussion: 停 pauses, 下一位 passes (unless
+/// the same words already passed by name), anything else is taking part: the floor holder
+/// answers you before the floor moves, and the automatic passes refill.
+fn discussion_heard<R: Runtime>(app: &AppHandle<R>, heard: Vec<(u64, String)>) {
+    let st = app.state::<AppState>();
+    if !st.machine.lock().unwrap().state.room.as_ref().is_some_and(|r| r.disc.is_some()) {
+        return;
+    }
+    for (seq, text) in heard {
+        let ev = match discussion::spoken_command(&text) {
+            Some(discussion::SpokenCommand::Pause) => Event::DiscussionPause(PauseWhy::Spoken),
+            Some(discussion::SpokenCommand::Next) if st.table.lock().unwrap().claim(seq) => Event::FloorNext,
+            _ => Event::UserActive,
+        };
+        tracing::info!("discussion: you spoke → {}", match ev { Event::DiscussionPause(_) => "pause", Event::FloorNext => "next", _ => "active" });
+        dispatch(app, ev);
+        st.discussion.lock().unwrap().user_spoke(Instant::now());
+    }
+}
+
+/// 自由讨论 is open in the room (paused or not).
+fn discussing(st: &AppState) -> bool {
+    st.machine.lock().unwrap().state.room.as_ref().is_some_and(|r| r.disc.is_some())
 }
 
 async fn write_batch(client: everos::Client, batch: memory::Persist) {
@@ -835,6 +890,36 @@ fn floor_next(app: AppHandle) {
 #[tauri::command]
 fn release_floor(app: AppHandle) {
     dispatch(&app, Event::ReleaseFloor);
+}
+
+/// 主持 ↔ 自由讨论. A discussion sends what was said to each member, so it needs `consent` (the
+/// Dock's two-step switch) unless the room already has it.
+#[tauri::command]
+fn set_room_mode(app: AppHandle, mode: state::RoomMode, consent: Option<bool>) {
+    dispatch(&app, Event::SetRoomMode { mode, consent: consent.unwrap_or(false) });
+}
+
+#[tauri::command]
+fn discussion_pause(app: AppHandle) {
+    dispatch(&app, Event::DiscussionPause(PauseWhy::User));
+}
+
+#[tauri::command]
+fn discussion_resume(app: AppHandle) {
+    dispatch(&app, Event::DiscussionResume);
+}
+
+/// 再等等: 30 s more for the floor holder.
+#[tauri::command]
+fn floor_extend(st: tauri::State<AppState>) {
+    st.discussion.lock().unwrap().extend();
+}
+
+/// The Dock's microphone level crossed its threshold. Edges only, never audio; it can only hold
+/// the floor, never move it.
+#[tauri::command]
+fn room_vad(st: tauri::State<AppState>, active: bool) {
+    st.discussion.lock().unwrap().on_vad(active, Instant::now());
 }
 
 /// A line typed (or dictated) in the room panel: the others hear it in their next relay note.
@@ -1434,10 +1519,15 @@ fn memory_report(app: AppHandle, window: tauri::Window, seat_id: String, lines: 
 fn caption_lines(app: &AppHandle, seat_id: &str, lines: &[memory::TranscriptLine]) {
     let st = app.state::<AppState>();
     let touched = st.table.lock().unwrap().on_lines(seat_id, lines);
+    let heard = st.discussion.lock().unwrap().on_lines(seat_id, &touched, Instant::now());
     // A relay note in the chat is not something anyone said: keep it out of CallLog and EverOS.
     let lines: Vec<memory::TranscriptLine> = lines.iter().filter(|l| !l.content.contains(roundtable::RELAY_MARKER_PREFIX)).cloned().collect();
     st.calllog.lock().unwrap().on_lines(seat_id, &lines);
     room_lines(app, touched);
+    discussion_heard(app, heard);
+    if lines.is_empty() {
+        return;
+    }
     let client = st.everos.lock().unwrap().clone();
     if !client.is_active() {
         return;
@@ -2023,13 +2113,27 @@ fn on_hotkey(app: &AppHandle, shortcut: &Shortcut, pressed: bool) {
     let Some(action) = action else { return };
     tracing::info!("hotkey {shortcut:?} → {action:?} pressed={pressed}");
     match (action, pressed) {
-        (HotkeyAction::Toggle, true) if push_to_talk => dispatch(app, Event::SetMuted(false)),
+        (HotkeyAction::Toggle, true) if push_to_talk => {
+            dispatch(app, Event::SetMuted(false));
+            if discussing(&st) {
+                dispatch(app, Event::UserActive);
+                st.discussion.lock().unwrap().user_spoke(Instant::now());
+            }
+        }
         (HotkeyAction::Toggle, false) if push_to_talk => dispatch(app, Event::SetMuted(true)),
         (HotkeyAction::Toggle, true) => dispatch(app, Event::ToggleExpanded),
         (HotkeyAction::Mute, true) => dispatch(app, Event::ToggleMute),
         (HotkeyAction::Hangup, true) => dispatch(app, Event::Hangup),
         (HotkeyAction::Orientation, true) => { let _ = toggle_orientation(app.clone()); }
         (HotkeyAction::Form, true) => { let _ = toggle_collapsed_form(app.clone()); }
+        (HotkeyAction::Discussion, true) => {
+            let run = st.machine.lock().unwrap().state.room.as_ref().and_then(|r| r.disc.as_ref()).map(|d| d.run);
+            match run {
+                Some(DiscussionRun::Running) => dispatch(app, Event::DiscussionPause(PauseWhy::User)),
+                Some(DiscussionRun::Paused { .. }) => dispatch(app, Event::DiscussionResume),
+                None => {}
+            }
+        }
         (HotkeyAction::Seat { index }, true) => {
             let id = st.seats.lock().unwrap().enabled().get(index - 1).map(|s| s.id.clone());
             if let Some(id) = id {
@@ -2670,6 +2774,7 @@ pub fn run() {
                 relay_outbox: Mutex::new(HashMap::new()),
                 relay_inflight: Mutex::new(HashMap::new()),
                 relay_results: Mutex::new(HashMap::new()),
+                discussion: Mutex::new(discussion::Tracker::default()),
                 everos: Mutex::new(everos_client),
                 chrome: Default::default(),
             });
@@ -2729,11 +2834,13 @@ pub fn run() {
                     if n % 2 == 0 {
                         dispatch(&handle, Event::Tick);
                     }
+                    discussion_poll(&handle);
                     let st = handle.state::<AppState>();
                     let active = st.machine.lock().unwrap().current_seat().map(str::to_string);
                     let phase_idle = matches!(st.machine.lock().unwrap().state.phase, Phase::Idle);
                     // Captions feed EverOS and the warm transfer; with both off, pages are not read.
                     let room_open = st.machine.lock().unwrap().state.room.is_some();
+                    let beat = discussing(&st);
                     let captions_on = room_open || st.everos.lock().unwrap().is_active() || st.settings.lock().unwrap().warm_transfer;
                     let seats: Vec<Seat> = st.seats.lock().unwrap().seats.clone();
                     let logging_in: Vec<String> = st.logging_in.lock().unwrap().iter().cloned().collect();
@@ -2765,12 +2872,12 @@ pub fn run() {
                             }
                             if let DriverKind::Web { driver, .. } = &seat.driver {
                                 let selectors = st.registry.get(driver).map(|spec| spec.memory.transcript.clone()).unwrap_or_default();
-                                let script = drivers::transcript_script(&selectors, &seat.id);
+                                let script = drivers::transcript_script(&selectors, &seat.id, beat);
                                 if let Some(win) = handle.get_webview_window(&web::window_label(&seat.id)) {
                                     let _ = win.eval(&script);
                                 } else if st.chrome.has_tab(&seat.id) {
                                     let lines = st.chrome.eval(&seat.id, "", &script, false).ok().and_then(|v| serde_json::from_value::<Vec<memory::TranscriptLine>>(v).ok());
-                                    if let Some(lines) = lines.filter(|l| !l.is_empty()) {
+                                    if let Some(lines) = lines.filter(|l| beat || !l.is_empty()) {
                                         caption_lines(&handle, &seat.id, &lines);
                                     }
                                 }
@@ -2784,6 +2891,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, set_carry,
             start_room, room_add, room_drop, floor_next, release_floor, room_say, room_ledger, open_room_panel, get_groups, save_groups, room_preflight, relay_report, test_relay,
+            set_room_mode, discussion_pause, discussion_resume, floor_extend, room_vad,
             resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat, chrome_status, app_targets,
             driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,

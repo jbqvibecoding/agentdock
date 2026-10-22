@@ -282,7 +282,9 @@ impl Table {
     /// utterances.
     pub fn on_lines(&mut self, seat: &str, lines: &[TranscriptLine]) -> Vec<Utterance> {
         let who = MemberRef::Seat(seat.to_string());
-        if self.floor.as_ref().map(|f| &f.who) != Some(&who) {
+        // an empty scrape (a free discussion's beat) is not a batch: a page still loading must not
+        // use up the history gate, nor the batches the relay marker has to show up in
+        if lines.is_empty() || self.floor.as_ref().map(|f| &f.who) != Some(&who) {
             return Vec::new();
         }
         let mut touched = Vec::new();
@@ -583,6 +585,7 @@ mod tests {
         let mut sim = Sim::new(&["dot", "grok", "copilot"], true);
         assert!(sim.plans.is_empty(), "the first floor has nothing to catch up on");
         sim.connect("dot");
+        sim.table.on_lines("dot", &[]); // a beat while the page loads
         sim.table.on_lines("dot", &[user("old history")]); // first batch = page history
         sim.table.on_lines("dot", &[user("let's plan Kyoto"), bot("spring or autumn?")]);
         sim.pass("grok");
@@ -610,7 +613,7 @@ mod tests {
     fn not_sent_is_planned_again_and_uncertain_never_is() {
         let mut sim = Sim::new(&["a", "b", "c"], true);
         sim.connect("a");
-        sim.table.on_lines("a", &[]);
+        sim.table.on_lines("a", &[bot("before the room")]); // first batch = page history
         sim.table.on_lines("a", &[bot("first point")]);
         sim.pass("b");
         let p = sim.plans.last().unwrap().clone();
@@ -640,7 +643,7 @@ mod tests {
     fn sent_without_proof_becomes_unconfirmed_and_late_proof_still_counts() {
         let mut sim = Sim::new(&["a", "b"], true);
         sim.connect("a");
-        sim.table.on_lines("a", &[]);
+        sim.table.on_lines("a", &[bot("before the room")]); // first batch = page history
         sim.table.on_lines("a", &[bot("hello")]);
         sim.pass("b");
         let p = sim.plans.last().unwrap().clone();
@@ -688,7 +691,7 @@ mod tests {
     fn growing_bubbles_update_their_utterance_and_other_seats_are_ignored() {
         let mut sim = Sim::new(&["a", "b"], true);
         sim.connect("a");
-        sim.table.on_lines("a", &[]);
+        sim.table.on_lines("a", &[bot("before the room")]); // first batch = page history
         assert_eq!(sim.table.on_lines("a", &[bot("Let me")]).len(), 1);
         let grown = sim.table.on_lines("a", &[bot("Let me think.")]);
         assert_eq!(grown[0].text, "Let me think.");

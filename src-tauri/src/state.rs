@@ -1,7 +1,9 @@
 //! The Dock state machine. Pure: no I/O, fully unit-tested. Drivers feed it probe results,
 //! the UI reads the resulting `DockState`.
 
+use crate::discussion::{hop_budget, PassOrigin};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +74,62 @@ pub struct Room {
     /// Who held the floor last, so 下一位 continues from there while nobody holds it.
     #[serde(default)]
     pub last: Option<MemberRef>,
+    #[serde(default)]
+    pub mode: RoomMode,
+    /// Free discussion's state while `mode` is Discussion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disc: Option<Discussion>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoomMode {
+    /// You pass the floor.
+    #[default]
+    Moderated,
+    /// The bots pass it among themselves when one has finished; you listen and cut in.
+    Discussion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PauseWhy {
+    /// 停 on the Dock.
+    User,
+    /// You said 停 / stop.
+    Spoken,
+    /// The automatic passes since you last spoke are used up.
+    Budget,
+    /// The discussion ran for DISCUSSION_MAX.
+    TimeCap,
+    /// Two members in a row did not take the floor.
+    Trouble,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum DiscussionRun {
+    Running,
+    Paused { why: PauseWhy },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Discussion {
+    pub run: DiscussionRun,
+    pub round_robin: bool,
+    pub hops_budget: u8,
+    /// Automatic passes left until you speak again.
+    pub hops_left: u8,
+    /// Passes in a row that went to whoever the floor holder named.
+    pub named_streak: u8,
+    /// Passes in a row whose holder never started or left the call.
+    pub skips_in_row: u8,
+    /// Why the pending switch is automatic; `None` while there is none, or it is yours.
+    #[serde(default)]
+    pub pending: Option<PassOrigin>,
+    /// Who held the floor before the current holder, and whether it named its successor.
+    #[serde(default)]
+    pub previous: Option<(String, bool)>,
 }
 
 impl Room {
@@ -129,6 +187,17 @@ pub enum Event {
     ReleaseFloor,
     /// The driver began dialling this seat: a room's dial timeout counts from here, not the tap.
     DialStarted(String),
+    /// Free discussion on or off. Turning it on needs the room's relay consent, or gives it.
+    SetRoomMode { mode: RoomMode, consent: bool },
+    /// The floor holder finished (see `discussion::FloorClock`): pass to `to` for turn `turn`.
+    AutoPass { to: String, turn: u64, origin: PassOrigin },
+    /// You spoke, tapped or pressed push-to-talk: a pending automatic pass is cancelled and the
+    /// automatic passes are refilled.
+    UserActive,
+    /// Someone is still talking during an automatic pass's undo window: hold it a little longer.
+    FloorBusy,
+    DiscussionPause(PauseWhy),
+    DiscussionResume,
 }
 
 /// Side effects the host must perform after an event. Keeps the machine pure.
@@ -146,6 +215,16 @@ pub const REASON_CALL_TIMEOUT: &str = "call_timeout";
 /// A room member dials only after the previous one hung up and its relay note settled.
 pub const ROOM_CALL_TIMEOUT: Duration = Duration::from_secs(45);
 pub const ROOM_MAX: usize = 6;
+/// Automatic passes: at most this many in the window, whatever the hop budget says.
+pub const AUTO_MAX: usize = 6;
+pub const AUTO_WINDOW: Duration = Duration::from_secs(180);
+/// A discussion pauses itself after this, until you say to go on.
+pub const DISCUSSION_MAX: Duration = Duration::from_secs(20 * 60);
+/// A discussion that paused itself, with nobody saying anything: the live bot is hung up.
+pub const PAUSED_RELEASE: Duration = Duration::from_secs(60);
+const HOLD_STEP: Duration = Duration::from_secs(1);
+const HOLD_MAX: Duration = Duration::from_secs(6);
+const SKIPS_MAX: u8 = 2;
 /// Shown as a member's badge (src/i18n.ts `room.troubleDial`) when it did not connect in time.
 pub const TROUBLE_DIAL: &str = "dial_timeout";
 
@@ -155,6 +234,11 @@ pub struct Machine {
     call_started: Option<Instant>,
     switch_deadline: Option<Instant>,
     calling_since: Option<Instant>,
+    disc_since: Option<Instant>,
+    paused_since: Option<Instant>,
+    last_user: Option<Instant>,
+    auto_hits: VecDeque<Instant>,
+    hold_since: Option<Instant>,
 }
 
 impl Default for Machine {
@@ -170,6 +254,11 @@ impl Machine {
             call_started: None,
             switch_deadline: None,
             calling_since: None,
+            disc_since: None,
+            paused_since: None,
+            last_user: None,
+            auto_hits: VecDeque::new(),
+            hold_since: None,
         }
     }
 
@@ -178,11 +267,17 @@ impl Machine {
     }
 
     pub fn handle_at(&mut self, ev: Event, now: Instant) -> Vec<Effect> {
-        use Phase::*;
-        let ev = match self.handle_room(ev, now) {
-            Ok(fx) => return fx,
-            Err(ev) => ev,
+        let mut fx = if ev == Event::Tick { self.discussion_tick(now) } else { Vec::new() };
+        let more = match self.handle_room(ev, now) {
+            Ok(more) => more,
+            Err(ev) => self.handle_core(ev, now),
         };
+        fx.extend(more);
+        fx
+    }
+
+    fn handle_core(&mut self, ev: Event, now: Instant) -> Vec<Effect> {
+        use Phase::*;
         let mut fx = Vec::new();
         match (self.state.phase.clone(), ev) {
             (_, Event::ToggleExpanded) => self.state.expanded = !self.state.expanded,
@@ -313,6 +408,7 @@ impl Machine {
             (Switching { from, to, carry, .. }, Event::Tick) => {
                 let deadline = self.switch_deadline.unwrap_or(now);
                 if now >= deadline {
+                    self.commit_pass(&from, now);
                     self.state.phase = Calling { seat: to.clone() };
                     self.calling_since = Some(now);
                     self.switch_deadline = None;
@@ -357,6 +453,8 @@ impl Machine {
                     relay: spec.relay,
                     addressed: spec.addressed,
                     last: None,
+                    mode: RoomMode::Moderated,
+                    disc: None,
                 });
                 match live {
                     // the call in progress is the first floor: nothing to dial
@@ -386,6 +484,8 @@ impl Machine {
                         relay: false,
                         addressed: false,
                         last: Some(cur),
+                        mode: RoomMode::Moderated,
+                        disc: None,
                     });
                 }
                 _ => {}
@@ -420,21 +520,224 @@ impl Machine {
                     return Ok(self.handle_at(Event::Call(seat), now));
                 }
             }
-            Event::ReleaseFloor if self.state.room.is_some() => match self.state.phase.clone() {
-                Calling { seat } | InCall { seat, .. } | NeedsHuman { seat, .. } | Switching { from: seat, .. } => {
-                    self.to_idle();
-                    fx.push(Effect::DriverHangup(seat));
+            Event::ReleaseFloor if self.state.room.is_some() => {
+                // nobody holds the floor because you said so: a discussion waits for you
+                if let Some(d) = self.disc_mut() {
+                    d.pending = None;
+                    d.run = DiscussionRun::Paused { why: PauseWhy::User };
+                    self.paused_since = Some(now);
                 }
-                Idle => {}
-            },
+                match self.state.phase.clone() {
+                    Calling { seat } | InCall { seat, .. } | NeedsHuman { seat, .. } | Switching { from: seat, .. } => {
+                        self.to_idle();
+                        fx.push(Effect::DriverHangup(seat));
+                    }
+                    Idle => {}
+                }
+            }
             Event::DialStarted(seat) => {
                 if matches!(&self.state.phase, Calling { seat: cur } if *cur == seat) {
                     self.calling_since = Some(now);
                 }
             }
+            Event::SetRoomMode { mode, consent } => {
+                let Some(room) = self.state.room.as_mut() else { return Ok(fx) };
+                match mode {
+                    // sending what was said is the whole point of a discussion: it needs consent
+                    RoomMode::Discussion if room.relay || consent => {
+                        room.relay = true;
+                        room.mode = RoomMode::Discussion;
+                        let seats = room.members.iter().filter(|m| m.who.seat().is_some()).count();
+                        let budget = hop_budget(seats);
+                        room.disc = Some(Discussion { run: DiscussionRun::Running, round_robin: false, hops_budget: budget, hops_left: budget, named_streak: 0, skips_in_row: 0, pending: None, previous: None });
+                        self.disc_since = Some(now);
+                        self.paused_since = None;
+                        self.auto_hits.clear();
+                    }
+                    RoomMode::Discussion => {}
+                    RoomMode::Moderated => {
+                        self.cancel_auto_pass(now);
+                        let room = self.state.room.as_mut().expect("room");
+                        room.mode = RoomMode::Moderated;
+                        room.disc = None;
+                    }
+                }
+            }
+            Event::AutoPass { to, turn, origin } => return Ok(self.auto_pass(to, turn, origin, now)),
+            Event::UserActive => {
+                self.last_user = Some(now);
+                self.cancel_auto_pass(now);
+                if let Some(d) = self.disc_mut() {
+                    d.hops_left = d.hops_budget;
+                    d.named_streak = 0;
+                    d.skips_in_row = 0;
+                    if matches!(d.run, DiscussionRun::Paused { why: PauseWhy::Budget | PauseWhy::Trouble }) {
+                        d.run = DiscussionRun::Running;
+                        self.paused_since = None;
+                    }
+                }
+            }
+            Event::FloorBusy => {
+                let auto = matches!(self.state.phase, Switching { .. }) && self.disc_mut().is_some_and(|d| d.pending.is_some());
+                if auto {
+                    let since = *self.hold_since.get_or_insert(now);
+                    if now.duration_since(since) >= HOLD_MAX {
+                        self.cancel_auto_pass(now);
+                    } else {
+                        self.switch_deadline = Some(self.switch_deadline.unwrap_or(now).max(now + HOLD_STEP));
+                    }
+                }
+            }
+            Event::DiscussionPause(why) => {
+                self.cancel_auto_pass(now);
+                if let Some(d) = self.disc_mut() {
+                    d.run = DiscussionRun::Paused { why };
+                    self.paused_since = Some(now);
+                }
+            }
+            Event::DiscussionResume => {
+                if let Some(d) = self.disc_mut() {
+                    d.run = DiscussionRun::Running;
+                    d.hops_left = d.hops_budget;
+                    d.named_streak = 0;
+                    d.skips_in_row = 0;
+                    self.disc_since = Some(now);
+                    self.paused_since = None;
+                }
+            }
+            // a pass you make yourself in a discussion is you being active (and makes a pending
+            // automatic one yours)
+            Event::Call(seat) if self.disc_mut().is_some() => {
+                self.last_user = Some(now);
+                self.hold_since = None;
+                if let Some(d) = self.disc_mut() {
+                    d.hops_left = d.hops_budget;
+                    d.named_streak = 0;
+                    d.pending = None;
+                }
+                return Err(Event::Call(seat));
+            }
             other => return Err(other),
         }
         Ok(fx)
+    }
+
+    fn disc_mut(&mut self) -> Option<&mut Discussion> {
+        self.state.room.as_mut().and_then(|r| r.disc.as_mut())
+    }
+
+    fn running(&self) -> bool {
+        self.state.room.as_ref().and_then(|r| r.disc.as_ref()).is_some_and(|d| d.run == DiscussionRun::Running)
+    }
+
+    /// The only way the floor moves without you. Accepted only in a running discussion, for the
+    /// current turn, to a member without a badge; it goes through the same undoable switch.
+    fn auto_pass(&mut self, to: String, turn: u64, origin: PassOrigin, now: Instant) -> Vec<Effect> {
+        use Phase::*;
+        let mut fx = Vec::new();
+        let ok = self.running()
+            && self.state.room.as_ref().is_some_and(|r| r.turn == turn && r.member(&MemberRef::Seat(to.clone())).is_some_and(|m| m.trouble.is_none()))
+            && self.current_seat() != Some(to.as_str());
+        if !ok {
+            return fx;
+        }
+        while self.auto_hits.front().is_some_and(|t| now.duration_since(*t) >= AUTO_WINDOW) {
+            self.auto_hits.pop_front();
+        }
+        let rate_hit = self.auto_hits.len() >= AUTO_MAX;
+        let d = self.disc_mut().expect("running");
+        let pause = if d.hops_left == 0 || rate_hit {
+            Some(PauseWhy::Budget)
+        } else if d.skips_in_row >= SKIPS_MAX {
+            Some(PauseWhy::Trouble)
+        } else {
+            None
+        };
+        if let Some(why) = pause {
+            self.disc_mut().expect("running").run = DiscussionRun::Paused { why };
+            self.paused_since = Some(now);
+            return fx;
+        }
+        match self.state.phase.clone() {
+            InCall { seat: cur, .. } => {
+                let carry = self.state.room.as_ref().is_some_and(|r| r.relay);
+                self.state.phase = Switching { from: cur, to, undo_secs_left: UNDO_WINDOW.as_secs(), carry };
+                self.switch_deadline = Some(now + UNDO_WINDOW);
+                self.hold_since = None;
+                self.disc_mut().expect("running").pending = Some(origin);
+            }
+            // nobody to undo back to: dial now
+            Idle | NeedsHuman { .. } => {
+                if let NeedsHuman { seat, .. } = &self.state.phase {
+                    fx.push(Effect::DriverHangup(seat.clone()));
+                }
+                let from = self.state.room.as_ref().and_then(|r| r.last.as_ref()).and_then(|m| m.seat()).map(str::to_string).unwrap_or_default();
+                self.disc_mut().expect("running").pending = Some(origin);
+                self.commit_pass(&from, now);
+                self.state.phase = Calling { seat: to.clone() };
+                self.calling_since = Some(now);
+                self.take_floor(&to);
+                fx.push(Effect::DriverCall(to));
+            }
+            Calling { .. } | Switching { .. } => {}
+        }
+        fx
+    }
+
+    /// A pass commits: automatic ones are counted against the caps.
+    fn commit_pass(&mut self, from: &str, now: Instant) {
+        self.hold_since = None;
+        let Some(d) = self.disc_mut() else { return };
+        match d.pending.take() {
+            Some(origin) => {
+                d.hops_left = d.hops_left.saturating_sub(1);
+                d.named_streak = if origin == PassOrigin::Named { d.named_streak + 1 } else { 0 };
+                d.skips_in_row = if matches!(origin, PassOrigin::NoStart | PassOrigin::LeftCall) { d.skips_in_row + 1 } else { 0 };
+                d.previous = Some((from.to_string(), origin == PassOrigin::Named));
+                self.auto_hits.push_back(now);
+            }
+            None => {
+                d.named_streak = 0;
+                d.previous = Some((from.to_string(), false));
+            }
+        }
+    }
+
+    /// Undo a pending automatic pass: the floor stays with whoever holds it.
+    fn cancel_auto_pass(&mut self, now: Instant) {
+        self.hold_since = None;
+        let pending = self.disc_mut().and_then(|d| d.pending.take()).is_some();
+        if let (true, Phase::Switching { from, .. }) = (pending, self.state.phase.clone()) {
+            self.restore_in_call(from, now);
+        }
+    }
+
+    /// Caps that run on the clock: the 20-minute limit, and hanging up a bot that was left
+    /// talking to nobody after the discussion paused itself.
+    fn discussion_tick(&mut self, now: Instant) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        let (since, paused, last_user) = (self.disc_since, self.paused_since, self.last_user);
+        let Some(d) = self.disc_mut() else { return fx };
+        match d.run {
+            DiscussionRun::Running if since.is_some_and(|s| now.duration_since(s) >= DISCUSSION_MAX) => {
+                d.run = DiscussionRun::Paused { why: PauseWhy::TimeCap };
+                self.paused_since = Some(now);
+            }
+            DiscussionRun::Paused { why: PauseWhy::Budget | PauseWhy::TimeCap | PauseWhy::Trouble } => {
+                let quiet_since = match (paused, last_user) {
+                    (Some(p), Some(u)) => Some(p.max(u)),
+                    (p, u) => p.or(u),
+                };
+                if let (Some(q), Phase::InCall { seat, .. }) = (quiet_since, self.state.phase.clone()) {
+                    if now.duration_since(q) >= PAUSED_RELEASE {
+                        self.to_idle();
+                        fx.push(Effect::DriverHangup(seat));
+                    }
+                }
+            }
+            _ => {}
+        }
+        fx
     }
 
     /// In a room, a seat that is called joins it (while there is space). Outside a room, always true.
@@ -486,6 +789,10 @@ impl Machine {
         let elapsed = self.call_started.map(|t| now.duration_since(t).as_secs()).unwrap_or(0);
         self.state.phase = Phase::InCall { seat, elapsed_secs: elapsed };
         self.switch_deadline = None;
+        self.hold_since = None;
+        if let Some(d) = self.disc_mut() {
+            d.pending = None;
+        }
     }
 
     pub fn current_seat(&self) -> Option<&str> {
@@ -848,6 +1155,197 @@ mod tests {
         let v = serde_json::to_value(&m.state).unwrap();
         assert_eq!(v["room"]["members"][1]["who"], serde_json::json!({"kind": "seat", "id": "grok"}));
         assert_eq!(v["room"]["turn"], 1);
+    }
+
+    /// A discussion between `members` with `first` live since `t`.
+    fn discussing(members: &[&str], t: Instant) -> Machine {
+        let mut m = Machine::new();
+        m.handle_at(Event::RoomOpen(spec(members, false)), t);
+        m.handle_at(Event::ProbeInCall { seat: members[0].into(), in_call: true }, t);
+        m.handle_at(Event::SetRoomMode { mode: RoomMode::Discussion, consent: true }, t);
+        m
+    }
+
+    fn disc(m: &Machine) -> &Discussion {
+        room(m).disc.as_ref().expect("discussing")
+    }
+
+    /// An automatic pass that commits after its undo window; returns the effects of the commit.
+    fn auto(m: &mut Machine, to: &str, origin: PassOrigin, t: &mut Instant) -> Vec<Effect> {
+        let turn = room(m).turn;
+        m.handle_at(Event::AutoPass { to: to.into(), turn, origin }, *t);
+        *t += Duration::from_secs(4);
+        let fx = m.handle_at(Event::Tick, *t);
+        m.handle_at(Event::ProbeInCall { seat: to.into(), in_call: true }, *t);
+        fx
+    }
+
+    #[test]
+    fn a_discussion_needs_the_rooms_consent_or_gives_it() {
+        let t = Instant::now();
+        let mut m = Machine::new();
+        m.handle_at(Event::RoomOpen(spec(&["a", "b", "c"], false)), t);
+        m.handle_at(Event::SetRoomMode { mode: RoomMode::Discussion, consent: false }, t);
+        assert_eq!(room(&m).mode, RoomMode::Moderated, "no consent, no discussion");
+        m.handle_at(Event::SetRoomMode { mode: RoomMode::Discussion, consent: true }, t);
+        assert!(room(&m).relay && room(&m).mode == RoomMode::Discussion);
+        assert_eq!((disc(&m).run, disc(&m).hops_left), (DiscussionRun::Running, 4));
+        m.handle_at(Event::SetRoomMode { mode: RoomMode::Moderated, consent: false }, t);
+        assert!(room(&m).disc.is_none());
+    }
+
+    #[test]
+    fn an_automatic_pass_goes_through_the_undo_window_and_is_counted() {
+        let mut t = Instant::now();
+        let mut m = discussing(&["a", "b", "c"], t);
+        let fx = auto(&mut m, "b", PassOrigin::Named, &mut t);
+        assert_eq!(fx, vec![Effect::DriverHangup("a".into()), Effect::DriverCall("b".into())]);
+        let d = disc(&m);
+        assert_eq!((d.hops_left, d.named_streak, d.previous.clone(), d.pending), (3, 1, Some(("a".into(), true)), None));
+        assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "b"));
+    }
+
+    #[test]
+    fn stale_turns_outsiders_badges_and_the_floor_itself_are_refused() {
+        let t = Instant::now();
+        let mut m = discussing(&["a", "b", "c"], t);
+        let turn = room(&m).turn;
+        for ev in [
+            Event::AutoPass { to: "b".into(), turn: turn + 1, origin: PassOrigin::Quiet },
+            Event::AutoPass { to: "zz".into(), turn, origin: PassOrigin::Quiet },
+            Event::AutoPass { to: "a".into(), turn, origin: PassOrigin::Quiet },
+        ] {
+            assert!(m.handle_at(ev, t).is_empty());
+            assert!(matches!(m.state.phase, Phase::InCall { .. }));
+        }
+        m.handle_at(Event::ProbeNeedsHuman { seat: "c".into(), reason: "captcha".into() }, t);
+        m.handle_at(Event::AutoPass { to: "c".into(), turn, origin: PassOrigin::Quiet }, t);
+        assert!(matches!(m.state.phase, Phase::InCall { .. }), "a member with a badge");
+        let mut moderated = Machine::new();
+        moderated.handle_at(Event::RoomOpen(spec(&["a", "b"], true)), t);
+        moderated.handle_at(Event::ProbeInCall { seat: "a".into(), in_call: true }, t);
+        moderated.handle_at(Event::AutoPass { to: "b".into(), turn: 1, origin: PassOrigin::Quiet }, t);
+        assert!(matches!(moderated.state.phase, Phase::InCall { .. }), "moderated rooms never move by themselves");
+    }
+
+    #[test]
+    fn you_talking_cancels_a_pending_pass_and_refills_the_budget() {
+        let mut t = Instant::now();
+        let mut m = discussing(&["a", "b", "c"], t);
+        auto(&mut m, "b", PassOrigin::Quiet, &mut t);
+        assert_eq!(disc(&m).hops_left, 3);
+        let turn = room(&m).turn;
+        m.handle_at(Event::AutoPass { to: "c".into(), turn, origin: PassOrigin::Quiet }, t);
+        assert!(matches!(m.state.phase, Phase::Switching { .. }));
+        m.handle_at(Event::UserActive, t + Duration::from_secs(1));
+        assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "b"), "the floor stays with b");
+        assert_eq!((disc(&m).hops_left, disc(&m).pending), (4, None));
+    }
+
+    #[test]
+    fn the_budget_runs_out_and_pauses_until_you_speak() {
+        let mut t = Instant::now();
+        let mut m = discussing(&["a", "b"], t);
+        auto(&mut m, "b", PassOrigin::Quiet, &mut t);
+        auto(&mut m, "a", PassOrigin::Quiet, &mut t);
+        assert_eq!(disc(&m).hops_left, 0);
+        let turn = room(&m).turn;
+        assert!(m.handle_at(Event::AutoPass { to: "b".into(), turn, origin: PassOrigin::Quiet }, t).is_empty());
+        assert_eq!(disc(&m).run, DiscussionRun::Paused { why: PauseWhy::Budget });
+        m.handle_at(Event::UserActive, t);
+        assert_eq!((disc(&m).run, disc(&m).hops_left), (DiscussionRun::Running, 2));
+    }
+
+    #[test]
+    fn two_members_in_a_row_that_never_took_the_floor_pause_it() {
+        let mut t = Instant::now();
+        let mut m = discussing(&["a", "b", "c", "d"], t);
+        auto(&mut m, "b", PassOrigin::NoStart, &mut t);
+        auto(&mut m, "c", PassOrigin::NoStart, &mut t);
+        let turn = room(&m).turn;
+        m.handle_at(Event::AutoPass { to: "d".into(), turn, origin: PassOrigin::Quiet }, t);
+        assert_eq!(disc(&m).run, DiscussionRun::Paused { why: PauseWhy::Trouble });
+    }
+
+    #[test]
+    fn at_most_six_automatic_passes_in_three_minutes() {
+        let mut t = Instant::now();
+        let mut m = discussing(&["a", "b", "c", "d", "e", "f"], t);
+        let order = ["b", "c", "d", "e", "f", "a"];
+        for to in order {
+            m.handle_at(Event::UserActive, t);
+            auto(&mut m, to, PassOrigin::Quiet, &mut t);
+        }
+        m.handle_at(Event::UserActive, t);
+        let turn = room(&m).turn;
+        m.handle_at(Event::AutoPass { to: "b".into(), turn, origin: PassOrigin::Quiet }, t);
+        assert_eq!(disc(&m).run, DiscussionRun::Paused { why: PauseWhy::Budget }, "the rate cap holds even with budget");
+        m.handle_at(Event::DiscussionResume, t + Duration::from_secs(200));
+        let turn = room(&m).turn;
+        m.handle_at(Event::AutoPass { to: "b".into(), turn, origin: PassOrigin::Quiet }, t + Duration::from_secs(200));
+        assert!(matches!(m.state.phase, Phase::Switching { .. }), "the window slides");
+    }
+
+    #[test]
+    fn sound_during_the_undo_window_holds_the_pass_then_gives_it_up() {
+        let t = Instant::now();
+        let mut m = discussing(&["a", "b"], t);
+        m.handle_at(Event::AutoPass { to: "b".into(), turn: room(&m).turn, origin: PassOrigin::Quiet }, t);
+        for s in 1..=5 {
+            m.handle_at(Event::FloorBusy, t + Duration::from_secs(s));
+            m.handle_at(Event::Tick, t + Duration::from_secs(s));
+        }
+        assert!(matches!(m.state.phase, Phase::Switching { .. }), "held past the 3 s window");
+        m.handle_at(Event::FloorBusy, t + Duration::from_secs(8));
+        assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "a"), "still talking after 6 s: the floor stays");
+        let mut user = discussing(&["a", "b"], t);
+        user.handle_at(Event::Call("b".into()), t);
+        user.handle_at(Event::FloorBusy, t + Duration::from_secs(2));
+        assert_eq!(user.handle_at(Event::Tick, t + Duration::from_secs(3)), vec![Effect::DriverHangup("a".into()), Effect::DriverCall("b".into())], "your own pass is never held");
+    }
+
+    #[test]
+    fn a_long_or_abandoned_discussion_pauses_and_releases_the_live_bot() {
+        let t = Instant::now();
+        let mut m = discussing(&["a", "b"], t);
+        m.handle_at(Event::Tick, t + DISCUSSION_MAX);
+        assert_eq!(disc(&m).run, DiscussionRun::Paused { why: PauseWhy::TimeCap });
+        assert!(m.handle_at(Event::Tick, t + DISCUSSION_MAX + Duration::from_secs(30)).is_empty());
+        assert_eq!(m.handle_at(Event::Tick, t + DISCUSSION_MAX + PAUSED_RELEASE), vec![Effect::DriverHangup("a".into())]);
+        assert!(m.state.phase == Phase::Idle && m.state.room.is_some(), "the room stays");
+        let mut by_you = discussing(&["a", "b"], t);
+        by_you.handle_at(Event::DiscussionPause(PauseWhy::User), t);
+        assert!(by_you.handle_at(Event::Tick, t + Duration::from_secs(300)).is_empty(), "a pause you made is a 1:1 call, kept");
+    }
+
+    #[test]
+    fn redirecting_or_releasing_the_floor_is_yours() {
+        let t = Instant::now();
+        let mut m = discussing(&["a", "b", "c"], t);
+        m.handle_at(Event::AutoPass { to: "b".into(), turn: room(&m).turn, origin: PassOrigin::Named }, t);
+        m.handle_at(Event::Call("c".into()), t);
+        m.handle_at(Event::Tick, t + Duration::from_secs(4));
+        assert!(matches!(m.state.phase, Phase::Calling { ref seat } if seat == "c"));
+        assert_eq!((disc(&m).hops_left, disc(&m).named_streak), (4, 0), "your pass spends no hop");
+        m.handle_at(Event::ReleaseFloor, t + Duration::from_secs(5));
+        assert_eq!(disc(&m).run, DiscussionRun::Paused { why: PauseWhy::User });
+        assert!(m.state.phase == Phase::Idle && m.state.room.is_some());
+    }
+
+    #[test]
+    fn when_the_floor_holder_left_the_next_one_is_dialled_at_once() {
+        let mut t = Instant::now();
+        let mut m = discussing(&["a", "b", "c"], t);
+        m.handle_at(Event::ProbeInCall { seat: "a".into(), in_call: false }, t);
+        assert_eq!(m.state.phase, Phase::Idle);
+        t += Duration::from_secs(1);
+        let fx = m.handle_at(Event::AutoPass { to: "b".into(), turn: room(&m).turn, origin: PassOrigin::LeftCall }, t);
+        assert_eq!(fx, vec![Effect::DriverCall("b".into())]);
+        assert_eq!((disc(&m).skips_in_row, disc(&m).previous.clone()), (1, Some(("a".into(), false))));
+        let mut stuck = discussing(&["a", "b"], t);
+        stuck.handle_at(Event::ProbeNeedsHuman { seat: "a".into(), reason: "captcha".into() }, t);
+        let fx = stuck.handle_at(Event::AutoPass { to: "b".into(), turn: room(&stuck).turn, origin: PassOrigin::LeftCall }, t);
+        assert_eq!(fx, vec![Effect::DriverHangup("a".into()), Effect::DriverCall("b".into())], "a floor holder stuck on a captcha is hung up first");
     }
 
     #[test]

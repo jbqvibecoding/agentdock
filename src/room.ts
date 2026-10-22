@@ -1,5 +1,5 @@
 import { api, applyTheme, fmtTime, type AppSettings, type DockState, type HostInfo, type SeatView, type Speaker, type Utterance } from "./api";
-import { resolveLang, setLang, t, translateDom } from "./i18n";
+import { resolveLang, setLang, t, translateDom, type MsgKey } from "./i18n";
 
 const linesEl = document.getElementById("lines") as HTMLElement;
 const nameEl = document.getElementById("room-name") as HTMLElement;
@@ -8,11 +8,16 @@ const form = document.getElementById("say") as HTMLFormElement;
 const box = document.getElementById("say-text") as HTMLTextAreaElement;
 const send = document.getElementById("say-send") as HTMLButtonElement;
 const hint = document.getElementById("hint") as HTMLElement;
+const modeEl = document.getElementById("mode") as HTMLElement;
+const modeRun = document.getElementById("mode-run") as HTMLButtonElement;
+const modeNote = document.getElementById("mode-note") as HTMLElement;
 
 let ledger: Utterance[] = [];
 let seats: SeatView[] = [];
 let state: DockState | null = null;
 let hostLocale: string | undefined;
+/** The first click on 自由讨论 in a room without consent to send shows what it sends; the second agrees. */
+let asking = false;
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 const nameOf = (sp: Speaker) => sp.kind === "user" ? t("room.me") : seats.find((s) => s.id === sp.id)?.name ?? sp.id;
@@ -32,6 +37,39 @@ function renderHead() {
   const who = floor ? nameOf({ kind: "seat", id: floor }) : "";
   subEl.textContent = !floor ? t("room.noFloor") : p.phase === "in_call" ? t("room.speaking", { name: who, time: fmtTime(p.elapsed_secs) }) : t("room.calling", { name: who });
 }
+
+/** 主持 | 自由讨论, and pausing or resuming a discussion. */
+function renderMode() {
+  const room = state?.room;
+  modeEl.hidden = !room;
+  if (!room) { modeNote.hidden = true; asking = false; return; }
+  const d = room.disc;
+  for (const b of modeEl.querySelectorAll<HTMLButtonElement>(".seg button")) b.setAttribute("aria-checked", String((b.dataset.mode === "discussion") === !!d));
+  modeRun.hidden = !d;
+  if (d) modeRun.textContent = t(d.run.state === "running" ? "room.discussPause" : "room.discussResume");
+  const note = asking && !d ? t("room.discussConsent")
+    : d?.run.state === "paused" ? t(`room.paused.${d.run.why}` as MsgKey)
+    : d ? t("room.discussLeft", { n: d.hops_left }) : "";
+  modeNote.hidden = !note;
+  modeNote.textContent = note;
+  modeNote.classList.toggle("is-ask", asking && !d);
+}
+
+for (const b of modeEl.querySelectorAll<HTMLButtonElement>(".seg button")) {
+  b.addEventListener("click", () => {
+    const room = state?.room;
+    if (!room) return;
+    if (b.dataset.mode === "moderated") { asking = false; void api.invoke("set_room_mode", { mode: "moderated" }); return; }
+    if (room.disc) return;
+    if (room.relay || asking) { asking = false; void api.invoke("set_room_mode", { mode: "discussion", consent: true }); return; }
+    asking = true;
+    renderMode();
+  });
+}
+modeRun.addEventListener("click", () => {
+  const d = state?.room?.disc;
+  if (d) void api.invoke(d.run.state === "running" ? "discussion_pause" : "discussion_resume");
+});
 
 function renderLines() {
   if (!ledger.length) {
@@ -92,10 +130,18 @@ async function boot() {
   state = await api.invoke<DockState>("get_state");
   ledger = (await api.invoke<Utterance[]>("room_ledger")) ?? [];
   renderHead();
+  renderMode();
   renderLines();
   void api.on<Utterance[]>("room:lines", (us) => { upsert(us); renderLines(); });
-  void api.on<DockState>("dock:state", (s) => { state = s; renderHead(); if (!s.room && ledger.length) { ledger = []; renderLines(); } });
+  void api.on<DockState>("dock:state", (s) => {
+    const had = !!state?.room;
+    state = s;
+    renderHead();
+    renderMode();
+    // the empty transcript says whether a group call is on
+    if (had !== !!s.room) { if (!s.room) ledger = []; renderLines(); }
+  });
   void api.on<SeatView[]>("seats:changed", (s) => { seats = s; renderLines(); });
-  void api.on<AppSettings>("settings:changed", (s) => { applyTheme(s.theme); applyLanguage(s); renderHead(); renderLines(); });
+  void api.on<AppSettings>("settings:changed", (s) => { applyTheme(s.theme); applyLanguage(s); renderHead(); renderMode(); renderLines(); });
 }
 void boot();

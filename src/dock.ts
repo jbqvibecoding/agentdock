@@ -1,4 +1,4 @@
-import { api, applyTheme, fmtTime, validAccent, type AppSettings, type CheckRow, type DockState, type GroupContact, type HostInfo, type RelayOutcome, type RelayReport, type SeatView } from "./api";
+import { api, applyTheme, fmtTime, validAccent, type AppSettings, type CheckRow, type DockState, type GroupContact, type HostInfo, type RelayOutcome, type RelayReport, type Room, type SeatView } from "./api";
 import { iconFor, tintFor } from "./brand";
 import { resolveLang, setLang, t, type MsgKey } from "./i18n";
 
@@ -22,6 +22,11 @@ let adding = false;
 let groups: GroupContact[] = [];
 /** The relay note for the seat being dialled in a room, and what became of it. */
 let relayInfo: { id: string; to: string; lines: number; mode: string; outcome?: RelayOutcome } | null = null;
+/** Free discussion: the floor holder's countdown in seconds, and a holder that has not started. */
+let countdown: number | null = null;
+let nudged: { seat: string; turn: number } | null = null;
+/** Until then, a tap on 自由讨论 in a room without consent to send is the agreeing second tap. */
+let discussArmed = 0;
 const iconCache = new Map<string, string>();
 
 const SVG = {
@@ -201,7 +206,7 @@ async function render() {
     collapsed.title = p.phase === "in_call" ? t("dock.inCallExpand", { time: fmtTime(p.elapsed_secs) }) : t("dock.expand");
   }
 
-  if (form !== "bar") { await fit(form); kickLens(); return; }
+  if (form !== "bar") { await fit(form); kickLens(); syncVad(); return; }
   collapsed.removeAttribute("title");
 
   // expanded bar
@@ -303,6 +308,7 @@ async function render() {
   await fit("bar");
   kickLens();
   if (p.phase === "in_call" || p.phase === "calling") startWave(); else stopWave();
+  syncVad();
 }
 
 function renderStatusTextInto(e: HTMLDivElement) { statusEl = e; renderStatusText(); }
@@ -337,11 +343,13 @@ async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
   av.addEventListener("click", () => api.invoke("set_expanded", { expanded: false }));
   frag.append(av);
   const name = floorSeat?.name ?? floor ?? "";
-  const sub = p.phase === "idle" ? t("room.noFloor")
+  const d = room.disc;
+  let sub = p.phase === "idle" ? t("room.noFloor")
     : p.phase === "calling" ? [t("room.calling", { name }), relayLine(p.seat)].filter(Boolean).join(" · ")
-    : p.phase === "in_call" ? t("room.speaking", { name, time: fmtTime(p.elapsed_secs) })
-    : p.phase === "switching" ? t("room.passTo", { name: seatById(p.to)?.name ?? p.to })
+    : p.phase === "in_call" ? [t("room.speaking", { name, time: fmtTime(p.elapsed_secs) }), nudged?.seat === p.seat && nudged.turn === room.turn ? t("room.nudge") : ""].filter(Boolean).join(" · ")
+    : p.phase === "switching" ? (d?.pending ? `${t("room.autoPassTo", { name: seatById(p.to)?.name ?? p.to })} · ${t(`room.why.${d.pending}` as MsgKey)}` : t("room.passTo", { name: seatById(p.to)?.name ?? p.to }))
     : `${t("dock.needsYou")} · ${p.reason === "call_timeout" ? t("dock.callTimeout") : p.reason}`;
+  if (d?.run.state === "paused") sub = `${t(`room.paused.${d.run.why}` as MsgKey)} · ${sub}`;
   const st = el("div", "status");
   st.innerHTML = `<div class="name">${escapeHtml(roomTitle())}</div><div class="sub">${escapeHtml(sub)}${state.muted ? ` · ${escapeHtml(t("dock.muted"))}` : ""}</div>`;
   st.title = sub;
@@ -352,6 +360,15 @@ async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
     frag.append(wave);
     waveCanvas = wave;
   }
+  if (p.phase === "in_call" && countdown !== null && d?.run.state === "running") {
+    const more = el("button", "carry extend", escapeHtml(t("room.extend", { n: countdown })));
+    more.type = "button";
+    more.dataset.k = "extend";
+    more.title = t("room.extendTip", { name });
+    more.addEventListener("click", () => { countdown = null; void api.invoke("floor_extend"); void render(); });
+    frag.append(more);
+  }
+  if (p.phase !== "switching") frag.append(modeChip(room));
   if (p.phase === "switching") {
     const undo = el("button", "undo", escapeHtml(t("dock.undo", { n: p.undo_secs_left })));
     undo.type = "button";
@@ -392,6 +409,32 @@ async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
     frag.append(b);
   }
   if (adding) for (const s of enabledSeats().filter((x) => !room.members.some((m) => m.who.id === x.id))) frag.append(await addableButton(s));
+}
+
+const prettyKeys = (k: string) => document.documentElement.dataset.os === "macos"
+  ? k.split("+").map((x) => ({ Alt: "⌥", Option: "⌥", Shift: "⇧", Control: "⌃", Ctrl: "⌃", Super: "⌘", Cmd: "⌘", Command: "⌘", CommandOrControl: "⌘" } as Record<string, string>)[x] ?? x).join("")
+  : k;
+
+/** 自由讨论 / 暂停讨论 / 继续讨论. Turning a discussion on sends what was said to the next member,
+ *  so a room without that consent takes two taps: the first one says so, the second agrees. */
+function modeChip(room: Room): HTMLButtonElement {
+  const d = room.disc;
+  const armed = !d && Date.now() < discussArmed;
+  const label = !d ? (armed ? "room.discussConfirm" : "room.discuss") : d.run.state === "running" ? "room.discussPause" : "room.discussResume";
+  const chip = el("button", `carry mode${d ? " on" : ""}${armed ? " armed" : ""}`, escapeHtml(t(label)));
+  chip.type = "button";
+  chip.dataset.k = "mode";
+  chip.setAttribute("aria-pressed", String(!!d));
+  chip.title = !d ? t(armed ? "room.discussConsent" : "room.discussTip", { keys: prettyKeys(settings?.hotkeys.discussion ?? "Alt+D") })
+    : d.run.state === "running" ? t("room.discussLeft", { n: d.hops_left }) : t(`room.paused.${d.run.why}` as MsgKey);
+  chip.addEventListener("click", () => {
+    if (d) { void api.invoke(d.run.state === "running" ? "discussion_pause" : "discussion_resume"); return; }
+    if (room.relay || armed) { discussArmed = 0; void api.invoke("set_room_mode", { mode: "discussion", consent: true }); return; }
+    discussArmed = Date.now() + 5000;
+    window.setTimeout(() => { if (discussArmed && Date.now() >= discussArmed) { discussArmed = 0; void render(); } }, 5100);
+    void render();
+  });
+  return chip;
 }
 
 /** A seat that joins the room (or turns a 1:1 call into one) when tapped. */
@@ -457,6 +500,7 @@ async function groupButton(g: GroupContact): Promise<HTMLButtonElement> {
 // ───────── waveform: real mic level when available, otherwise a gentle idle motion ─────────
 let waveCanvas: HTMLCanvasElement | null = null;
 let analyser: AnalyserNode | null = null;
+let levels: AnalyserNode | null = null;
 let audioCtx: AudioContext | null = null;
 let raf = 0;
 const bars = new Float32Array(16);
@@ -471,7 +515,43 @@ async function ensureAnalyser() {
     analyser.fftSize = 64;
     analyser.smoothingTimeConstant = .7;
     src.connect(analyser);
-  } catch { analyser = null; }
+    // the waveform's 64-sample window is ~1 ms of sound; the discussion's level check wants ~20 ms
+    levels = audioCtx.createAnalyser();
+    levels.fftSize = 1024;
+    src.connect(levels);
+  } catch { analyser = null; levels = null; }
+}
+
+// ───────── free discussion: the microphone level can only hold the floor, never move it ─────────
+// Sent as edges (on/off), never audio. 200 ms of sound to turn on, 400 ms of quiet to turn off.
+let vadTimer: number | undefined;
+let vadOn = false;
+let vadSince = 0;
+function syncVad() {
+  const want = !!state.room?.disc && (state.phase.phase === "in_call" || state.phase.phase === "switching");
+  if (!want) {
+    window.clearInterval(vadTimer);
+    vadTimer = undefined;
+    if (vadOn) { vadOn = false; void api.invoke("room_vad", { active: false }); }
+    return;
+  }
+  if (vadTimer !== undefined) return;
+  void ensureAnalyser();
+  const buf = new Uint8Array(1024);
+  vadSince = performance.now();
+  vadTimer = window.setInterval(() => {
+    if (!levels) return;
+    levels.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (const b of buf) { const v = (b - 128) / 128; sum += v * v; }
+    const loud = Math.sqrt(sum / buf.length) > (vadOn ? 0.03 : 0.05);
+    const now = performance.now();
+    if (loud === vadOn) { vadSince = now; return; }
+    if (now - vadSince < (vadOn ? 400 : 200)) return;
+    vadOn = loud;
+    vadSince = now;
+    void api.invoke("room_vad", { active: vadOn });
+  }, 100);
 }
 
 function startWave() {
@@ -907,8 +987,13 @@ async function boot() {
     if (s.phase.phase !== "calling") { carried = null; relayInfo = null; }
     if (!s.room && s.phase.phase === "idle") adding = false;
     if (s.room) picking = false;
+    if (s.phase.phase !== "in_call") countdown = null;
+    if (nudged && (s.room?.turn !== nudged.turn || s.phase.phase !== "in_call")) nudged = null;
+    if (!s.room) discussArmed = 0;
     render();
   });
+  api.on<number | null>("room:countdown", (n) => { countdown = n; render(); });
+  api.on<string>("room:nudge", (seat) => { nudged = { seat, turn: state.room?.turn ?? 0 }; render(); });
   api.on<GroupContact[]>("groups:changed", (g) => { groups = g; render(); });
   api.on<{ id: string; to: string; lines: number; mode: string }>("room:relay", (r) => { relayInfo = r; render(); });
   api.on<RelayReport>("room:relay_outcome", (r) => { if (relayInfo?.id === r.id) { relayInfo.outcome = r.outcome; render(); } });

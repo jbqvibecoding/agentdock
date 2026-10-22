@@ -113,6 +113,9 @@ pub struct Hotkeys {
     /// Flip the collapsed form between the small dot and the pet avatar.
     #[serde(default = "default_form_key")]
     pub form: String,
+    /// Pause / resume a free discussion in a round-table.
+    #[serde(default = "default_discussion_key")]
+    pub discussion: String,
     /// Modifier prefix for seat 1–9, e.g. "Alt" → Alt+1 … Alt+9.
     pub seat_modifier: String,
     pub push_to_talk: bool,
@@ -219,6 +222,9 @@ fn default_orientation_key() -> String {
 fn default_form_key() -> String {
     "Alt+P".into()
 }
+fn default_discussion_key() -> String {
+    "Alt+D".into()
+}
 
 impl Orientation {
     pub fn toggled(self) -> Self {
@@ -260,6 +266,7 @@ impl Default for AppSettings {
                 hangup: "Alt+Escape".into(),
                 orientation: default_orientation_key(),
                 form: default_form_key(),
+                discussion: default_discussion_key(),
                 seat_modifier: "Alt".into(),
                 push_to_talk: false,
             },

@@ -411,7 +411,9 @@ pub fn inject_text_script(text: &str, marker: &str, composer: &[String]) -> Stri
 /// Role comes from `data-message-author-role` / `data-role`, then a class or aria hint.
 /// Nodes with no role are skipped so chrome text does not become memory.
 /// The new lines are also the script's value, for tabs in the user's Chrome (no Tauri IPC there).
-pub fn transcript_script(selectors: &[String], seat_id: &str) -> String {
+/// With `beat`, a scrape that finds nothing new still reports (empty), so a free discussion can
+/// tell a quiet page from a broken one.
+pub fn transcript_script(selectors: &[String], seat_id: &str, beat: bool) -> String {
     let defaults = DEFAULT_TRANSCRIPT
         .iter()
         .map(|s| (*s).to_string())
@@ -446,7 +448,7 @@ pub fn transcript_script(selectors: &[String], seat_id: &str) -> String {
     lines.push({{ role, content }});
   }}
   const fresh = lines.slice(-12);
-  if (!fresh.length) return [];
+  if (!fresh.length && !{beat}) return [];
   window.__TAURI_INTERNALS__?.invoke("memory_report", {{ seatId: {seat}, lines: fresh }});
   return fresh;
 }})()"#
@@ -748,10 +750,10 @@ mod tests {
         let handoff = inject_text_script("[AgentDock handoff]\nMe: hi", "[AgentDock handoff]", &["#prompt-textarea".into()]);
         assert!(handoff.contains(r#"const marker = "[AgentDock handoff]";"#));
         assert!(handoff.contains(r##"["#prompt-textarea"]"##));
-        let scrape = transcript_script(&[], "dot\"); alert(1)");
+        let scrape = transcript_script(&[], "dot\"); alert(1)", false);
         assert!(scrape.contains(r#""dot\"); alert(1)""#));
         assert!(scrape.contains("memory_report"));
-        let custom = transcript_script(&[".msg".into()], "dot");
+        let custom = transcript_script(&[".msg".into()], "dot", true);
         assert!(custom.contains(r#"[".msg"]"#));
         assert!(!custom.contains("conversation-turn"));
     }
