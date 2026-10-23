@@ -260,3 +260,8 @@ input[type="range"] { accent-color: var(--accent); width: 160px; }
 .group-editor .grp-alias { width: 200px; }
 .group-editor .member-chips { padding: 0 18px 12px; }
 .editor-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 18px 14px; }
+
+/* 远程成员: commands to copy (yobiru's next step, the far side's wake-config) */
+.copyable { display: flex; align-items: center; gap: 10px; margin: 0 18px 12px; padding: 8px 10px; border-radius: 10px; background: var(--line); }
+.copyable code { flex: 1; min-width: 0; font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace; color: var(--fg); overflow-wrap: anywhere; }
+.rm-manual .actions input { flex: 1; }

@@ -9,7 +9,7 @@
 //! or pick another member.
 
 use crate::roundtable::{Speaker, Utterance};
-use crate::state::{Discussion, DiscussionRun, DockState, Phase, Room};
+use crate::state::{Discussion, DiscussionRun, DockState, Phase, RemoteStage, Room};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -407,6 +407,14 @@ impl Tracker {
         let running = d.run == DiscussionRun::Running;
         let was_running = before.room.as_ref().and_then(|r| r.disc.as_ref()).map(|d| d.run == DiscussionRun::Running);
         let restarted = running && was_running != Some(true);
+        // a remote member holds the floor: its turn ends when its answer has been read (RemoteEnded)
+        if let Some(rf) = room.remote.as_ref().filter(|r| r.stage != RemoteStage::Pending) {
+            self.clock = None;
+            self.empty = None;
+            self.last_turn.insert(rf.member.clone(), room.turn);
+            return;
+        }
+        let remote_before = before.room.as_ref().and_then(|r| r.remote.as_ref()).filter(|r| r.stage != RemoteStage::Pending).map(|r| r.member.clone());
         match &after.phase {
             Phase::InCall { seat, .. } => {
                 self.empty = None;
@@ -437,8 +445,10 @@ impl Tracker {
             }
             Phase::Idle | Phase::NeedsHuman { .. } => {
                 self.clock = None;
-                let left = running && !matches!(before.phase, Phase::Idle | Phase::NeedsHuman { .. });
-                if left || restarted || self.empty.map_or(true, |e| e.turn != room.turn) {
+                // a remote member whose request failed counts as one that left the call
+                let failed = remote_before.as_deref().and_then(|m| room.member_by_id(m)).is_some_and(|m| m.trouble.is_some());
+                let left = running && (failed || !matches!(before.phase, Phase::Idle | Phase::NeedsHuman { .. }));
+                if left || restarted || remote_before.is_some() || self.empty.map_or(true, |e| e.turn != room.turn) {
                     self.empty = Some(Empty { turn: room.turn, since: now, left });
                 }
             }
@@ -504,10 +514,18 @@ impl Tracker {
         let mut countdown = None;
         if let Some((room, d)) = state.room.as_ref().and_then(|r| r.disc.as_ref().map(|d| (r, d))) {
             let waiting = self.asked.is_some_and(|(turn, at)| turn == room.turn && now.duration_since(at) < ASK_RETRY);
+            let remote = room.remote.as_ref();
+            let sound = self.vad_on || self.vad_at.is_some_and(|t| now.duration_since(t) < VAD_HOLD);
+            let growing = self.grew_at.is_some_and(|t| now.duration_since(t) < GREW_HOLD);
             match &state.phase {
+                // a remote member holds the floor, or is about to: nothing to time or ask
+                _ if remote.is_some_and(|r| r.stage != RemoteStage::Pending) => {}
+                _ if remote.is_some() => {
+                    if remote.is_some_and(|r| r.origin.is_some()) && (sound || growing) {
+                        acts.push(Act::Hold);
+                    }
+                }
                 Phase::Switching { .. } => {
-                    let sound = self.vad_on || self.vad_at.is_some_and(|t| now.duration_since(t) < VAD_HOLD);
-                    let growing = self.grew_at.is_some_and(|t| now.duration_since(t) < GREW_HOLD);
                     if d.pending.is_some() && (sound || growing) {
                         acts.push(Act::Hold);
                     }
@@ -529,7 +547,7 @@ impl Tracker {
                 }
                 Phase::Idle | Phase::NeedsHuman { .. } => {
                     if let Some(e) = self.empty.filter(|e| e.turn == room.turn && now.duration_since(e.since) >= EMPTY_GRACE) {
-                        let floor = room.last.as_ref().and_then(|m| m.seat()).unwrap_or_default().to_string();
+                        let floor = room.last.as_ref().map(|m| m.id()).unwrap_or_default().to_string();
                         acts.extend(self.next(room, d, &floor, if e.left { PassOrigin::LeftCall } else { PassOrigin::Quiet }, names, now));
                     }
                 }
@@ -544,11 +562,8 @@ impl Tracker {
     }
 
     fn next(&mut self, room: &Room, d: &Discussion, floor: &str, origin: PassOrigin, names: &[(String, Vec<String>)], now: Instant) -> Option<Act> {
-        let members: Vec<(String, u64, bool)> = room
-            .members
-            .iter()
-            .filter_map(|m| m.who.seat().map(|s| (s.to_string(), self.last_turn.get(s).copied().unwrap_or(0), m.trouble.is_some())))
-            .collect();
+        let members: Vec<(String, u64, bool)> =
+            room.members.iter().map(|m| (m.who.id().to_string(), self.last_turn.get(m.who.id()).copied().unwrap_or(0), m.trouble.is_some())).collect();
         let floor_id = floor.to_string();
         let invited = invited(&self.said, names, &floor_id).map(String::as_str);
         let previous = d.previous.as_ref().map(|(p, named)| (p.as_str(), *named));
@@ -711,11 +726,17 @@ mod tests {
 
     impl Sim {
         fn new(members: &[&str]) -> Sim {
-            use crate::state::{Event, MemberRef, RoomMode, RoomSpec};
+            Sim::with(members.iter().map(|m| crate::state::MemberRef::Seat(m.to_string())).collect())
+        }
+
+        fn with(members: Vec<crate::state::MemberRef>) -> Sim {
+            use crate::state::{Event, RoomMode, RoomSpec};
             let t = Instant::now();
-            let mut sim = Sim { m: crate::state::Machine::new(), tr: Tracker::default(), t, start: t, seq: 0, names: members.iter().map(|m| (m.to_string(), vec![m.to_string()])).collect(), log: Vec::new() };
-            sim.ev(Event::RoomOpen(RoomSpec { id: "r".into(), name: None, group: None, members: members.iter().map(|m| MemberRef::Seat(m.to_string())).collect(), relay: true, addressed: false, first: None }));
-            sim.ev(Event::ProbeInCall { seat: members[0].into(), in_call: true });
+            let names = members.iter().map(|m| (m.id().to_string(), vec![m.id().to_string()])).collect();
+            let first = members[0].id().to_string();
+            let mut sim = Sim { m: crate::state::Machine::new(), tr: Tracker::default(), t, start: t, seq: 0, names, log: Vec::new() };
+            sim.ev(Event::RoomOpen(RoomSpec { id: "r".into(), name: None, group: None, members, relay: true, addressed: false, first: None }));
+            sim.ev(Event::ProbeInCall { seat: first, in_call: true });
             sim.ev(Event::SetRoomMode { mode: RoomMode::Discussion, consent: true });
             sim
         }
@@ -858,6 +879,25 @@ mod tests {
         assert!(sim.passes().is_empty(), "30 s more");
         sim.run(4);
         assert_eq!(sim.passes(), vec![("b".into(), PassOrigin::Cap)]);
+    }
+
+    #[test]
+    fn a_remote_member_takes_its_turn_and_the_floor_moves_on_after_its_answer() {
+        use crate::state::{Event, MemberRef, RemoteEnd, RemoteStage};
+        let mut sim = Sim::with(vec![MemberRef::Seat("a".into()), MemberRef::Remote("r".into()), MemberRef::Seat("b".into())]);
+        sim.run(1);
+        sim.says("I'd say autumn. r, what do you think?");
+        sim.run(5);
+        assert_eq!(sim.passes(), vec![("r".into(), PassOrigin::Named)]);
+        sim.run(4);
+        assert_eq!(sim.m.state.room.as_ref().unwrap().remote.as_ref().map(|r| r.stage), Some(RemoteStage::Sending));
+        sim.run(30);
+        assert_eq!(sim.passes().len(), 1, "a remote turn has no clock: it waits for the answer");
+        sim.ev(Event::RemoteEnded { member: "r".into(), how: RemoteEnd::Answered });
+        sim.run(3);
+        assert_eq!(sim.passes().last(), Some(&("b".into(), PassOrigin::Quiet)), "then whoever waited longest");
+        sim.run(4);
+        assert_eq!(sim.floor(), Some("b"));
     }
 
     #[test]

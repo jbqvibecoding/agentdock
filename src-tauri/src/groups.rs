@@ -162,7 +162,9 @@ pub fn preflight(who: &MemberRef, f: &MemberFacts, relay: bool) -> Vec<CheckRow>
     match who {
         MemberRef::Remote(_) => {
             if let Some(problem) = f.remote_problem {
-                rows.push(row(problem, CheckStatus::Blocked, Actor::Remote));
+                // yobiru missing on this Mac, or a member no longer configured, is yours to fix
+                let actor = if matches!(problem, "remote_no_cli" | "remote_no_python" | "remote_unknown") { Actor::You } else { Actor::Remote };
+                rows.push(row(problem, CheckStatus::Blocked, actor));
             }
         }
         MemberRef::Seat(_) => {

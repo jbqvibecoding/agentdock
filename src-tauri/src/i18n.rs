@@ -176,6 +176,19 @@ fn table(key: &str) -> Option<[&'static str; 4]> {
             "我馬上用語音接通你，這是自由討論：請回應其他人的觀點，三句話、三十秒以內；想讓誰接著說，就在最後一句點他的名字；如果我插話，先回答我。現在請只回覆「好的」。",
             "このあと音声でつなぎます。フリートークです。ほかの参加者の意見に 3 文・30 秒ほどで応えてください。次に話してほしい人がいれば、最後の文でその名前を呼んでください。私が割り込んだら先に私に答えてください。いまは「了解」とだけ返信してください。",
         ],
+        // a remote member (yobiru) answers in text that is read aloud
+        "rt.ask_remote" => [
+            "轮到你在这个语音会议里发言了。回应其他人，用口语，不用 markdown 或列表，最多 {n} 字；没有要补充的就只回复 [pass]。只回答一次，不要执行任何操作。",
+            "It is your turn in this voice meeting. Respond to the others in plain spoken language, no markdown or lists, at most {n} characters; if you have nothing to add, reply only [pass]. Answer once and take no actions.",
+            "輪到你在這個語音會議裡發言了。回應其他人，用口語，不用 markdown 或清單，最多 {n} 字；沒有要補充的就只回覆 [pass]。只回答一次，不要執行任何操作。",
+            "この音声会議であなたの番です。ほかの参加者に話し言葉で応えてください。markdown や箇条書きは使わず、{n} 文字以内。付け加えることがなければ [pass] とだけ返信してください。回答は一度だけで、操作は行わないでください。",
+        ],
+        "rt.test_remote" => [
+            "AgentDock 测试：只用来确认能送达和回答，请只回复「收到」。",
+            "AgentDock test: this only checks delivery and answers. Reply only \u{201c}received\u{201d}.",
+            "AgentDock 測試：只用來確認能送達和回答，請只回覆「收到」。",
+            "AgentDock のテストです。届くことと返信できることの確認だけなので、「受信」とだけ返信してください。",
+        ],
         "rt.test" => [
             "AgentDock 测试转述：这条消息只用来确认能发送，请只回复「好的」。",
             "AgentDock relay test: this message only checks that sending works. Reply only \u{201c}OK\u{201d}.",
@@ -291,7 +304,7 @@ mod tests {
         let keys = [
             "call.needs_auth", "call.web_not_found", "call.target_not_found", "call.voice_not_found", "call.failed", "call.pending",
             "probe.needs_human", "handoff.heading", "handoff.me", "handoff.turn", "handoff.ask", "rt.heading", "rt.me", "rt.turn",
-            "rt.unheard", "rt.guard", "rt.ask", "rt.ask_disc", "rt.test", "room.too_few", "relay.not_capable", "relay.no_report", "roster.group_chat", "roster.hidden", "app.not_installed", "app.needs_ax", "icon.bad_format",
+            "rt.unheard", "rt.guard", "rt.ask", "rt.ask_disc", "rt.ask_remote", "rt.test_remote", "rt.test", "room.too_few", "relay.not_capable", "relay.no_report", "roster.group_chat", "roster.hidden", "app.not_installed", "app.needs_ax", "icon.bad_format",
             "icon.too_large", "chrome.lost", "chrome.no_tab", "chrome.refused", "chrome.not_enabled", "chrome.just_refused",
             "menu.expand", "menu.collapse", "menu.to_vertical", "menu.to_horizontal", "menu.form_dot", "menu.form_pet",
             "menu.zoom_in", "menu.zoom_out", "menu.zoom_reset", "menu.settings", "menu.quit", "menu.toggle_dock", "window.settings", "window.room",

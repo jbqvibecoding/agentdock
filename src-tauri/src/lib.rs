@@ -13,15 +13,18 @@ pub mod roundtable;
 pub mod seats;
 pub mod settings;
 pub mod state;
+pub mod tts;
+pub mod yobiru;
 
 use drivers::{app::AppDriver, web, DriverError, ProbeResult, Registry, RelayOutcome, RelayPayload, RelayReport};
 use hotkeys::HotkeyAction;
 use seats::{DriverKind, Seat, SeatIcon, SeatStatus, SeatsConfig};
 use serde::{Deserialize, Serialize};
 use settings::AppSettings;
-use state::{DiscussionRun, DockState, Effect, Event, MemberRef, Machine, PauseWhy, Phase, RoomSpec};
+use state::{DiscussionRun, DockState, Effect, Event, MemberRef, Machine, PauseWhy, Phase, RemoteEnd, RemoteStage, RoomSpec};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
@@ -58,6 +61,13 @@ pub struct AppState {
     pub relay_results: Mutex<HashMap<String, RelayReport>>,
     /// Free discussion: when the floor holder is done, and who goes next.
     pub discussion: Mutex<discussion::Tracker>,
+    /// Bumped by every remote turn and every stop: a remote turn whose number is no longer current
+    /// only keeps listening to put a late answer in the room's record.
+    pub remote_gen: AtomicU64,
+    /// Requests per remote agent per hour that ask to wake it `now` (yobiru's own rate).
+    pub wake_budget: Mutex<yobiru::WakeBudget>,
+    /// The relay plan for a remote member's turn, taken by its RemoteAsk.
+    pub remote_outbox: Mutex<HashMap<String, roundtable::RelayPlan>>,
     /// `EVEROS_API_KEY` + settings. Rebuilt when settings are saved. Missing key → inactive.
     pub everos: Mutex<everos::Client>,
     /// The connection to the user's Chrome, opened on the first web call that goes there.
@@ -162,6 +172,10 @@ fn run_driver_effects<R: Runtime>(app: &AppHandle<R>, effects: Vec<Effect>) {
     if effects.is_empty() {
         return;
     }
+    // a reading holds the driver lane: a dial stops it rather than wait for it
+    if effects.iter().any(|fx| matches!(fx, Effect::DriverCall(_))) {
+        tts::stop();
+    }
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let st = app.state::<AppState>();
@@ -174,7 +188,7 @@ fn run_driver_effects<R: Runtime>(app: &AppHandle<R>, effects: Vec<Effect>) {
                         tracing::warn!("hangup {seat} failed: {e}");
                     }
                 }
-                Effect::SystemMute(_) => {}
+                Effect::SystemMute(_) | Effect::RemoteAsk(_) | Effect::RemoteStop(_) => {}
             }
         }
     });
@@ -360,6 +374,12 @@ fn roundtable_on_state<R: Runtime>(app: &AppHandle<R>, before: &DockState, after
                 let _ = app.emit("room:lines", Vec::<roundtable::Utterance>::new());
             }
             roundtable::TableAction::RelayPlanned(plan) => {
+                if let MemberRef::Remote(member) = &plan.to {
+                    tracing::info!("relay {} → remote {member}: {} lines", plan.id, plan.lines.len());
+                    let _ = app.emit("room:relay", serde_json::json!({ "id": plan.id, "to": member, "turn": plan.turn, "lines": plan.lines.len(), "mode": "remote" }));
+                    st.remote_outbox.lock().unwrap().insert(member.clone(), plan);
+                    continue;
+                }
                 let text = relay_text(&st, after);
                 let brief = roundtable::relay_brief(&plan, |s| speaker_name(&st, s), &text);
                 let Some(seat) = plan.to.seat().map(str::to_string) else { continue };
@@ -416,7 +436,7 @@ fn speaker_name(st: &AppState, s: &roundtable::Speaker) -> String {
     match s {
         roundtable::Speaker::User => i18n::t("rt.me"),
         roundtable::Speaker::Seat(id) => st.seats.lock().unwrap().get(id).map(|s| s.name.clone()).unwrap_or_else(|| id.clone()),
-        roundtable::Speaker::Remote(id) => id.clone(),
+        roundtable::Speaker::Remote(id) => st.settings.lock().unwrap().remote_members.iter().find(|m| &m.id == id).map(|m| m.name.clone()).unwrap_or_else(|| id.clone()),
     }
 }
 
@@ -459,10 +479,11 @@ fn room_lines<R: Runtime>(app: &AppHandle<R>, touched: Vec<roundtable::Utterance
         match table.name_pass_decision(std::time::Instant::now()) {
             Ok(()) => {
                 drop(table);
-                if let Some(seat) = to.seat() {
-                    tracing::info!("name pass → {seat}");
-                    dispatch(app, Event::Call(seat.to_string()));
-                }
+                tracing::info!("name pass → {}", to.id());
+                dispatch(app, match to {
+                    MemberRef::Seat(seat) => Event::Call(seat),
+                    MemberRef::Remote(member) => Event::PassRemote(member),
+                });
             }
             Err(why) => tracing::info!("name pass refused: {why}"),
         }
@@ -492,7 +513,7 @@ fn discussion_poll<R: Runtime>(app: &AppHandle<R>) {
     let st = app.state::<AppState>();
     let state = st.machine.lock().unwrap().state.clone();
     let Some(room) = state.room.as_ref().filter(|r| r.disc.is_some()) else { return };
-    let names: Vec<(String, Vec<String>)> = room_member_names(&st, room).into_iter().filter_map(|(who, names)| who.seat().map(|s| (s.to_string(), names))).collect();
+    let names: Vec<(String, Vec<String>)> = room_member_names(&st, room).into_iter().map(|(who, names)| (who.id().to_string(), names)).collect();
     let acts = st.discussion.lock().unwrap().poll(&state, &names, Instant::now());
     for act in acts {
         match act {
@@ -534,6 +555,191 @@ fn discussion_heard<R: Runtime>(app: &AppHandle<R>, heard: Vec<(u64, String)>) {
 /// 自由讨论 is open in the room (paused or not).
 fn discussing(st: &AppState) -> bool {
     st.machine.lock().unwrap().state.room.as_ref().is_some_and(|r| r.disc.is_some())
+}
+
+/// The note a remote member gets when it takes the floor (see integrations/yobiru).
+fn remote_note(st: &AppState, rm: &yobiru::RemoteMember, plan: Option<&roundtable::RelayPlan>, ys: &yobiru::YobiruSettings) -> yobiru::RoomNote {
+    let state = st.machine.lock().unwrap().state.clone();
+    let room = state.room.as_ref();
+    let members = std::iter::once(i18n::t("rt.me")).chain(room.iter().flat_map(|r| r.members.iter().map(|m| speaker_name(st, &roundtable::Speaker::from(&m.who))))).collect();
+    let since = plan
+        .map(|p| {
+            p.lines
+                .iter()
+                .map(|u| {
+                    let who = speaker_name(st, &u.speaker);
+                    let text = if u.unheard { i18n::tf("rt.unheard", &[("name", &who)]) } else { u.text.clone() };
+                    yobiru::NoteLine { who, text }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    yobiru::RoomNote {
+        kind: yobiru::RoomNote::KIND,
+        v: 1,
+        room: room.map(|r| r.name.clone().unwrap_or_else(|| r.id.clone())).unwrap_or_default(),
+        turn: room.map_or(0, |r| r.turn),
+        you: rm.name.clone(),
+        members,
+        since_your_last_turn: since,
+        max_chars: ys.max_chars,
+        answer_within_secs: ys.timeout_secs,
+        guard: i18n::t("rt.guard"),
+        ask: i18n::tf("rt.ask_remote", &[("n", &ys.max_chars.to_string())]),
+    }
+}
+
+/// A remote member holds the floor: send it the room's note with the user's yobiru, follow the
+/// request, and read its answer aloud. A turn that was stopped or replaced goes stale: it only
+/// keeps listening (less often) to put a late answer in the room's record.
+async fn remote_turn<R: Runtime>(app: AppHandle<R>, member: String, gen: u64) {
+    let st = app.state::<AppState>();
+    // still this turn: no stop or newer turn since, and the room still gives it the floor
+    let current = || {
+        let st = app.state::<AppState>();
+        st.remote_gen.load(Ordering::SeqCst) == gen
+            && st.machine.lock().unwrap().state.room.as_ref().and_then(|r| r.remote.as_ref()).is_some_and(|r| r.member == member && r.stage != RemoteStage::Pending)
+    };
+    let end = |how| dispatch(&app, Event::RemoteEnded { member: member.clone(), how });
+    let (ys, rm) = {
+        let s = st.settings.lock().unwrap();
+        (s.yobiru.clone(), s.remote_members.iter().find(|m| m.id == member).cloned())
+    };
+    let plan = st.remote_outbox.lock().unwrap().remove(&member);
+    let report = |outcome, why: &str| {
+        if let Some(p) = &plan {
+            relay_done(&app, RelayReport { id: p.id.clone(), outcome, why: why.to_string() });
+        }
+    };
+    let not_sent = |why: &str, detail: &str| {
+        report(RelayOutcome::NotSent, detail);
+        tracing::warn!("remote {member}: not sent ({why}): {detail}");
+        let _ = app.emit("room:remote_error", serde_json::json!({ "member": member, "why": why }));
+        if current() {
+            end(RemoteEnd::Failed);
+        }
+    };
+    let Some(rm) = rm else { return not_sent("unknown", "not in Settings › 远程成员") };
+    let cli = match yobiru::cli_for(&ys) {
+        Ok(cli) => cli,
+        Err(why) => return not_sent(why, ""),
+    };
+    let note = remote_note(&st, &rm, plan.as_ref(), &ys).to_json();
+    let at = Instant::now();
+    let wake_now = st.wake_budget.lock().unwrap().take(&rm.id, at);
+    let timeout = ys.timeout_secs.clamp(30, 900);
+    let (c, to) = (cli.clone(), rm.id.clone());
+    let outcome = tauri::async_runtime::spawn_blocking(move || c.send(&to, &note, wake_now, timeout))
+        .await
+        .unwrap_or_else(|e| yobiru::SendOutcome::NotSent(yobiru::NotSentWhy::Failed, e.to_string()));
+    let id = match outcome {
+        yobiru::SendOutcome::Asked { id } => {
+            report(RelayOutcome::Sent, "");
+            id
+        }
+        yobiru::SendOutcome::NotSent(why, detail) => {
+            if wake_now {
+                st.wake_budget.lock().unwrap().refund(&rm.id, at);
+            }
+            let why = serde_json::to_value(why).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+            return not_sent(&why, &detail);
+        }
+        yobiru::SendOutcome::Uncertain(detail) => {
+            // it may have reached the far side: never resent, and the floor moves on
+            report(RelayOutcome::Uncertain, &detail);
+            tracing::warn!("remote {member}: delivery unknown: {detail}");
+            let _ = app.emit("room:remote_error", serde_json::json!({ "member": member, "why": "uncertain" }));
+            if current() {
+                end(RemoteEnd::Failed);
+            }
+            return;
+        }
+    };
+    tracing::info!("remote {member}: asked {id} (wake {})", if wake_now { "now" } else { "batch" });
+    let _ = app.emit("room:remote_wake", serde_json::json!({ "member": member, "now": wake_now }));
+    let progress = |stage| dispatch(&app, Event::RemoteProgress { member: member.clone(), stage });
+    if current() {
+        progress(RemoteStage::Delivered);
+    }
+    let mut polls = yobiru::PollPlan::new(Instant::now());
+    let hard_stop = Instant::now() + Duration::from_secs(u64::from(timeout) + 60);
+    // the request timed out: the turn is over, but a late answer still goes in the record
+    let mut timed_out = false;
+    loop {
+        tokio::time::sleep(Duration::from_secs(if current() { 1 } else { 5 })).await;
+        if Instant::now() >= hard_stop {
+            if current() && !timed_out {
+                end(RemoteEnd::TimedOut);
+            }
+            return;
+        }
+        let refresh = polls.refresh_due(Instant::now());
+        let (c, rid) = (cli.clone(), id.clone());
+        let Some(status) = tauri::async_runtime::spawn_blocking(move || c.status(&rid, refresh)).await.ok().flatten() else { continue };
+        polls.observe(status.state, Instant::now());
+        let live = current() && !timed_out;
+        match status.state {
+            yobiru::ReqState::Pending => {}
+            yobiru::ReqState::Received if live => progress(RemoteStage::Delivered),
+            yobiru::ReqState::Running if live => progress(RemoteStage::Thinking),
+            yobiru::ReqState::Received | yobiru::ReqState::Running => {}
+            yobiru::ReqState::TimedOut => {
+                if live {
+                    end(RemoteEnd::TimedOut);
+                }
+                timed_out = true;
+            }
+            yobiru::ReqState::Completed => {
+                let text = status.text.unwrap_or_default();
+                match yobiru::spoken_answer(&text, ys.max_chars as usize) {
+                    yobiru::Spoken::Pass => {
+                        tracing::info!("remote {member}: passed");
+                        if live {
+                            end(RemoteEnd::Passed);
+                        }
+                    }
+                    yobiru::Spoken::Say(words) => {
+                        tracing::info!("remote {member}: answered ({} chars){}", words.chars().count(), if live { "" } else { ", late" });
+                        let heard = st.table.lock().unwrap().on_remote_answer(&member, &words);
+                        if let Some(u) = heard {
+                            let _ = app.emit("room:lines", vec![u]);
+                        }
+                        if live {
+                            progress(RemoteStage::Speaking);
+                            let spoke = speak_on_lane(&app, words, rm.voice.clone(), gen).await;
+                            if spoke != tts::Spoke::Stopped && current() {
+                                end(RemoteEnd::Answered);
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+            yobiru::ReqState::Failed | yobiru::ReqState::Rejected | yobiru::ReqState::Blocked => {
+                tracing::info!("remote {member}: {:?}", status.state);
+                if live {
+                    end(RemoteEnd::Failed);
+                }
+                return;
+            }
+        }
+    }
+}
+
+/// Read aloud while holding the driver lane: the last hang-up has finished and nothing dials
+/// until the reading is over. `gen` 0 is a replay, which any new remote turn stops.
+async fn speak_on_lane<R: Runtime>(app: &AppHandle<R>, words: String, voice: Option<String>, gen: u64) -> tts::Spoke {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        let _lane = st.driver_lane.lock().unwrap_or_else(|e| e.into_inner());
+        if gen != 0 && st.remote_gen.load(Ordering::SeqCst) != gen {
+            return tts::Spoke::Stopped;
+        }
+        tts::speak(&words, voice.as_deref())
+    })
+    .await
+    .unwrap_or(tts::Spoke::Stopped)
 }
 
 async fn write_batch(client: everos::Client, batch: memory::Persist) {
@@ -582,6 +788,16 @@ fn apply_effect<R: Runtime>(app: &AppHandle<R>, fx: Effect) {
         }
         // Drivers block (AX walks, Chrome round trips, waiting for the user to allow Chrome).
         Effect::DriverCall(_) | Effect::DriverHangup(_) => run_driver_effects(&app, vec![fx]),
+        Effect::RemoteAsk(member) => {
+            // numbered here, in effect order: a stop applied after this makes the turn stale
+            let gen = app.state::<AppState>().remote_gen.fetch_add(1, Ordering::SeqCst) + 1;
+            tauri::async_runtime::spawn(async move { remote_turn(app, member, gen).await });
+        }
+        Effect::RemoteStop(member) => {
+            tracing::info!("remote {member}: stopped");
+            app.state::<AppState>().remote_gen.fetch_add(1, Ordering::SeqCst);
+            tts::stop();
+        }
     }
 }
 
@@ -853,7 +1069,7 @@ fn new_room_id() -> String {
 
 /// Start a round-table: a saved group, or seats picked on the Dock (no consent to send yet).
 #[tauri::command]
-fn start_room(app: AppHandle, seat_ids: Option<Vec<String>>, group_id: Option<String>, first: Option<String>) -> CmdResult<()> {
+fn start_room(app: AppHandle, seat_ids: Option<Vec<String>>, remote_ids: Option<Vec<String>>, group_id: Option<String>, first: Option<String>) -> CmdResult<()> {
     let st = app.state::<AppState>();
     let first = first.map(MemberRef::Seat);
     let spec = match group_id {
@@ -862,7 +1078,10 @@ fn start_room(app: AppHandle, seat_ids: Option<Vec<String>>, group_id: Option<St
             let g = groups.get(&gid).ok_or("unknown group")?;
             RoomSpec { id: new_room_id(), name: Some(g.name.clone()), group: Some(g.id.clone()), members: g.members.iter().map(|m| m.who.clone()).collect(), relay: g.relay, addressed: g.addressed, first }
         }
-        None => RoomSpec { id: new_room_id(), name: None, group: None, members: seat_ids.unwrap_or_default().into_iter().map(MemberRef::Seat).collect(), relay: false, addressed: false, first },
+        None => {
+            let members = seat_ids.unwrap_or_default().into_iter().map(MemberRef::Seat).chain(remote_ids.unwrap_or_default().into_iter().map(MemberRef::Remote)).collect();
+            RoomSpec { id: new_room_id(), name: None, group: None, members, relay: false, addressed: false, first }
+        }
     };
     if spec.members.len() < 2 {
         return Err(i18n::t("room.too_few"));
@@ -871,15 +1090,59 @@ fn start_room(app: AppHandle, seat_ids: Option<Vec<String>>, group_id: Option<St
     Ok(())
 }
 
-/// 拉群 during a call, or add someone to the room.
+fn member_ref(seat_id: Option<String>, remote_id: Option<String>) -> CmdResult<MemberRef> {
+    seat_id.map(MemberRef::Seat).or(remote_id.map(MemberRef::Remote)).ok_or_else(|| "no member".to_string())
+}
+
+/// 拉群 during a call, or add someone to the room (a seat, or a remote member).
 #[tauri::command]
-fn room_add(app: AppHandle, seat_id: String) {
-    dispatch(&app, Event::RoomAdd { who: MemberRef::Seat(seat_id), room_id: new_room_id() });
+fn room_add(app: AppHandle, seat_id: Option<String>, remote_id: Option<String>) -> CmdResult<()> {
+    dispatch(&app, Event::RoomAdd { who: member_ref(seat_id, remote_id)?, room_id: new_room_id() });
+    Ok(())
 }
 
 #[tauri::command]
-fn room_drop(app: AppHandle, seat_id: String) {
-    dispatch(&app, Event::RoomDrop(MemberRef::Seat(seat_id)));
+fn room_drop(app: AppHandle, seat_id: Option<String>, remote_id: Option<String>) -> CmdResult<()> {
+    dispatch(&app, Event::RoomDrop(member_ref(seat_id, remote_id)?));
+    Ok(())
+}
+
+/// Tapping a remote member in the room: the floor goes to it after the undo window.
+#[tauri::command]
+fn pass_remote(app: AppHandle, member_id: String) {
+    dispatch(&app, Event::PassRemote(member_id));
+}
+
+/// 打断 (cut_in) or 跳过 (skipped) the remote member holding the floor.
+#[tauri::command]
+fn remote_end(app: AppHandle, how: RemoteEnd) -> CmdResult<()> {
+    if !matches!(how, RemoteEnd::CutIn | RemoteEnd::Skipped) {
+        return Err("only cut_in or skipped".into());
+    }
+    let member = app.state::<AppState>().machine.lock().unwrap().state.room.as_ref().and_then(|r| r.remote.as_ref()).map(|r| r.member.clone());
+    if let Some(member) = member {
+        dispatch(&app, Event::RemoteEnded { member, how });
+    }
+    Ok(())
+}
+
+/// ▶ on a remote member's line in the room panel: read it again, when no voice is live.
+#[tauri::command]
+async fn room_play(app: AppHandle, seq: u64) -> CmdResult<()> {
+    let st = app.state::<AppState>();
+    let busy = {
+        let m = st.machine.lock().unwrap();
+        m.state.phase != Phase::Idle || m.state.room.as_ref().is_some_and(|r| r.remote.is_some())
+    };
+    if busy {
+        return Err("busy".into());
+    }
+    let u = st.table.lock().unwrap().ledger().iter().find(|u| u.seq == seq).cloned().ok_or("gone")?;
+    let roundtable::Speaker::Remote(id) = &u.speaker else { return Err("not a remote line".into()) };
+    let voice = st.settings.lock().unwrap().remote_members.iter().find(|m| &m.id == id).and_then(|m| m.voice.clone());
+    tts::stop();
+    speak_on_lane(&app, u.text, voice, 0).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -964,7 +1227,30 @@ fn save_groups(app: AppHandle, groups: Vec<groups::GroupContact>) -> CmdResult<(
 
 /// Before dialling a room: per member, what is done, what is missing, and who has to act.
 #[tauri::command]
-fn room_preflight(st: tauri::State<AppState>, seat_ids: Vec<String>, relay: bool) -> Vec<groups::CheckRow> {
+fn room_preflight(st: tauri::State<AppState>, seat_ids: Vec<String>, remote_ids: Option<Vec<String>>, relay: bool) -> Vec<groups::CheckRow> {
+    let remote_rows: Vec<groups::CheckRow> = {
+        // finding yobiru spawns and walks the disk: not under the settings lock
+        let (ys, known): (yobiru::YobiruSettings, Vec<String>) = {
+            let s = st.settings.lock().unwrap();
+            (s.yobiru.clone(), s.remote_members.iter().map(|m| m.id.clone()).collect())
+        };
+        let ids = remote_ids.unwrap_or_default();
+        let cli = if ids.is_empty() { Ok(()) } else { yobiru::cli_for(&ys).map(|_| ()) };
+        ids.into_iter()
+            .flat_map(|id| {
+                let problem = if !known.contains(&id) {
+                    Some("remote_unknown")
+                } else {
+                    match cli {
+                        Err("no_python") => Some("remote_no_python"),
+                        Err(_) => Some("remote_no_cli"),
+                        Ok(()) => None,
+                    }
+                };
+                groups::preflight(&MemberRef::Remote(id), &groups::MemberFacts { remote_problem: problem, ..Default::default() }, relay)
+            })
+            .collect()
+    };
     let seats = st.seats.lock().unwrap();
     seat_ids
         .into_iter()
@@ -989,7 +1275,137 @@ fn room_preflight(st: tauri::State<AppState>, seat_ids: Vec<String>, relay: bool
             };
             groups::preflight(&who, &facts, relay)
         })
+        .chain(remote_rows)
         .collect()
+}
+
+// ───────────────────────── commands: remote members (yobiru) ─────────────────────────
+
+#[derive(Debug, Serialize)]
+struct YobiruStatus {
+    cli: Option<String>,
+    python: Option<String>,
+    /// `rm.problem.*` key when yobiru cannot run here.
+    problem: Option<&'static str>,
+    doctor: Option<yobiru::Doctor>,
+    onboard: Option<yobiru::Onboard>,
+}
+
+/// Settings › 远程成员: is yobiru here, and what its own doctor and onboarding say (read-only).
+#[tauri::command]
+async fn yobiru_status(app: AppHandle) -> CmdResult<YobiruStatus> {
+    let ys = app.state::<AppState>().settings.lock().unwrap().yobiru.clone();
+    tauri::async_runtime::spawn_blocking(move || match yobiru::cli_for(&ys) {
+        Err(why) => YobiruStatus { cli: yobiru::locate_cli(ys.cli.as_deref()).map(|p| p.display().to_string()), python: None, problem: Some(why), doctor: None, onboard: None },
+        Ok(cli) => YobiruStatus {
+            cli: Some(cli.path.display().to_string()),
+            python: cli.python.as_ref().map(|p| p.display().to_string()),
+            problem: None,
+            doctor: cli.doctor(),
+            onboard: cli.onboard(),
+        },
+    })
+    .await
+    .map_err(err)
+}
+
+/// The machines online in the tailnet and their agents (yobiru's `agents --online`).
+#[tauri::command]
+async fn yobiru_agents(app: AppHandle) -> CmdResult<yobiru::Discovery> {
+    let ys = app.state::<AppState>().settings.lock().unwrap().yobiru.clone();
+    tauri::async_runtime::spawn_blocking(move || yobiru::cli_for(&ys).map_err(|w| format!("rm.problem.{w}"))?.agents()).await.map_err(err)?
+}
+
+/// Errors are i18n keys (`rm.err.*`). Groups lose members that are gone.
+#[tauri::command]
+fn save_remote_members(app: AppHandle, members: Vec<yobiru::RemoteMember>) -> CmdResult<()> {
+    let st = app.state::<AppState>();
+    let mut ids = std::collections::HashSet::new();
+    for m in &members {
+        yobiru::validate_member(m).map_err(|e| format!("rm.err.{e}"))?;
+        if !ids.insert(m.id.clone()) || st.seats.lock().unwrap().get(&m.id).is_some() {
+            return Err("rm.err.duplicate".into());
+        }
+    }
+    let mut settings = st.settings.lock().unwrap().clone();
+    settings.remote_members = members;
+    let pruned = {
+        let mut g = st.groups.lock().unwrap();
+        let before = g.clone();
+        g.retain_known(|m| match m {
+            MemberRef::Seat(_) => true,
+            MemberRef::Remote(id) => ids.contains(id),
+        });
+        (*g != before).then(|| g.clone())
+    };
+    persist_settings(&app, settings)?;
+    if let Some(cfg) = pruned {
+        cfg.save(&groups::groups_path(&st.config_dir)).map_err(err)?;
+        let _ = app.emit("groups:changed", &cfg.groups);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct RemoteTest {
+    /// `answered`, a request state (`pending`: no receipt, `received`: not woken or no answer yet,
+    /// `running`, `failed`, …), `not_sent`, or `uncertain`.
+    stage: String,
+    /// Why it was not sent (`not_set_up`, `not_capable`, …).
+    why: Option<String>,
+    detail: String,
+    text: Option<String>,
+}
+
+/// Settings › 远程成员 › 测试: a real request with a test note, followed for up to a minute.
+#[tauri::command]
+async fn test_remote(app: AppHandle, member_id: String) -> CmdResult<RemoteTest> {
+    let st = app.state::<AppState>();
+    let (ys, rm) = {
+        let s = st.settings.lock().unwrap();
+        (s.yobiru.clone(), s.remote_members.iter().find(|m| m.id == member_id).cloned())
+    };
+    let rm = rm.ok_or("unknown member")?;
+    let cli = yobiru::cli_for(&ys).map_err(|w| format!("rm.problem.{w}"))?;
+    let note = serde_json::json!({ "type": yobiru::RoomNote::KIND, "v": 1, "test": true, "you": rm.name, "max_chars": 60, "answer_within_secs": 60, "ask": i18n::t("rt.test_remote") }).to_string();
+    let at = Instant::now();
+    let wake_now = st.wake_budget.lock().unwrap().take(&rm.id, at);
+    let (c, to) = (cli.clone(), rm.id.clone());
+    let outcome = tauri::async_runtime::spawn_blocking(move || c.send(&to, &note, wake_now, 90)).await.map_err(err)?;
+    let id = match outcome {
+        yobiru::SendOutcome::Asked { id } => id,
+        yobiru::SendOutcome::NotSent(why, detail) => {
+            if wake_now {
+                st.wake_budget.lock().unwrap().refund(&rm.id, at);
+            }
+            let why = serde_json::to_value(why).ok().and_then(|v| v.as_str().map(str::to_string));
+            return Ok(RemoteTest { stage: "not_sent".into(), why, detail, text: None });
+        }
+        yobiru::SendOutcome::Uncertain(detail) => return Ok(RemoteTest { stage: "uncertain".into(), why: None, detail, text: None }),
+    };
+    let mut polls = yobiru::PollPlan::new(at);
+    let mut last = None;
+    while at.elapsed() < Duration::from_secs(60) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let refresh = polls.refresh_due(Instant::now());
+        let (c, rid) = (cli.clone(), id.clone());
+        let Some(status) = tauri::async_runtime::spawn_blocking(move || c.status(&rid, refresh)).await.ok().flatten() else { continue };
+        polls.observe(status.state, Instant::now());
+        let done = status.state.is_final();
+        last = Some(status);
+        if done {
+            break;
+        }
+    }
+    let state = last.as_ref().map_or(yobiru::ReqState::Pending, |s| s.state);
+    let stage = if state == yobiru::ReqState::Completed { "answered".to_string() } else { serde_json::to_value(state).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default() };
+    Ok(RemoteTest { stage, why: None, detail: String::new(), text: last.and_then(|s| s.text) })
+}
+
+/// The voices `say` has, for each remote member's answers.
+#[tauri::command]
+fn tts_voices() -> Vec<(String, String)> {
+    tts::voices()
 }
 
 /// A relay step's report from inside a hidden seat webview.
@@ -1779,6 +2195,8 @@ fn apply_app_icon(app: &AppHandle, mode: settings::AppIcon) {
 }
 
 fn persist_settings(app: &AppHandle, mut settings: AppSettings) -> CmdResult<()> {
+    settings.remote_members.retain(|m| yobiru::validate_member(m).is_ok());
+    app.state::<AppState>().wake_budget.lock().unwrap().set_rate(settings.yobiru.wake_rate);
     let env = everos::MemoryEnv::from_env();
     let _ = everos::assign_user_id(&mut settings.memory, &env);
     let client = everos::Client::resolve(&settings.memory, &env);
@@ -2722,12 +3140,14 @@ pub fn run() {
             let mut seats = SeatsConfig::load(&seats::seats_path(&config_dir));
             refresh_app_status(&mut seats.seats, &registry);
             let _ = seats.save(&seats::seats_path(&config_dir));
+            let mut settings = AppSettings::load(&settings::settings_path(&config_dir));
+            settings.remote_members.retain(|m| yobiru::validate_member(m).is_ok());
             let mut groups_cfg = groups::GroupsConfig::load(&groups::groups_path(&config_dir));
             groups_cfg.retain_known(|m| match m {
                 MemberRef::Seat(id) => seats.get(id).is_some(),
-                MemberRef::Remote(_) => true,
+                MemberRef::Remote(id) => settings.remote_members.iter().any(|r| &r.id == id),
             });
-            let mut settings = AppSettings::load(&settings::settings_path(&config_dir));
+            let wake_rate = settings.yobiru.wake_rate;
             i18n::set(settings.language);
             let env = everos::MemoryEnv::from_env();
             if everos::assign_user_id(&mut settings.memory, &env) {
@@ -2775,6 +3195,9 @@ pub fn run() {
                 relay_inflight: Mutex::new(HashMap::new()),
                 relay_results: Mutex::new(HashMap::new()),
                 discussion: Mutex::new(discussion::Tracker::default()),
+                remote_gen: AtomicU64::new(0),
+                wake_budget: Mutex::new(yobiru::WakeBudget::new(wake_rate)),
+                remote_outbox: Mutex::new(HashMap::new()),
                 everos: Mutex::new(everos_client),
                 chrome: Default::default(),
             });
@@ -2892,6 +3315,7 @@ pub fn run() {
             get_state, call_seat, hangup, toggle_mute, set_muted, toggle_expanded, set_expanded, undo_switch, set_carry,
             start_room, room_add, room_drop, floor_next, release_floor, room_say, room_ledger, open_room_panel, get_groups, save_groups, room_preflight, relay_report, test_relay,
             set_room_mode, discussion_pause, discussion_resume, floor_extend, room_vad,
+            pass_remote, remote_end, room_play, yobiru_status, yobiru_agents, save_remote_members, test_remote, tts_voices,
             resize_dock, drag_dock, remember_dock_position, ui_log, cursor_over_dock, toggle_orientation, toggle_collapsed_form, dock_menu,
             get_seats, save_seats, reorder_seats, list_drivers, connect_account, disconnect_seat, show_seat, test_call, probe_seat, chrome_status, app_targets,
             driver_report, driver_error, memory_report, memory_status, set_seat_icon, reset_seat_icon, seat_icon_data,

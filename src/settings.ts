@@ -1,4 +1,4 @@
-import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type CheckRow, type ChromeStatus, type DriverInfo, type GroupContact, type HostInfo, type MemberRef, type MemoryStatus, type RelayReport, type Seat, type SeatView } from "./api";
+import { ACCENTS, api, applyTheme, validAccent, type AppSettings, type CheckRow, type ChromeStatus, type Discovery, type DriverInfo, type GroupContact, type HostInfo, type MemberRef, type MemoryStatus, type RelayReport, type RemoteMember, type RemoteTest, type Seat, type SeatView, type YobiruSettings, type YobiruStatus } from "./api";
 import { iconFor } from "./brand";
 import { lang, LANGUAGES, resolveLang, setLang, t, translateDom, type LangSetting, type MsgKey } from "./i18n";
 
@@ -402,7 +402,7 @@ async function renderSeats() {
   help.innerHTML = `<summary>${esc(t("help.summary"))}</summary><ul>${tips.map((k) => `<li>${esc(t(k))}</li>`).join("")}</ul>`;
   const parts: HTMLElement[] = [list];
   if (addOpen) parts.push(await addPanel());
-  parts.push(await groupsPanel(), await chromeGroup(), help);
+  parts.push(await groupsPanel(), remotePanel(), await chromeGroup(), help);
   pageEl.replaceChildren(...parts);
 }
 
@@ -414,7 +414,8 @@ let draft: GroupContact | null = null;
 let draftRows = new Map<string, CheckRow[]>();
 /** Last 测试转述 result per member, shown under its row. */
 const relayTests: Record<string, string> = {};
-const memberName = (who: MemberRef) => (who.kind === "seat" ? seats.find((s) => s.id === who.id)?.name : undefined) ?? who.id;
+const memberName = (who: MemberRef) => (who.kind === "seat" ? seats.find((s) => s.id === who.id)?.name : remotes().find((m) => m.id === who.id)?.name) ?? who.id;
+const remotes = () => settings.remote_members ?? [];
 
 /** Errors come back as `grp.err.*` keys. */
 async function saveGroups(next: GroupContact[]): Promise<boolean> {
@@ -432,9 +433,10 @@ async function saveGroups(next: GroupContact[]): Promise<boolean> {
 async function refreshDraftPreflight() {
   if (!draft) return;
   const seatIds = draft.members.filter((m) => m.who.kind === "seat").map((m) => m.who.id);
+  const remoteIds = draft.members.filter((m) => m.who.kind === "remote").map((m) => m.who.id);
   draftRows = new Map();
   try {
-    for (const r of (await api.invoke<CheckRow[]>("room_preflight", { seatIds, relay: draft.relay })) ?? []) draftRows.set(r.who.id, [...(draftRows.get(r.who.id) ?? []), r]);
+    for (const r of (await api.invoke<CheckRow[]>("room_preflight", { seatIds, remoteIds, relay: draft.relay })) ?? []) draftRows.set(r.who.id, [...(draftRows.get(r.who.id) ?? []), r]);
   } catch { /* shown as unknown */ }
 }
 
@@ -499,6 +501,19 @@ function groupEditor(): HTMLDivElement {
     });
     chips.append(c);
   }
+  for (const rm of remotes()) {
+    const on = d.members.some((m) => m.who.kind === "remote" && m.who.id === rm.id);
+    const label = `${rm.name} · ${t("grp.remoteTag")}`;
+    const c = el("button", `btn sm${on ? " tint" : ""}`, esc(on ? `✓ ${label}` : label)) as HTMLButtonElement;
+    c.type = "button"; c.dataset.remote = rm.id;
+    c.addEventListener("click", async () => {
+      if (on) d.members = d.members.filter((m) => m.who.id !== rm.id);
+      else if (d.members.length < 6) d.members.push({ who: { kind: "remote", id: rm.id }, aliases: [] });
+      await refreshDraftPreflight();
+      void renderSeats();
+    });
+    chips.append(c);
+  }
   box.append(chips);
   for (const m of d.members) {
     const nm = memberName(m.who);
@@ -510,6 +525,7 @@ function groupEditor(): HTMLDivElement {
     const test = el("button", "btn sm", esc(t("grp.test"))) as HTMLButtonElement;
     test.type = "button";
     test.addEventListener("click", async () => {
+      if (m.who.kind === "remote") { void testRemote(m.who.id, relayTests); return; }
       relayTests[m.who.id] = t("grp.testing");
       void renderSeats();
       try {
@@ -536,6 +552,175 @@ function groupEditor(): HTMLDivElement {
   actions.append(cancel, save);
   box.append(actions);
   return box;
+}
+
+// ───────────── 远程成员: agents on other machines, over yobiru ─────────────
+const YOBIRU_DEFAULTS: YobiruSettings = { cli: null, python: null, home: null, wake_rate: 6, timeout_secs: 150, max_chars: 300 };
+let yStatus: YobiruStatus | null = null;
+let yChecking = false;
+let discovery: Discovery | null = null;
+let discovering = false;
+let discoverError = "";
+let voices: [string, string][] | null = null;
+/** Last 测试 result per remote member. */
+const remoteTests: Record<string, string> = {};
+const manualRm = { peer: "", agent: "", name: "" };
+
+async function checkYobiru() {
+  if (yChecking) return;
+  yChecking = true;
+  if (page === "seats") void renderSeats();
+  try { yStatus = await api.invoke<YobiruStatus>("yobiru_status"); } catch (e) { yStatus = null; toast(String(e)); }
+  yChecking = false;
+  if (voices === null) voices = (await api.invoke<[string, string][]>("tts_voices").catch(() => [])) ?? [];
+  if (page === "seats" && !interacting()) void renderSeats();
+}
+
+/** Errors are `rm.err.*` keys. */
+async function saveRemotes(next: RemoteMember[]): Promise<boolean> {
+  try {
+    await api.invoke("save_remote_members", { members: next });
+    settings = { ...settings, remote_members: next };
+    return true;
+  } catch (e) {
+    const k = String(e).replace(/^Error:\s*/, "");
+    toast(k.startsWith("rm.err.") ? t(k as MsgKey) : k);
+    return false;
+  }
+}
+
+/** The member's id is its yobiru address: `peer` or `peer/agent`. */
+const rmAddress = (peer: string, agent: string) => (agent ? `${peer}/${agent}` : peer);
+
+async function testRemote(id: string, into: Record<string, string>) {
+  into[id] = t("rm.testing");
+  void renderSeats();
+  try {
+    const r = await api.invoke<RemoteTest>("test_remote", { memberId: id });
+    const key = `rm.test.${r.stage}` as MsgKey;
+    into[id] = r.stage === "answered" ? t(key, { text: r.text ?? "" }) : r.stage === "not_sent" ? t(key, { why: t(`rm.why.${r.why ?? "failed"}` as MsgKey) }) : t(key);
+  } catch (e) {
+    const k = String(e).replace(/^Error:\s*/, "");
+    into[id] = k.startsWith("rm.problem.") ? t(k as MsgKey) : k;
+  }
+  if (page === "seats") void renderSeats();
+}
+
+function copyable(text: string): HTMLDivElement {
+  const box = el("div", "copyable");
+  const code = el("code", "", esc(text));
+  const b = el("button", "btn sm", esc(t("rm.copy"))) as HTMLButtonElement;
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(text); toast(t("rm.copied")); }
+    catch { const r = document.createRange(); r.selectNodeContents(code); const sel = getSelection(); sel?.removeAllRanges(); sel?.addRange(r); }
+  });
+  box.append(code, b);
+  return box;
+}
+
+function remotePanel(): HTMLDivElement {
+  if (!yStatus && !yChecking) void checkYobiru();
+  const ys = { ...YOBIRU_DEFAULTS, ...(settings.yobiru ?? {}) };
+  const g = el("div", "group remotes");
+  g.append(el("div", "group__title", esc(t("rm.title"))));
+  g.append(el("p", "note", esc(t("rm.intro"))));
+  // yobiru on this Mac: where it is, and what its own doctor and onboarding say
+  const cli = el("input", "rm-cli") as HTMLInputElement;
+  cli.type = "text"; cli.placeholder = t("rm.cliPh"); cli.value = ys.cli ?? "";
+  cli.addEventListener("change", async () => { await saveSettings({ yobiru: { ...ys, cli: cli.value.trim() || null } }); yStatus = null; void checkYobiru(); });
+  const d = yStatus?.doctor;
+  const sub = yChecking ? t("rm.checking")
+    : !yStatus ? ""
+    : yStatus.problem ? t(`rm.problem.${yStatus.problem}` as MsgKey)
+    : [yStatus.cli ?? "", d ? (d.ok && !d.warnings ? t("rm.doctorOk") : t("rm.doctor", { errors: d.errors, warnings: d.warnings })) : ""].filter(Boolean).join(" · ");
+  g.append(row(esc(t("rm.cli")), esc(sub), cli));
+  if (yStatus?.problem === "no_python") {
+    const py = el("input", "rm-python") as HTMLInputElement;
+    py.type = "text"; py.placeholder = "/opt/homebrew/bin/python3"; py.value = ys.python ?? "";
+    py.addEventListener("change", async () => { await saveSettings({ yobiru: { ...ys, python: py.value.trim() || null } }); yStatus = null; void checkYobiru(); });
+    g.append(row(esc(t("rm.python")), "", py));
+  }
+  const next = yStatus?.onboard?.steps.find((s) => s.id === yStatus?.onboard?.next);
+  if (next) {
+    const r = row(esc(t("rm.next", { title: next.title, who: t(next.who === "user" ? "rm.who.user" : "rm.who.agent") })), esc(next.detail), []);
+    g.append(r);
+    for (const c of next.commands) g.append(copyable(c));
+  }
+  // the members
+  if (!remotes().length) g.append(el("p", "note", esc(t("rm.none"))));
+  const here = discovery?.this_machine ?? "<this-mac>";
+  for (const m of remotes()) {
+    const voice = el("select", "rm-voice") as HTMLSelectElement;
+    voice.append(new Option(t("rm.voiceDefault"), "", false, !m.voice));
+    for (const [name, loc] of voices ?? []) voice.append(new Option(`${name} (${loc})`, name, false, m.voice === name));
+    if (m.voice && !(voices ?? []).some(([n]) => n === m.voice)) voice.append(new Option(m.voice, m.voice, false, true));
+    voice.addEventListener("change", () => void saveRemotes(remotes().map((x) => (x.id === m.id ? { ...x, voice: voice.value || null } : x))));
+    const test = el("button", "btn sm rm-test", esc(t("rm.test"))) as HTMLButtonElement;
+    test.type = "button";
+    test.addEventListener("click", () => void testRemote(m.id, remoteTests));
+    const del = el("button", "btn sm danger", esc(t("rm.remove"))) as HTMLButtonElement;
+    del.type = "button";
+    del.addEventListener("click", async () => { if (await saveRemotes(remotes().filter((x) => x.id !== m.id))) void renderSeats(); });
+    const r = row(esc(m.name), esc([m.id, remoteTests[m.id]].filter(Boolean).join(" · ")), [voice, test, del]);
+    r.classList.add("rm-row");
+    r.dataset.id = m.id;
+    g.append(r);
+    g.append(el("p", "note", esc(t("rm.wake", { machine: m.peer.split(":")[0] }))));
+    g.append(copyable(`yobiru wake-config${m.agent ? ` --agent ${m.agent}` : ""} --peer-max ${here}=now --rate ${Math.max(6, ys.wake_rate)} --apply`));
+  }
+  // agents online in the tailnet, one tap to add
+  const disc = el("button", "btn sm rm-discover", esc(t(discovering ? "rm.discovering" : "rm.discover"))) as HTMLButtonElement;
+  disc.type = "button";
+  disc.disabled = discovering;
+  disc.addEventListener("click", async () => {
+    discovering = true; discoverError = ""; void renderSeats();
+    try { discovery = await api.invoke<Discovery>("yobiru_agents"); }
+    catch (e) { const k = String(e).replace(/^Error:\s*/, ""); discoverError = k.startsWith("rm.problem.") ? t(k as MsgKey) : k; }
+    discovering = false;
+    if (page === "seats") void renderSeats();
+  });
+  g.append(row(esc(t("rm.discover")), esc(discoverError || (discovery ? t("rm.found", { n: discovery.machines.length }) : "")), disc));
+  for (const mc of discovery?.machines ?? []) {
+    const agents = mc.receiver === "ok" ? (mc.agents ?? []) : [];
+    if (!agents.length) {
+      g.append(row(esc(mc.machine), esc(mc.detail ?? t("rm.noReceiver")), []));
+      continue;
+    }
+    for (const a of agents) {
+      const id = rmAddress(mc.machine, a.agent ?? "");
+      if (remotes().some((x) => x.id === id)) continue;
+      const name = a.agent ?? mc.machine;
+      const add = el("button", "btn sm tint rm-add-found", esc(t("rm.addFound", { name }))) as HTMLButtonElement;
+      add.type = "button";
+      add.dataset.id = id;
+      add.addEventListener("click", async () => {
+        if (await saveRemotes([...remotes(), { id, name, peer: mc.machine, agent: a.agent ?? null, voice: null }])) { toast(t("rm.saved")); void renderSeats(); }
+      });
+      g.append(row(esc(`${mc.machine} / ${a.agent ?? "-"}`), esc([mc.version ?? "", a.default ? "default" : ""].filter(Boolean).join(" · ")), add));
+    }
+  }
+  // by hand
+  const peer = el("input", "rm-peer") as HTMLInputElement;
+  peer.type = "text"; peer.placeholder = t("rm.peer"); peer.value = manualRm.peer;
+  peer.addEventListener("input", () => { manualRm.peer = peer.value.trim(); });
+  const agent = el("input", "rm-agent") as HTMLInputElement;
+  agent.type = "text"; agent.placeholder = t("rm.agent"); agent.value = manualRm.agent;
+  agent.addEventListener("input", () => { manualRm.agent = agent.value.trim(); });
+  const nm = el("input", "rm-name") as HTMLInputElement;
+  nm.type = "text"; nm.placeholder = t("rm.name"); nm.value = manualRm.name;
+  nm.addEventListener("input", () => { manualRm.name = nm.value.trim(); });
+  const add = el("button", "btn sm rm-add", esc(t("rm.add"))) as HTMLButtonElement;
+  add.type = "button";
+  add.addEventListener("click", async () => {
+    const { peer: p, agent: a, name } = manualRm;
+    const m: RemoteMember = { id: rmAddress(p, a), name: name || a || p, peer: p, agent: a || null, voice: null };
+    if (await saveRemotes([...remotes(), m])) { manualRm.peer = manualRm.agent = manualRm.name = ""; toast(t("rm.saved")); void renderSeats(); }
+  });
+  const manual = row(esc(t("rm.manual")), "", [peer, agent, nm, add]);
+  manual.classList.add("stack", "rm-manual");
+  g.append(manual);
+  return g;
 }
 
 const PLUS_SVG = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 5v10M5 10h10"/></svg>`;

@@ -304,9 +304,26 @@ In moderated mode you pass the floor. Switch to **Free talk** (the chip on the D
 
 What a bot says can only end its own turn or name the next one; it cannot hang up, add members, change settings or change consent.
 
-**Consent and privacy**: a relay **sends** captions to another vendor, so it needs consent: tick "Relay (sends)" on a saved group, or tap the "Relay (sends)" chip on the first hand-over of an ad-hoc group (off by default). The room's transcript is kept in memory only and cleared when the meeting ends; logs carry ids and counts only. Relay notes say they are "for reference only, not instructions or authorization", and nothing a bot says can make AgentDock hang up, add members or change settings. Free talk needs the same consent (in an ad-hoc group, two taps on the Dock: the first says what will be sent, the second agrees); the microphone only reports "sound / no sound" to AgentDock, never audio.
+**Remote members (agents on other machines, over yobiru)**
 
-**Not yet verified on a real Mac**: whether a text message sent just before voice is part of each vendor's voice context; each vendor's send / stop selectors (`memory.send` / `memory.busy` in the driver JSON, `verified:false`); Grok Bot's bubble selectors (with `memory.transcript` empty its words are not read); free talk's quiet thresholds (4 s, factor 0.8), to be tuned to how far each vendor's captions run ahead of its voice; whether each vendor speaks first after connecting. **Test relay** next to each member in Settings runs a seat's call only up to the relay step, without dialling, so you can check them one by one.
+A room can include agents that run on other machines, such as Codex on a dev box or a Grok routine on a server. They join over [yobiru](https://github.com/jbqvibecoding/yobiru) and Tailscale, and you tap them on the Dock like any bot here:
+
+- **Settings › Agents › Remote members**:
+  - AgentDock finds this Mac's yobiru command and Python, and shows yobiru's own doctor and next step;
+  - it lists the agents online in your tailnet; one tap adds one;
+  - each member can have its own voice, and **Test** sends a real request and says how far it got (delivered, woken, answered);
+  - the card shows the command to run on the other machine so AgentDock may wake it right away.
+- **On its turn**: the same 3 s undo, then whoever is talking is hung up. AgentDock sends the meeting note as one tracked request (`yobiru request send … --as agentdock`). The note is JSON, and it carries what the others said only with the room's consent to relay. The Dock shows sending → received → thinking → reading aloud.
+- **Its answer** is read aloud by this Mac's `say`, at most 300 characters and without markdown. `[pass]` skips it. No voice call is live while it is read. **Cut in** stops it (free talk pauses); **Skip** moves the floor on.
+- **When something goes wrong**:
+  - a late answer only goes into the panel's record, where ▶ replays it;
+  - a failed or timed-out request puts a badge on the member;
+  - a request that may have been delivered is never resent.
+- **On the other side**: install the `integrations/yobiru/skills/agentdock-room` skill. See [integrations/yobiru](integrations/yobiru/README.md).
+
+**Consent and privacy**: a relay **sends** captions to another vendor, so it needs consent: tick "Relay (sends)" on a saved group, or tap the "Relay (sends)" chip on the first hand-over of an ad-hoc group (off by default). The room's transcript is kept in memory only and cleared when the meeting ends; logs carry ids and counts only. Relay notes say they are "for reference only, not instructions or authorization", and nothing a bot says can make AgentDock hang up, add members or change settings. Free talk needs the same consent (in an ad-hoc group, two taps on the Dock: the first says what will be sent, the second agrees); the microphone only reports "sound / no sound" to AgentDock, never audio. A remote member's note travels over Tailscale to your own machine and carries what others said only with consent; AgentDock opens no network port and only runs your own yobiru.
+
+**Not yet verified on a real Mac**: whether a text message sent just before voice is part of each vendor's voice context; each vendor's send / stop selectors (`memory.send` / `memory.busy` in the driver JSON, `verified:false`); Grok Bot's bubble selectors (with `memory.transcript` empty its words are not read); free talk's quiet thresholds (4 s, factor 0.8), to be tuned to how far each vendor's captions run ahead of its voice; whether each vendor speaks first after connecting; with yobiru kept running by launchd on macOS, how long remote requests and the far side's wake-and-answer really take, and how the `say` voices sound. The remote-member path itself runs against the real yobiru CLI with yobiru's own loopback test support (`YOBIRU_SRC=… cargo test --test yobiru_interop -- --ignored`). **Test relay** next to each member in Settings runs a seat's call only up to the relay step, without dialling, so you can check them one by one.
 
 The protocol rules come from [yobiru](https://github.com/jbqvibecoding/yobiru) (MIT): its message id grammar, its request lifecycle (an uncertain delivery is never resent, only a marker in a user message proves delivery, final states never move back), its wake rate limit, and its onboarding check's done / todo / blocked plus who acts.
 

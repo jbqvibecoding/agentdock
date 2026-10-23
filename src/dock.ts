@@ -1,4 +1,4 @@
-import { api, applyTheme, fmtTime, validAccent, type AppSettings, type CheckRow, type DockState, type GroupContact, type HostInfo, type RelayOutcome, type RelayReport, type Room, type SeatView } from "./api";
+import { api, applyTheme, fmtTime, validAccent, type AppSettings, type CheckRow, type DockState, type GroupContact, type HostInfo, type Member, type RelayOutcome, type RelayReport, type Room, type SeatView } from "./api";
 import { iconFor, tintFor } from "./brand";
 import { resolveLang, setLang, t, type MsgKey } from "./i18n";
 
@@ -16,6 +16,8 @@ let carried: { to: string; lines: number } | null = null;
 /** Picking seats on the idle pill for a group call, with each seat's preflight rows. */
 let picking = false;
 const picked: string[] = [];
+/** Remote members (yobiru) ticked in the picker. */
+const pickedRemote: string[] = [];
 let preflight = new Map<string, CheckRow[]>();
 /** 拉群 / 加人: tapping a seat adds it to the room instead of passing the floor. */
 let adding = false;
@@ -27,6 +29,8 @@ let countdown: number | null = null;
 let nudged: { seat: string; turn: number } | null = null;
 /** Until then, a tap on 自由讨论 in a room without consent to send is the agreeing second tap. */
 let discussArmed = 0;
+/** Why a remote member's request did not go out (shown for a few seconds). */
+let remoteError: { member: string; why: string; until: number } | null = null;
 const iconCache = new Map<string, string>();
 
 const SVG = {
@@ -41,7 +45,14 @@ const SVG = {
   next: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h10.5M10.5 5.5 15 10l-4.5 4.5"/></svg>`,
   panel: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 5.5h12M4 10h12M4 14.5h8"/></svg>`,
   addPerson: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="7" r="2.8"/><path d="M2.8 16a5.2 5.2 0 0 1 10.4 0M15.5 6.5v5M13 9h5"/></svg>`,
+  // a member on another machine: a small network mark
+  net: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2.2 2 3.2 4.3 3.2 7s-1 5-3.2 7c-2.2-2-3.2-4.3-3.2-7s1-5 3.2-7z"/></svg>`,
 };
+
+const remoteMembers = () => settings?.remote_members ?? [];
+const remoteName = (id: string) => remoteMembers().find((m) => m.id === id)?.name ?? id;
+/** A remote member's mark: its initial over a tint, with a network badge. */
+const remoteMark = (id: string) => `<span class="rm-initial">${escapeHtml([...remoteName(id).trim()][0]?.toUpperCase() ?? "?")}</span><span class="rm-net">${SVG.net}</span>`;
 
 // Collapsed glyphs: an SF-style waveform (bars breathe; in a call they talk), or mic.slash when muted.
 const DOT_WAVE = `<svg class="dot-glyph" viewBox="0 0 20 20" aria-hidden="true">${[[3, 4.5], [6.5, 8.5], [10, 13], [13.5, 8.5], [17, 4.5]]
@@ -224,8 +235,10 @@ async function render() {
     frag.append(statusEl);
     frag.append(el("div", "divider"));
     for (const s of seats.filter((s) => s.enabled || s.status === "pending")) frag.append(picking ? await pickButton(s) : await seatButton(s, false, false));
-    if (picking && picked.length >= 2) {
-      const call = el("button", "undo callgroup", escapeHtml(t("room.callN", { n: picked.length })));
+    if (picking) for (const rm of remoteMembers()) frag.append(remotePickButton(rm.id));
+    const pickedN = picked.length + pickedRemote.length;
+    if (picking && pickedN >= 2 && picked.length >= 1) {
+      const call = el("button", "undo callgroup", escapeHtml(t("room.callN", { n: pickedN })));
       call.type = "button";
       call.dataset.k = "callgroup";
       call.addEventListener("click", () => void startPicked());
@@ -236,7 +249,7 @@ async function render() {
     if (!picking) frag.append(button("ghost add", SVG.plus, t("dock.addAgent"), () => api.invoke("open_settings")));
     frag.append(grip());
     renderStatusTextInto(statusEl);
-    if (picking) statusEl.innerHTML = `<div class="name">${escapeHtml(t("room.picking"))}</div><div class="sub">${escapeHtml(t("room.pickedN", { n: picked.length }))}</div>`;
+    if (picking) statusEl.innerHTML = `<div class="name">${escapeHtml(t("room.picking"))}</div><div class="sub">${escapeHtml(t("room.pickedN", { n: picked.length + pickedRemote.length }))}</div>`;
   } else if (p.phase === "calling" || p.phase === "in_call") {
     const s = seatById(p.seat);
     const av = el("div", "avatar", s ? await seatIcon(s) : "");
@@ -314,7 +327,7 @@ async function render() {
 function renderStatusTextInto(e: HTMLDivElement) { statusEl = e; renderStatusText(); }
 
 // ───────── round-table: one voice floor, the others briefed by a note when they take it ─────────
-const troubleText = (tr: string) => tr === "dial_timeout" ? t("room.troubleDial") : tr;
+const troubleText = (tr: string) => tr === "dial_timeout" ? t("room.troubleDial") : tr === "remote_failed" ? t("room.troubleRemote") : tr === "remote_timeout" ? t("room.troubleRemoteTimeout") : tr;
 const roomTitle = () => state.room?.name ?? t("room.adhoc", { n: state.room?.members.length ?? 0 });
 
 /** What the Dock says about the note sent to the seat being dialled. */
@@ -335,9 +348,11 @@ function relayLine(seat: string): string | null {
 async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
   const room = state.room!;
   const p = state.phase;
+  const rf = room.remote ?? null;
+  const remoteHolds = !!rf && rf.stage !== "pending";
   const floor = currentSeatId();
   const floorSeat = floor ? seatById(floor) : null;
-  const av = el("div", "avatar room-av", floorSeat ? await seatIcon(floorSeat) : SVG.group);
+  const av = el("div", `avatar room-av${remoteHolds ? " remote" : ""}`, remoteHolds ? remoteMark(rf!.member) : floorSeat ? await seatIcon(floorSeat) : SVG.group);
   av.dataset.k = "avatar";
   av.title = t("dock.collapse");
   av.addEventListener("click", () => api.invoke("set_expanded", { expanded: false }));
@@ -349,6 +364,13 @@ async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
     : p.phase === "in_call" ? [t("room.speaking", { name, time: fmtTime(p.elapsed_secs) }), nudged?.seat === p.seat && nudged.turn === room.turn ? t("room.nudge") : ""].filter(Boolean).join(" · ")
     : p.phase === "switching" ? (d?.pending ? `${t("room.autoPassTo", { name: seatById(p.to)?.name ?? p.to })} · ${t(`room.why.${d.pending}` as MsgKey)}` : t("room.passTo", { name: seatById(p.to)?.name ?? p.to }))
     : `${t("dock.needsYou")} · ${p.reason === "call_timeout" ? t("dock.callTimeout") : p.reason}`;
+  if (rf) {
+    const rname = remoteName(rf.member);
+    sub = rf.stage === "pending"
+      ? (rf.origin ? `${t("room.autoPassTo", { name: rname })} · ${t(`room.why.${rf.origin}` as MsgKey)}` : t("room.passTo", { name: rname }))
+      : t(`room.remote.${rf.stage}` as MsgKey, { name: rname });
+  }
+  if (remoteError && remoteError.until > Date.now()) sub = `${t("room.remoteError", { name: remoteName(remoteError.member), why: t(`rm.why.${remoteError.why}` as MsgKey) })} · ${sub}`;
   if (d?.run.state === "paused") sub = `${t(`room.paused.${d.run.why}` as MsgKey)} · ${sub}`;
   const st = el("div", "status");
   st.innerHTML = `<div class="name">${escapeHtml(roomTitle())}</div><div class="sub">${escapeHtml(sub)}${state.muted ? ` · ${escapeHtml(t("dock.muted"))}` : ""}</div>`;
@@ -368,7 +390,31 @@ async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
     more.addEventListener("click", () => { countdown = null; void api.invoke("floor_extend"); void render(); });
     frag.append(more);
   }
-  if (p.phase !== "switching") frag.append(modeChip(room));
+  if (rf?.stage === "pending") {
+    // a pass to a remote member: the same undo, and the same consent chip
+    const undo = el("button", "undo", escapeHtml(t("dock.undo", { n: rf.undo_secs_left })));
+    undo.type = "button";
+    undo.dataset.k = "undo";
+    undo.addEventListener("click", () => api.invoke("undo_switch"));
+    frag.append(undo);
+    const chip = el("button", `carry${rf.carry ? " on" : ""}`, escapeHtml(t("room.relayChip")));
+    chip.type = "button";
+    chip.dataset.k = "carry";
+    chip.setAttribute("aria-pressed", String(rf.carry));
+    chip.title = t("room.relayRemote", { name: remoteName(rf.member) }) + (room.relay ? "" : ` · ${t("room.relayConsent")}`);
+    chip.addEventListener("click", () => api.invoke("set_carry", { carry: !rf.carry }));
+    frag.append(chip);
+  } else if (remoteHolds) {
+    for (const [how, key] of [["cut_in", "room.cutIn"], ["skipped", "room.skip"]] as const) {
+      const b = el("button", `carry remote-${how}`, escapeHtml(t(key)));
+      b.type = "button";
+      b.dataset.k = `remote-${how}`;
+      b.title = t(`${key}Tip` as MsgKey, { name: remoteName(rf!.member) });
+      b.addEventListener("click", () => api.invoke("remote_end", { how }));
+      frag.append(b);
+    }
+  }
+  if (p.phase !== "switching" && !rf) frag.append(modeChip(room));
   if (p.phase === "switching") {
     const undo = el("button", "undo", escapeHtml(t("dock.undo", { n: p.undo_secs_left })));
     undo.type = "button";
@@ -395,7 +441,8 @@ async function renderRoom(frag: DocumentFragment, micBtn: HTMLButtonElement) {
   frag.append(button("red", SVG.hangup, t("room.end"), () => api.invoke("hangup")));
   frag.append(el("div", "divider"));
   for (const m of room.members) {
-    const s = m.who.kind === "seat" ? seatById(m.who.id) : undefined;
+    if (m.who.kind === "remote") { frag.append(remoteButton(m, rf)); continue; }
+    const s = seatById(m.who.id);
     if (!s) continue;
     const live = m.who.id === floor;
     const b = await seatButton(s, true, live || (p.phase === "switching" && m.who.id === p.to), () => {
@@ -437,6 +484,23 @@ function modeChip(room: Room): HTMLButtonElement {
   return chip;
 }
 
+/** A remote member in the room: a tap passes it the floor; its ring shows how its turn is going. */
+function remoteButton(m: Member, rf: Room["remote"]): HTMLButtonElement {
+  const id = m.who.id;
+  const name = remoteName(id);
+  const mine = rf?.member === id ? rf : null;
+  const b = button(`seat sm member remote${mine && mine.stage !== "pending" ? " active" : ""}`, `<div class="mark">${remoteMark(id)}</div><i class="badge"></i>`, name, () => {
+    if (!m.trouble) void api.invoke("pass_remote", { memberId: id });
+  });
+  b.dataset.remote = id;
+  b.dataset.k = `remote:${id}`;
+  b.dataset.floor = mine && mine.stage !== "pending" ? "live" : "seated";
+  if (mine) b.dataset.stage = mine.stage;
+  b.title = m.trouble ? `${name} · ${troubleText(m.trouble)}` : `${name} · ${t("room.remoteMember")}`;
+  if (m.trouble) b.dataset.trouble = "1";
+  return b;
+}
+
 /** A seat that joins the room (or turns a 1:1 call into one) when tapped. */
 async function addableButton(s: SeatView): Promise<HTMLButtonElement> {
   const b = await seatButton(s, true, false, () => { void api.invoke("room_add", { seatId: s.id }); });
@@ -464,13 +528,33 @@ async function pickButton(s: SeatView): Promise<HTMLButtonElement> {
   return b;
 }
 
+/** A remote member in the picker (a room needs at least one seat for its voice). */
+function remotePickButton(id: string): HTMLButtonElement {
+  const rows = preflight.get(id) ?? [];
+  const blocked = rows.some((r) => r.status === "blocked");
+  const on = pickedRemote.includes(id);
+  const b = button(`seat pick remote${on ? " active picked" : ""}${blocked ? " blocked" : ""}`, `<div class="mark">${remoteMark(id)}</div><i class="badge"></i>`, remoteName(id), () => {
+    if (blocked) return;
+    const i = pickedRemote.indexOf(id);
+    if (i >= 0) pickedRemote.splice(i, 1); else if (picked.length + pickedRemote.length < 6) pickedRemote.push(id);
+    void render();
+  });
+  b.dataset.remote = id;
+  b.dataset.k = `pick-remote:${id}`;
+  const issues = rows.filter((r) => r.status !== "done").map((r) => t(`pre.${r.check}` as MsgKey));
+  b.title = [remoteName(id), t("room.remoteMember"), ...issues].join(" · ");
+  if (issues.length) b.dataset.pre = blocked ? "blocked" : "todo";
+  return b;
+}
+
 async function togglePicking() {
   picking = !picking;
   picked.length = 0;
+  pickedRemote.length = 0;
   if (picking) {
     const ids = seats.filter((s) => s.enabled).map((s) => s.id);
     try {
-      const rows = await api.invoke<CheckRow[]>("room_preflight", { seatIds: ids, relay: false });
+      const rows = await api.invoke<CheckRow[]>("room_preflight", { seatIds: ids, remoteIds: remoteMembers().map((m) => m.id), relay: false });
       preflight = new Map();
       for (const r of rows ?? []) preflight.set(r.who.id, [...(preflight.get(r.who.id) ?? []), r]);
     } catch { preflight = new Map(); }
@@ -480,15 +564,18 @@ async function togglePicking() {
 
 async function startPicked() {
   const seatIds = [...picked];
+  const remoteIds = [...pickedRemote];
   picking = false;
   picked.length = 0;
-  try { await api.invoke("start_room", { seatIds }); } catch (e) { uiLog("warn", `start_room: ${e}`); void render(); }
+  pickedRemote.length = 0;
+  try { await api.invoke("start_room", { seatIds, remoteIds }); } catch (e) { uiLog("warn", `start_room: ${e}`); void render(); }
 }
 
 /** A saved group on the idle pill: its first members' marks stacked; a tap calls the group. */
 async function groupButton(g: GroupContact): Promise<HTMLButtonElement> {
   const marks = await Promise.all(g.members.slice(0, 2).map(async (m) => {
-    const s = m.who.kind === "seat" ? seatById(m.who.id) : undefined;
+    if (m.who.kind === "remote") return `<span class="gm remote">${remoteMark(m.who.id)}</span>`;
+    const s = seatById(m.who.id);
     return `<span class="gm">${s ? await seatIcon(s) : SVG.group}</span>`;
   }));
   const b = button("seat group-contact", `<div class="mark stack">${marks.join("")}</div>`, g.name, () => { void api.invoke("start_room", { groupId: g.id }); });
@@ -993,6 +1080,7 @@ async function boot() {
     render();
   });
   api.on<number | null>("room:countdown", (n) => { countdown = n; render(); });
+  api.on<{ member: string; why: string }>("room:remote_error", (e) => { remoteError = { ...e, until: Date.now() + 6000 }; render(); window.setTimeout(() => render(), 6100); });
   api.on<string>("room:nudge", (seat) => { nudged = { seat, turn: state.room?.turn ?? 0 }; render(); });
   api.on<GroupContact[]>("groups:changed", (g) => { groups = g; render(); });
   api.on<{ id: string; to: string; lines: number; mode: string }>("room:relay", (r) => { relayInfo = r; render(); });

@@ -14,7 +14,7 @@
 use crate::calllog::{bounded_brief, merge_line, Merge};
 use crate::everos::truncate_chars;
 use crate::memory::TranscriptLine;
-use crate::state::{DockState, MemberRef, Phase};
+use crate::state::{DockState, MemberRef, Phase, RemoteStage};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -147,9 +147,13 @@ pub struct Table {
     claimed: HashSet<u64>,
 }
 
-/// What the floor holder's live seat is, if any (a pending switch keeps the outgoing seat).
+/// Who holds the floor: a remote member once its request is out, else the live seat, if any (a
+/// pending switch keeps the outgoing seat).
 fn floor_of(state: &DockState) -> Option<MemberRef> {
-    state.room.as_ref()?;
+    let room = state.room.as_ref()?;
+    if let Some(rf) = room.remote.as_ref().filter(|r| r.stage != RemoteStage::Pending) {
+        return Some(MemberRef::Remote(rf.member.clone()));
+    }
     match &state.phase {
         Phase::Idle => None,
         Phase::Calling { seat } | Phase::InCall { seat, .. } | Phase::NeedsHuman { seat, .. } => Some(MemberRef::Seat(seat.clone())),
@@ -193,17 +197,22 @@ impl Table {
             if let Some(who) = now {
                 let same_call = promoted && floor_of(&DockState { room: after.room.clone(), ..before.clone() }) == Some(who.clone());
                 let carry = match (&before.phase, &after.phase) {
+                    _ if matches!(who, MemberRef::Remote(_)) => room.remote.as_ref().is_some_and(|r| r.carry),
                     (Phase::Switching { carry, .. }, Phase::Calling { .. }) => *carry,
                     (_, Phase::Calling { .. }) => room.relay,
                     _ => false,
                 };
+                let remote = matches!(who, MemberRef::Remote(_));
                 let gate = if same_call {
                     // a 1:1 call turned into a room: the host seeds what was already said
                     Gate::Open
                 } else if let Some(plan) = carry.then(|| self.plan_relay(&who)).flatten() {
-                    let gate = Gate::AwaitMarker { id: plan.id.clone(), batches: MARKER_BATCHES };
+                    // a remote member has no captions: its answer arrives whole
+                    let gate = if remote { Gate::Open } else { Gate::AwaitMarker { id: plan.id.clone(), batches: MARKER_BATCHES } };
                     out.push(TableAction::RelayPlanned(plan));
                     gate
+                } else if remote {
+                    Gate::Open
                 } else {
                     Gate::History
                 };
@@ -369,10 +378,20 @@ impl Table {
         Some(self.push(self.turn, Speaker::User, truncate_chars(text, 4000), true, false))
     }
 
-    /// A remote member's answer (yobiru), heard by everyone once it is read aloud.
+    /// A remote member's answer (yobiru), heard by everyone once it is read aloud. A late answer
+    /// (its turn is over) is kept in the record all the same.
     pub fn on_remote_answer(&mut self, member: &str, text: &str) -> Option<Utterance> {
         self.room.as_ref()?;
-        Some(self.push(self.turn, Speaker::Remote(member.to_string()), truncate_chars(text.trim(), 4000), false, false))
+        let who = MemberRef::Remote(member.to_string());
+        let turn = match self.floor.as_mut().filter(|f| f.who == who) {
+            Some(floor) => {
+                floor.connected = true;
+                floor.heard = true;
+                floor.turn
+            }
+            None => self.floor_turns.get(&who).and_then(|t| t.iter().max().copied()).unwrap_or(self.turn),
+        };
+        Some(self.push(turn, Speaker::Remote(member.to_string()), truncate_chars(text.trim(), 4000), false, false))
     }
 
     fn push(&mut self, turn: u64, speaker: Speaker, text: String, typed: bool, unheard: bool) -> Utterance {
@@ -564,6 +583,33 @@ mod tests {
             self.t += Duration::from_secs(4);
             self.ev(Event::Tick);
         }
+    }
+
+    #[test]
+    fn a_remote_member_is_told_what_the_others_said_and_its_answer_reaches_them() {
+        let mut sim = Sim::new(&["dot", "grok"], true);
+        let members = vec![seat("dot"), seat("grok"), MemberRef::Remote("codex".into())];
+        sim.m = Machine::new();
+        sim.table = Table::default();
+        sim.ev(Event::RoomOpen(RoomSpec { id: "a1b2c3d4e5".into(), name: None, group: None, members, relay: true, addressed: false, first: None }));
+        sim.connect("dot");
+        sim.table.on_lines("dot", &[user("old history")]);
+        sim.table.on_lines("dot", &[user("which city?"), bot("Kyoto")]);
+        sim.ev(Event::PassRemote("codex".into()));
+        assert!(sim.plans.is_empty(), "nothing is planned during the undo window");
+        sim.t += Duration::from_secs(4);
+        sim.ev(Event::Tick);
+        let p = sim.plans.last().unwrap().clone();
+        assert_eq!(p.to, MemberRef::Remote("codex".into()));
+        assert_eq!(p.lines.iter().map(|u| u.text.as_str()).collect::<Vec<_>>(), ["which city?", "Kyoto"]);
+        sim.table.relay_outcome(&p.id, RelayOutcome::Sent);
+        let u = sim.table.on_remote_answer("codex", "Osaka is cheaper").unwrap();
+        assert_eq!((u.speaker.clone(), u.turn), (Speaker::Remote("codex".into()), 2));
+        sim.ev(Event::RemoteEnded { member: "codex".into(), how: crate::state::RemoteEnd::Answered });
+        sim.ev(Event::Call("grok".into()));
+        let p2 = sim.plans.last().unwrap();
+        assert_eq!(p2.lines.iter().map(|u| u.text.as_str()).collect::<Vec<_>>(), ["which city?", "Kyoto", "Osaka is cheaper"]);
+        assert!(!sim.table.ledger().iter().any(|u| u.unheard), "an answered remote turn is not 'unheard'");
     }
 
     #[test]

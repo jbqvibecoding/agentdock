@@ -167,6 +167,11 @@ pub struct AppSettings {
     /// EverOS long-term memory. Off until the user opts in; still a no-op without `EVEROS_API_KEY`.
     #[serde(default)]
     pub memory: MemorySettings,
+    /// Round-table members on other machines, reached with the user's own yobiru.
+    #[serde(default)]
+    pub yobiru: crate::yobiru::YobiruSettings,
+    #[serde(default)]
+    pub remote_members: Vec<crate::yobiru::RemoteMember>,
 }
 
 /// Opt-in EverOS memory. The API key is never stored here — only `EVEROS_API_KEY`.
@@ -279,6 +284,8 @@ impl Default for AppSettings {
             app_icon: AppIcon::Both,
             language: Language::System,
             memory: MemorySettings::default(),
+            yobiru: Default::default(),
+            remote_members: Vec::new(),
         }
     }
 }

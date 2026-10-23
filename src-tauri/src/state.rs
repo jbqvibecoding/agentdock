@@ -79,6 +79,55 @@ pub struct Room {
     /// Free discussion's state while `mode` is Discussion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disc: Option<Discussion>,
+    /// A member on another machine (yobiru) taking or holding the floor. While it holds it no seat
+    /// is live: `phase` is Idle, and its answer is read aloud on this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteFloor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteStage {
+    /// The undo window: nothing has been sent, and the live seat (if any) keeps talking.
+    Pending,
+    /// The request is on its way (`yobiru request send`).
+    Sending,
+    /// The far receiver accepted it.
+    Delivered,
+    /// Its agent took it up (`running`).
+    Thinking,
+    /// Its answer is being read aloud here.
+    Speaking,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteFloor {
+    pub member: String,
+    pub stage: RemoteStage,
+    #[serde(default)]
+    pub undo_secs_left: u64,
+    /// Send what the others said with the request: the room's consent, or this pass's chip.
+    pub carry: bool,
+    /// Why a pending pass is automatic (free discussion).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<PassOrigin>,
+}
+
+/// How a remote member's turn ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteEnd {
+    /// Its answer was read aloud.
+    Answered,
+    /// It had nothing to add (`[pass]`).
+    Passed,
+    /// The request failed, was refused or blocked, or could not be sent.
+    Failed,
+    TimedOut,
+    /// You skipped it: the floor moves on.
+    Skipped,
+    /// You cut in: the reading stops and a discussion waits for you.
+    CutIn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -144,6 +193,19 @@ impl Room {
     pub fn has_seat(&self, seat: &str) -> bool {
         self.member(&MemberRef::Seat(seat.to_string())).is_some()
     }
+
+    /// The member with this id, a seat first (the host keeps seat and remote ids apart).
+    pub fn member_by_id(&self, id: &str) -> Option<&Member> {
+        self.member(&MemberRef::Seat(id.to_string())).or_else(|| self.member(&MemberRef::Remote(id.to_string())))
+    }
+}
+
+impl MemberRef {
+    pub fn id(&self) -> &str {
+        match self {
+            MemberRef::Seat(id) | MemberRef::Remote(id) => id,
+        }
+    }
 }
 
 /// What the host knows when a room is opened (a saved group, the picker, or 拉群 mid-call).
@@ -198,6 +260,12 @@ pub enum Event {
     FloorBusy,
     DiscussionPause(PauseWhy),
     DiscussionResume,
+    /// Pass the floor to a member on another machine: the undo window, then the request goes out.
+    PassRemote(String),
+    /// The host's progress on the remote floor holder's request.
+    RemoteProgress { member: String, stage: RemoteStage },
+    /// The remote floor holder's turn is over (or you ended it).
+    RemoteEnded { member: String, how: RemoteEnd },
 }
 
 /// Side effects the host must perform after an event. Keeps the machine pure.
@@ -206,6 +274,10 @@ pub enum Effect {
     DriverCall(String),
     DriverHangup(String),
     SystemMute(bool),
+    /// Send the room's note to this remote member and wait for its answer.
+    RemoteAsk(String),
+    /// Stop reading out (or waiting on) this remote member.
+    RemoteStop(String),
 }
 
 pub const UNDO_WINDOW: Duration = Duration::from_secs(3);
@@ -227,6 +299,11 @@ const HOLD_MAX: Duration = Duration::from_secs(6);
 const SKIPS_MAX: u8 = 2;
 /// Shown as a member's badge (src/i18n.ts `room.troubleDial`) when it did not connect in time.
 pub const TROUBLE_DIAL: &str = "dial_timeout";
+/// Badges for a remote member whose request failed or timed out (src/i18n.ts `room.trouble*`).
+pub const TROUBLE_REMOTE_FAILED: &str = "remote_failed";
+pub const TROUBLE_REMOTE_TIMEOUT: &str = "remote_timeout";
+/// Whatever the host reports, a remote floor ends after this (the request's own timeout is shorter).
+pub const REMOTE_MAX: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug)]
 pub struct Machine {
@@ -239,6 +316,8 @@ pub struct Machine {
     last_user: Option<Instant>,
     auto_hits: VecDeque<Instant>,
     hold_since: Option<Instant>,
+    remote_deadline: Option<Instant>,
+    remote_since: Option<Instant>,
 }
 
 impl Default for Machine {
@@ -259,6 +338,8 @@ impl Machine {
             last_user: None,
             auto_hits: VecDeque::new(),
             hold_since: None,
+            remote_deadline: None,
+            remote_since: None,
         }
     }
 
@@ -268,6 +349,13 @@ impl Machine {
 
     pub fn handle_at(&mut self, ev: Event, now: Instant) -> Vec<Effect> {
         let mut fx = if ev == Event::Tick { self.discussion_tick(now) } else { Vec::new() };
+        if ev == Event::Tick {
+            fx.extend(self.remote_tick(now));
+        }
+        // taking a seat, hanging up or releasing the floor ends a remote member's turn first
+        if matches!(ev, Event::Call(_) | Event::Hangup | Event::ReleaseFloor) {
+            fx.extend(self.yield_remote());
+        }
         let more = match self.handle_room(ev, now) {
             Ok(more) => more,
             Err(ev) => self.handle_core(ev, now),
@@ -455,6 +543,7 @@ impl Machine {
                     last: None,
                     mode: RoomMode::Moderated,
                     disc: None,
+                    remote: None,
                 });
                 match live {
                     // the call in progress is the first floor: nothing to dial
@@ -486,11 +575,15 @@ impl Machine {
                         last: Some(cur),
                         mode: RoomMode::Moderated,
                         disc: None,
+                        remote: None,
                     });
                 }
                 _ => {}
             },
             Event::RoomDrop(who) => {
+                if self.state.room.as_ref().and_then(|r| r.remote.as_ref()).is_some_and(|r| MemberRef::Remote(r.member.clone()) == who) {
+                    fx.extend(self.yield_remote());
+                }
                 let Some(room) = self.state.room.as_mut() else { return Ok(fx) };
                 room.members.retain(|m| m.who != who);
                 if room.last.as_ref() == Some(&who) {
@@ -515,11 +608,11 @@ impl Machine {
                     self.state.room = None;
                 }
             }
-            Event::FloorNext => {
-                if let Some(seat) = self.next_member() {
-                    return Ok(self.handle_at(Event::Call(seat), now));
-                }
-            }
+            Event::FloorNext => match self.next_member() {
+                Some(MemberRef::Seat(seat)) => return Ok(self.handle_at(Event::Call(seat), now)),
+                Some(MemberRef::Remote(member)) => return Ok(self.handle_at(Event::PassRemote(member), now)),
+                None => {}
+            },
             Event::ReleaseFloor if self.state.room.is_some() => {
                 // nobody holds the floor because you said so: a discussion waits for you
                 if let Some(d) = self.disc_mut() {
@@ -547,8 +640,7 @@ impl Machine {
                     RoomMode::Discussion if room.relay || consent => {
                         room.relay = true;
                         room.mode = RoomMode::Discussion;
-                        let seats = room.members.iter().filter(|m| m.who.seat().is_some()).count();
-                        let budget = hop_budget(seats);
+                        let budget = hop_budget(room.members.len());
                         room.disc = Some(Discussion { run: DiscussionRun::Running, round_robin: false, hops_budget: budget, hops_left: budget, named_streak: 0, skips_in_row: 0, pending: None, previous: None });
                         self.disc_since = Some(now);
                         self.paused_since = None;
@@ -564,6 +656,61 @@ impl Machine {
                 }
             }
             Event::AutoPass { to, turn, origin } => return Ok(self.auto_pass(to, turn, origin, now)),
+            Event::PassRemote(member) => {
+                // like a Call: in a discussion, a pass you make is you being active
+                if self.disc_mut().is_some() {
+                    self.last_user = Some(now);
+                    if let Some(d) = self.disc_mut() {
+                        d.hops_left = d.hops_budget;
+                        d.named_streak = 0;
+                    }
+                }
+                return Ok(self.pass_remote(member, None, now));
+            }
+            Event::RemoteProgress { member, stage } => {
+                if let Some(rf) = self.state.room.as_mut().and_then(|r| r.remote.as_mut()) {
+                    if rf.member == member && rf.stage != RemoteStage::Pending && stage > rf.stage {
+                        rf.stage = stage;
+                    }
+                }
+            }
+            Event::RemoteEnded { member, how } => {
+                let Some(room) = self.state.room.as_mut() else { return Ok(fx) };
+                if !room.remote.as_ref().is_some_and(|r| r.member == member && r.stage != RemoteStage::Pending) {
+                    return Ok(fx);
+                }
+                room.remote = None;
+                self.remote_since = None;
+                let trouble = match how {
+                    RemoteEnd::Failed => Some(TROUBLE_REMOTE_FAILED),
+                    RemoteEnd::TimedOut => Some(TROUBLE_REMOTE_TIMEOUT),
+                    _ => None,
+                };
+                if let Some(m) = trouble.and_then(|_| room.member_mut(&MemberRef::Remote(member.clone()))) {
+                    m.trouble = trouble.map(str::to_string);
+                }
+                if matches!(how, RemoteEnd::CutIn | RemoteEnd::Skipped) {
+                    fx.push(Effect::RemoteStop(member));
+                }
+                if how == RemoteEnd::CutIn {
+                    if let Some(d) = self.disc_mut() {
+                        d.run = DiscussionRun::Paused { why: PauseWhy::User };
+                        self.paused_since = Some(now);
+                    }
+                }
+            }
+            Event::Undo if self.remote_pending() => {
+                self.yield_remote();
+            }
+            Event::SetCarry(carry) if self.remote_pending() => {
+                let room = self.state.room.as_mut().expect("room");
+                if carry {
+                    room.relay = true;
+                }
+                if let Some(rf) = room.remote.as_mut() {
+                    rf.carry = carry;
+                }
+            }
             Event::UserActive => {
                 self.last_user = Some(now);
                 self.cancel_auto_pass(now);
@@ -578,13 +725,16 @@ impl Machine {
                 }
             }
             Event::FloorBusy => {
-                let auto = matches!(self.state.phase, Switching { .. }) && self.disc_mut().is_some_and(|d| d.pending.is_some());
-                if auto {
+                let seat_auto = matches!(self.state.phase, Switching { .. }) && self.disc_mut().is_some_and(|d| d.pending.is_some());
+                let remote_auto = self.remote_pending() && self.state.room.as_ref().and_then(|r| r.remote.as_ref()).is_some_and(|r| r.origin.is_some());
+                if seat_auto || remote_auto {
                     let since = *self.hold_since.get_or_insert(now);
                     if now.duration_since(since) >= HOLD_MAX {
                         self.cancel_auto_pass(now);
-                    } else {
+                    } else if seat_auto {
                         self.switch_deadline = Some(self.switch_deadline.unwrap_or(now).max(now + HOLD_STEP));
+                    } else {
+                        self.remote_deadline = Some(self.remote_deadline.unwrap_or(now).max(now + HOLD_STEP));
                     }
                 }
             }
@@ -635,8 +785,10 @@ impl Machine {
     fn auto_pass(&mut self, to: String, turn: u64, origin: PassOrigin, now: Instant) -> Vec<Effect> {
         use Phase::*;
         let mut fx = Vec::new();
+        let target = self.state.room.as_ref().and_then(|r| r.member_by_id(&to)).filter(|m| m.trouble.is_none()).map(|m| m.who.clone());
         let ok = self.running()
-            && self.state.room.as_ref().is_some_and(|r| r.turn == turn && r.member(&MemberRef::Seat(to.clone())).is_some_and(|m| m.trouble.is_none()))
+            && self.state.room.as_ref().is_some_and(|r| r.turn == turn && r.remote.is_none())
+            && target.is_some()
             && self.current_seat() != Some(to.as_str());
         if !ok {
             return fx;
@@ -657,6 +809,9 @@ impl Machine {
             self.disc_mut().expect("running").run = DiscussionRun::Paused { why };
             self.paused_since = Some(now);
             return fx;
+        }
+        if let Some(MemberRef::Remote(member)) = target {
+            return self.pass_remote(member, Some(origin), now);
         }
         match self.state.phase.clone() {
             InCall { seat: cur, .. } => {
@@ -710,6 +865,95 @@ impl Machine {
         if let (true, Phase::Switching { from, .. }) = (pending, self.state.phase.clone()) {
             self.restore_in_call(from, now);
         }
+        if self.remote_pending() && self.state.room.as_ref().and_then(|r| r.remote.as_ref()).is_some_and(|r| r.origin.is_some()) {
+            self.yield_remote();
+        }
+    }
+
+    fn remote_pending(&self) -> bool {
+        self.state.room.as_ref().and_then(|r| r.remote.as_ref()).is_some_and(|r| r.stage == RemoteStage::Pending)
+    }
+
+    /// Pass the floor to a remote member: an undo window first (nothing is sent yet, the live seat
+    /// keeps talking), committed on a Tick.
+    fn pass_remote(&mut self, member: String, origin: Option<PassOrigin>, now: Instant) -> Vec<Effect> {
+        let Some(room) = self.state.room.as_ref() else { return Vec::new() };
+        let ok = room.member(&MemberRef::Remote(member.clone())).is_some_and(|m| m.trouble.is_none());
+        if !ok || room.remote.as_ref().is_some_and(|r| r.member == member) {
+            return Vec::new();
+        }
+        // another remote member's turn (or pending pass) gives way, and so does a pending switch
+        let fx = self.yield_remote();
+        if let Phase::Switching { from, .. } = self.state.phase.clone() {
+            self.restore_in_call(from, now);
+        }
+        let room = self.state.room.as_mut().expect("room");
+        room.remote = Some(RemoteFloor { member, stage: RemoteStage::Pending, undo_secs_left: UNDO_WINDOW.as_secs(), carry: room.relay, origin });
+        self.remote_deadline = Some(now + UNDO_WINDOW);
+        self.hold_since = None;
+        fx
+    }
+
+    /// The undo window closed: hang up whoever is live, and send the request.
+    fn commit_remote(&mut self, now: Instant) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        let Some(rf) = self.state.room.as_ref().and_then(|r| r.remote.clone()) else { return fx };
+        let from = self
+            .current_seat()
+            .map(str::to_string)
+            .or_else(|| self.state.room.as_ref().and_then(|r| r.last.as_ref()).map(|m| m.id().to_string()))
+            .unwrap_or_default();
+        if let Some(d) = self.disc_mut() {
+            d.pending = rf.origin;
+        }
+        self.commit_pass(&from, now);
+        if let Some(seat) = self.current_seat().map(str::to_string) {
+            self.to_idle();
+            fx.push(Effect::DriverHangup(seat));
+        }
+        self.take_floor_as(MemberRef::Remote(rf.member.clone()));
+        let room = self.state.room.as_mut().expect("room");
+        room.remote = Some(RemoteFloor { stage: RemoteStage::Sending, undo_secs_left: 0, origin: None, ..rf.clone() });
+        self.remote_deadline = None;
+        self.remote_since = Some(now);
+        fx.push(Effect::RemoteAsk(rf.member));
+        fx
+    }
+
+    /// The remote floor (or a pending pass to it) is given up; a turn in progress is stopped.
+    fn yield_remote(&mut self) -> Vec<Effect> {
+        let Some(rf) = self.state.room.as_mut().and_then(|r| r.remote.take()) else { return Vec::new() };
+        self.remote_deadline = None;
+        self.remote_since = None;
+        self.hold_since = None;
+        if rf.stage == RemoteStage::Pending {
+            Vec::new()
+        } else {
+            vec![Effect::RemoteStop(rf.member)]
+        }
+    }
+
+    /// The undo countdown of a pending remote pass, its commit, and the hard limit on a remote turn.
+    fn remote_tick(&mut self, now: Instant) -> Vec<Effect> {
+        let Some(rf) = self.state.room.as_ref().and_then(|r| r.remote.clone()) else { return Vec::new() };
+        if rf.stage == RemoteStage::Pending {
+            let deadline = self.remote_deadline.unwrap_or(now);
+            if now >= deadline {
+                return self.commit_remote(now);
+            }
+            if let Some(r) = self.state.room.as_mut().and_then(|r| r.remote.as_mut()) {
+                r.undo_secs_left = ((deadline.duration_since(now).as_millis() + 999) / 1000) as u64;
+            }
+            return Vec::new();
+        }
+        if self.remote_since.is_some_and(|s| now.duration_since(s) >= REMOTE_MAX) {
+            let fx = self.yield_remote();
+            if let Some(m) = self.state.room.as_mut().and_then(|r| r.member_mut(&MemberRef::Remote(rf.member.clone()))) {
+                m.trouble = Some(TROUBLE_REMOTE_TIMEOUT.into());
+            }
+            return fx;
+        }
+        Vec::new()
     }
 
     /// Caps that run on the clock: the 20-minute limit, and hanging up a bot that was left
@@ -755,27 +999,29 @@ impl Machine {
 
     /// A seat starts dialling in a room: a new floor take.
     fn take_floor(&mut self, seat: &str) {
+        self.take_floor_as(MemberRef::Seat(seat.to_string()));
+    }
+
+    fn take_floor_as(&mut self, who: MemberRef) {
         if let Some(room) = self.state.room.as_mut() {
             room.turn += 1;
-            room.last = Some(MemberRef::Seat(seat.to_string()));
+            room.last = Some(who);
         }
     }
 
     /// 下一位: the member after the one holding (or about to hold, or last holding) the floor,
-    /// skipping members with a badge and members that are not seats on this Mac.
-    pub fn next_member(&self) -> Option<String> {
+    /// skipping members with a badge.
+    pub fn next_member(&self) -> Option<MemberRef> {
         let room = self.state.room.as_ref()?;
-        let cur = match &self.state.phase {
-            Phase::Switching { to, .. } => Some(to.clone()),
-            Phase::Idle => room.last.as_ref().and_then(|m| m.seat()).map(str::to_string),
-            _ => self.current_seat().map(str::to_string),
+        let cur = match (&room.remote, &self.state.phase) {
+            (Some(rf), _) => Some(MemberRef::Remote(rf.member.clone())),
+            (None, Phase::Switching { to, .. }) => Some(MemberRef::Seat(to.clone())),
+            (None, Phase::Idle) => room.last.clone(),
+            (None, _) => self.current_seat().map(|s| MemberRef::Seat(s.to_string())),
         };
         let n = room.members.len();
-        let start = cur.as_deref().and_then(|c| room.members.iter().position(|m| m.who.seat() == Some(c))).unwrap_or(n - 1);
-        (1..=n)
-            .map(|i| &room.members[(start + i) % n])
-            .find(|m| m.trouble.is_none() && m.who.seat().is_some_and(|s| Some(s) != cur.as_deref()))
-            .and_then(|m| m.who.seat().map(str::to_string))
+        let start = cur.as_ref().and_then(|c| room.members.iter().position(|m| &m.who == c)).unwrap_or(n - 1);
+        (1..=n).map(|i| &room.members[(start + i) % n]).find(|m| m.trouble.is_none() && Some(&m.who) != cur.as_ref()).map(|m| m.who.clone())
     }
 
     fn to_idle(&mut self) {
@@ -1003,7 +1249,7 @@ mod tests {
         let mut m = Machine::new();
         m.handle_at(Event::RoomOpen(spec(&["a", "b", "c"], true)), t);
         m.handle_at(Event::ProbeInCall { seat: "a".into(), in_call: true }, t);
-        assert_eq!(m.next_member().as_deref(), Some("b"));
+        assert_eq!(m.next_member(), Some(seat("b")));
         m.handle_at(Event::ProbeNeedsHuman { seat: "b".into(), reason: "captcha".into() }, t);
         assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "a"), "a badge never takes the floor");
         assert_eq!(room(&m).member(&seat("b")).unwrap().trouble.as_deref(), Some("captcha"));
@@ -1011,7 +1257,7 @@ mod tests {
         assert!(matches!(m.state.phase, Phase::Switching { ref to, .. } if to == "c"));
         m.handle_at(Event::Tick, t + Duration::from_secs(4));
         m.handle_at(Event::ProbeInCall { seat: "c".into(), in_call: true }, t + Duration::from_secs(5));
-        assert_eq!(m.next_member().as_deref(), Some("a"), "wraps around, still skipping b");
+        assert_eq!(m.next_member(), Some(seat("a")), "wraps around, still skipping b");
     }
 
     #[test]
@@ -1037,7 +1283,7 @@ mod tests {
         m.handle_at(Event::ProbeInCall { seat: "dot".into(), in_call: false }, t);
         assert_eq!(m.state.phase, Phase::Idle);
         assert!(m.state.room.is_some(), "the far side hanging up leaves the room open");
-        assert_eq!(m.next_member().as_deref(), Some("grok"));
+        assert_eq!(m.next_member(), Some(seat("grok")));
         m.handle_at(Event::Call("grok".into()), t);
         assert_eq!(m.handle_at(Event::ReleaseFloor, t), vec![Effect::DriverHangup("grok".into())]);
         assert!(m.state.room.is_some() && m.state.phase == Phase::Idle);
@@ -1093,11 +1339,131 @@ mod tests {
         assert_eq!(room(&m).member(&seat("dot")).unwrap().trouble, None, "connecting clears the badge");
     }
 
+    fn remote(id: &str) -> MemberRef {
+        MemberRef::Remote(id.into())
+    }
+
+    /// A room with seats `a`, `b` and the remote member `r`, `a` live since `t`.
+    fn with_remote(t: Instant, relay: bool) -> Machine {
+        let mut m = Machine::new();
+        let members = vec![seat("a"), seat("b"), remote("r")];
+        m.handle_at(Event::RoomOpen(RoomSpec { id: "r1".into(), name: None, group: None, members, relay, addressed: false, first: None }), t);
+        m.handle_at(Event::ProbeInCall { seat: "a".into(), in_call: true }, t);
+        m
+    }
+
+    fn rf(m: &Machine) -> Option<&RemoteFloor> {
+        room(m).remote.as_ref()
+    }
+
+    #[test]
+    fn a_pass_to_a_remote_member_waits_out_the_undo_then_hangs_up_and_asks() {
+        let t = Instant::now();
+        let mut m = with_remote(t, true);
+        assert!(m.handle_at(Event::PassRemote("r".into()), t).is_empty());
+        assert_eq!(rf(&m).map(|r| (r.stage, r.carry)), Some((RemoteStage::Pending, true)));
+        assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "a"), "a keeps talking during the undo window");
+        assert!(m.handle_at(Event::Tick, t + Duration::from_secs(1)).is_empty());
+        assert_eq!(rf(&m).unwrap().undo_secs_left, 2);
+        let fx = m.handle_at(Event::Tick, t + Duration::from_secs(3));
+        assert_eq!(fx, vec![Effect::DriverHangup("a".into()), Effect::RemoteAsk("r".into())]);
+        assert_eq!(m.state.phase, Phase::Idle, "no seat is live while a remote member holds the floor");
+        assert_eq!((room(&m).turn, room(&m).last.clone()), (2, Some(remote("r"))));
+        assert_eq!(rf(&m).unwrap().stage, RemoteStage::Sending);
+        assert_eq!(m.next_member(), Some(seat("a")), "下一位 continues after the remote member");
+    }
+
+    #[test]
+    fn undoing_a_remote_pass_sends_nothing_and_your_chip_is_the_consent() {
+        let t = Instant::now();
+        let mut m = with_remote(t, false);
+        m.handle_at(Event::PassRemote("r".into()), t);
+        assert!(!rf(&m).unwrap().carry, "an ad-hoc room has no consent yet");
+        m.handle_at(Event::SetCarry(true), t);
+        assert!(rf(&m).unwrap().carry && room(&m).relay);
+        m.handle_at(Event::Undo, t + Duration::from_secs(1));
+        assert!(rf(&m).is_none());
+        assert!(m.handle_at(Event::Tick, t + Duration::from_secs(4)).is_empty(), "nothing goes out");
+        assert!(matches!(m.state.phase, Phase::InCall { ref seat, .. } if seat == "a"));
+    }
+
+    #[test]
+    fn a_remote_turn_moves_forward_only_and_ends_with_a_badge_when_it_failed() {
+        let t = Instant::now();
+        let mut m = with_remote(t, true);
+        m.handle_at(Event::PassRemote("r".into()), t);
+        m.handle_at(Event::Tick, t + Duration::from_secs(3));
+        let progress = |m: &mut Machine, stage| m.handle_at(Event::RemoteProgress { member: "r".into(), stage }, t);
+        progress(&mut m, RemoteStage::Thinking);
+        progress(&mut m, RemoteStage::Delivered);
+        assert_eq!(rf(&m).unwrap().stage, RemoteStage::Thinking, "a late receipt does not move it back");
+        progress(&mut m, RemoteStage::Speaking);
+        assert!(m.handle_at(Event::RemoteEnded { member: "x".into(), how: RemoteEnd::Answered }, t).is_empty());
+        assert!(rf(&m).is_some(), "another member's ending changes nothing");
+        assert!(m.handle_at(Event::RemoteEnded { member: "r".into(), how: RemoteEnd::Answered }, t).is_empty());
+        assert!(rf(&m).is_none() && m.state.phase == Phase::Idle);
+        assert_eq!(room(&m).member(&remote("r")).unwrap().trouble, None);
+        m.handle_at(Event::PassRemote("r".into()), t);
+        m.handle_at(Event::Tick, t + Duration::from_secs(4));
+        m.handle_at(Event::RemoteEnded { member: "r".into(), how: RemoteEnd::Failed }, t);
+        assert_eq!(room(&m).member(&remote("r")).unwrap().trouble.as_deref(), Some(TROUBLE_REMOTE_FAILED));
+        assert!(m.handle_at(Event::PassRemote("r".into()), t).is_empty() && rf(&m).is_none(), "a member with a badge is not asked");
+    }
+
+    #[test]
+    fn taking_a_seat_hanging_up_or_dropping_stops_a_remote_turn() {
+        let t = Instant::now();
+        let start = |m: &mut Machine| {
+            m.handle_at(Event::PassRemote("r".into()), t);
+            m.handle_at(Event::Tick, t + Duration::from_secs(3));
+            m.handle_at(Event::RemoteProgress { member: "r".into(), stage: RemoteStage::Speaking }, t);
+        };
+        let mut m = with_remote(t, true);
+        start(&mut m);
+        assert_eq!(m.handle_at(Event::Call("b".into()), t), vec![Effect::RemoteStop("r".into()), Effect::DriverCall("b".into())]);
+        assert!(rf(&m).is_none());
+        let mut m = with_remote(t, true);
+        start(&mut m);
+        assert_eq!(m.handle_at(Event::Hangup, t), vec![Effect::RemoteStop("r".into())]);
+        assert!(m.state.room.is_none());
+        let mut m = with_remote(t, true);
+        start(&mut m);
+        assert_eq!(m.handle_at(Event::RoomDrop(remote("r")), t), vec![Effect::RemoteStop("r".into())]);
+        let mut m = with_remote(t, true);
+        start(&mut m);
+        assert_eq!(m.handle_at(Event::RemoteEnded { member: "r".into(), how: RemoteEnd::Skipped }, t), vec![Effect::RemoteStop("r".into())]);
+        let mut m = with_remote(t, true);
+        start(&mut m);
+        m.handle_at(Event::Tick, t + REMOTE_MAX + Duration::from_secs(4));
+        assert!(rf(&m).is_none(), "a remote turn never outlives REMOTE_MAX");
+        assert_eq!(room(&m).member(&remote("r")).unwrap().trouble.as_deref(), Some(TROUBLE_REMOTE_TIMEOUT));
+    }
+
+    #[test]
+    fn in_a_discussion_the_floor_reaches_remote_members_and_cutting_in_pauses_it() {
+        let mut t = Instant::now();
+        let mut m = with_remote(t, true);
+        m.handle_at(Event::SetRoomMode { mode: RoomMode::Discussion, consent: false }, t);
+        m.handle_at(Event::AutoPass { to: "r".into(), turn: room(&m).turn, origin: PassOrigin::Named }, t);
+        assert_eq!(rf(&m).map(|r| (r.stage, r.origin)), Some((RemoteStage::Pending, Some(PassOrigin::Named))));
+        m.handle_at(Event::UserActive, t + Duration::from_secs(1));
+        assert!(rf(&m).is_none(), "you speaking takes back an automatic pass");
+        m.handle_at(Event::AutoPass { to: "r".into(), turn: room(&m).turn, origin: PassOrigin::Named }, t);
+        t += Duration::from_secs(4);
+        assert_eq!(m.handle_at(Event::Tick, t), vec![Effect::DriverHangup("a".into()), Effect::RemoteAsk("r".into())]);
+        assert_eq!((disc(&m).hops_left, disc(&m).named_streak, disc(&m).previous.clone()), (3, 1, Some(("a".into(), true))));
+        assert!(m.handle_at(Event::AutoPass { to: "b".into(), turn: room(&m).turn, origin: PassOrigin::Quiet }, t).is_empty(), "not while the remote member holds the floor");
+        assert_eq!(m.handle_at(Event::RemoteEnded { member: "r".into(), how: RemoteEnd::CutIn }, t), vec![Effect::RemoteStop("r".into())]);
+        assert_eq!(disc(&m).run, DiscussionRun::Paused { why: PauseWhy::User });
+    }
+
     /// A small deterministic fuzz: whatever the order of events, at most one seat is live, every
     /// dial of a new floor in one step is preceded by hanging up the old one, and Hangup ends the room.
     #[test]
     fn room_invariants_hold_under_random_event_orders() {
         let seats = ["a", "b", "c", "d"];
+        let stages = [RemoteStage::Sending, RemoteStage::Delivered, RemoteStage::Thinking, RemoteStage::Speaking];
+        let ends = [RemoteEnd::Answered, RemoteEnd::Passed, RemoteEnd::Failed, RemoteEnd::TimedOut, RemoteEnd::Skipped, RemoteEnd::CutIn];
         let mut lcg: u64 = 0x2545_f491_4f6c_dd1d;
         let mut next = |n: u64| {
             lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -1110,8 +1476,12 @@ mod tests {
             for _ in 0..60 {
                 t += Duration::from_millis(500 + next(3000));
                 let s = seats[next(4) as usize].to_string();
-                let ev = match next(12) {
-                    0 => Event::RoomOpen(RoomSpec { id: format!("r{run}"), name: None, group: None, members: seats.iter().map(|x| seat(x)).collect(), relay: next(2) == 0, addressed: false, first: None }),
+                let ev = match next(16) {
+                    0 => Event::RoomOpen(RoomSpec { id: format!("r{run}"), name: None, group: None, members: seats.iter().map(|x| seat(x)).chain([remote("r")]).collect(), relay: next(2) == 0, addressed: false, first: None }),
+                    12 => Event::PassRemote("r".into()),
+                    13 => Event::RemoteProgress { member: "r".into(), stage: stages[next(4) as usize] },
+                    14 => Event::RemoteEnded { member: "r".into(), how: ends[next(6) as usize] },
+                    15 => Event::RoomDrop(remote("r")),
                     1 => Event::Call(s),
                     2 => Event::FloorNext,
                     3 => Event::ReleaseFloor,
@@ -1134,6 +1504,14 @@ mod tests {
                 }
                 if hangup {
                     assert!(m.state.room.is_none());
+                }
+                assert!(m.current_seat() != Some("r"), "the phase never names a remote member");
+                assert!(fx.iter().all(|f| !matches!(f, Effect::DriverCall(s) | Effect::DriverHangup(s) if s == "r")), "drivers never dial a remote member: {fx:?}");
+                assert!(fx.iter().all(|f| !matches!(f, Effect::RemoteAsk(s) if s != "r")));
+                if let Some(rf) = m.state.room.as_ref().and_then(|r| r.remote.as_ref()) {
+                    if rf.stage != RemoteStage::Pending {
+                        assert_eq!(m.state.phase, Phase::Idle, "a remote floor holder means no live seat");
+                    }
                 }
                 if let Some(r) = &m.state.room {
                     assert!(r.members.len() >= 2 && r.members.len() <= ROOM_MAX);

@@ -290,3 +290,17 @@ html[data-reduce-motion="1"] * { animation: none !important; transition-duration
 .carry.mode.on { color: var(--sym); box-shadow: inset 0 0 0 1.25px var(--sym); }
 .carry.mode.armed { color: var(--amber); box-shadow: inset 0 0 0 1.25px var(--amber); }
 .carry.extend { color: var(--amber); }
+/* remote members (yobiru): an initial over a tint, a network badge, and a ring for how its turn goes */
+.mark .rm-initial, .avatar.remote .rm-initial, .gm.remote .rm-initial { position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(145deg, #5e5ce6, #0a84ff); color: #fff; font: 700 calc(12px * var(--scale))/1 var(--font); }
+.avatar.remote .rm-initial { font-size: calc(16px * var(--scale)); }
+.seat .mark .rm-net, .avatar.remote .rm-net { position: absolute; right: -1px; bottom: -1px; width: 46%; height: 46%; border-radius: 50%; background: rgba(255, 255, 255, .92); color: #0a84ff; display: grid; place-items: center; }
+.seat .mark .rm-net svg, .avatar.remote .rm-net svg { width: 82%; height: 82%; transform: none; }
+.avatar.remote, .seat.remote .mark { overflow: visible; }
+.gm.remote .rm-net { display: none; }
+.seat.remote[data-stage="sending"] .mark, .seat.remote[data-stage="delivered"] .mark, .seat.remote[data-stage="thinking"] .mark { animation: rm-wait 1.4s ease-in-out infinite; }
+@keyframes rm-wait { 50% { box-shadow: 0 0 0 2px var(--sym-faint), var(--avatar-ring); } }
+.seat.remote[data-stage="speaking"] .mark { box-shadow: 0 0 0 2px var(--green), var(--avatar-ring); }
+.seat.remote[data-stage="pending"] .mark { box-shadow: 0 0 0 2px var(--sym), var(--avatar-ring); }
+html[data-reduce-motion] .seat.remote .mark { animation: none; }
+.carry.remote-cut_in, .carry.remote-skipped { opacity: 1; text-decoration: none; }
+.carry.remote-cut_in { color: var(--amber); }

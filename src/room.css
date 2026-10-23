@@ -32,6 +32,8 @@ body { display: flex; flex-direction: column; background: var(--bg); color: var(
 .line[data-who="user"] .line__text { background: var(--me); color: var(--me-fg); border-color: transparent; }
 .line.is-unheard .line__text { color: var(--fg-2); font-style: italic; }
 .line.is-typed .line__who::after { content: " ⌨︎"; }
+.line[data-who="remote"] .line__text { border-style: dashed; }
+.line__play { margin-left: 6px; border: 0; background: transparent; color: var(--accent); font-size: 10px; cursor: default; padding: 0 2px; }
 .say { display: flex; gap: 8px; padding: 10px 12px 6px; border-top: 1px solid var(--line); }
 .say textarea { flex: 1; resize: none; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 8px 10px; font: inherit; }
 .say__send { border: 0; border-radius: 10px; padding: 0 14px; background: var(--accent); color: #fff; font: 600 13px var(--font); cursor: default; }
